@@ -785,7 +785,7 @@ export class RsSettings extends LitElement {
                 ></ha-entity-picker>
                 ${outdoorTemp !== null
                   ? html`<div class="current-value">
-                      ${localize("settings.outdoor_current", l, { temp: formatTemp(outdoorTemp, this.hass), unit: tempUnit(this.hass) })}
+                      ${localize("settings.outdoor_current", l, { temp: outdoorTemp.toFixed(1), unit: tempUnit(this.hass) })}
                     </div>`
                   : this._outdoorTempSensor
                     ? html`<div class="current-value muted">

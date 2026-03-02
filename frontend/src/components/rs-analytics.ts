@@ -375,19 +375,21 @@ export class RsAnalytics extends LitElement {
     const predictedData: Array<[number, number]> = [];
     const outdoorData: Array<[number, number]> = [];
 
+    const d = (c: number) => toDisplay(c, this.hass);
+
     for (const p of points) {
       const ts = p.ts * 1000; // seconds → ms
-      if (p.room_temp !== null) roomData.push([ts, p.room_temp]);
-      if (p.target_temp !== null) targetData.push([ts, p.target_temp]);
-      if (p.predicted_temp !== null) predictedData.push([ts, p.predicted_temp]);
-      if (p.outdoor_temp !== null) outdoorData.push([ts, p.outdoor_temp]);
+      if (p.room_temp !== null) roomData.push([ts, d(p.room_temp)]);
+      if (p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
+      if (p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
+      if (p.outdoor_temp !== null) outdoorData.push([ts, d(p.outdoor_temp)]);
     }
 
     // Append forecast points (same format as history, pre-merged on 5-min grid)
     for (const p of this._data?.forecast ?? []) {
       const ts = p.ts * 1000;
-      if (p.target_temp !== null) targetData.push([ts, p.target_temp]);
-      if (p.predicted_temp !== null) predictedData.push([ts, p.predicted_temp]);
+      if (p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
+      if (p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
     }
 
     const series: Array<Record<string, unknown>> = [
@@ -586,7 +588,7 @@ export class RsAnalytics extends LitElement {
       tooltip: {
         trigger: "axis",
         axisPointer: { snap: false },
-        valueFormatter: (v: number) => toDisplay(v, this.hass).toFixed(1) + "\u00A0" + tempUnit(this.hass),
+        valueFormatter: (v: number) => v.toFixed(1) + "\u00A0" + tempUnit(this.hass),
         formatter: (params: Array<{ seriesName: string; color: string; value: [number, number]; seriesId: string }>) => {
           if (!Array.isArray(params) || params.length === 0) return "";
           const date = new Date(params[0].value[0]);
@@ -599,14 +601,14 @@ export class RsAnalytics extends LitElement {
             if ((p.seriesId as string)?.endsWith("_events")) continue;
             const v = p.value?.[1];
             if (v == null) continue;
-            markup += `<div>${p.color ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>` : ""}${p.seriesName}: ${toDisplay(v, this.hass).toFixed(1)}\u00A0${tempUnit(this.hass)}</div>`;
+            markup += `<div>${p.color ? `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};margin-right:6px"></span>` : ""}${p.seriesName}: ${v.toFixed(1)}\u00A0${tempUnit(this.hass)}</div>`;
             if (p.seriesId === "room_temp") roomVal = v;
             if (p.seriesId === "predicted_temp") predVal = v;
           }
           if (roomVal !== null && predVal !== null) {
             const delta = roomVal - predVal;
             const sign = delta >= 0 ? "+" : "";
-            markup += `<div style="border-top:1px solid rgba(128,128,128,0.3);margin-top:4px;padding-top:4px">Delta: ${sign}${toDisplayDelta(delta, this.hass).toFixed(2)}\u00A0${tempUnit(this.hass)}</div>`;
+            markup += `<div style="border-top:1px solid rgba(128,128,128,0.3);margin-top:4px;padding-top:4px">Delta: ${sign}${delta.toFixed(2)}\u00A0${tempUnit(this.hass)}</div>`;
           }
           // Show mode and window status from closest data point
           if (points.length > 0) {
