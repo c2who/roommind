@@ -5,7 +5,7 @@ import time
 from homeassistant.const import Platform
 
 DOMAIN = "roommind"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR]
