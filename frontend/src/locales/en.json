@@ -286,6 +286,7 @@
   "mold.notifications_title": "Notifications",
   "mold.notifications_enabled": "Enable notifications",
   "mold.notifications_enabled_hint": "When disabled, no notifications are sent — neither to devices nor to the HA sidebar.",
+  "mold.notifications_beta_hint": "Beta. Will be reworked in a future update.",
   "mold.notifications_desc": "Choose which devices receive mold risk alerts. Without targets, alerts appear in the HA sidebar.",
   "mold.add_target_label": "Add notification device",
   "mold.add_target_hint": "Type the entity ID if your device is not listed (e.g. notify.mobile_app_...). You can find it under Settings → Devices → your phone → Notify entity.",

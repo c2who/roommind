@@ -937,6 +937,11 @@ export class RsSettings extends LitElement {
                       <span class="toggle-label">
                         <ha-icon icon="mdi:bell-outline" style="--mdc-icon-size: 18px; vertical-align: middle; margin-right: 4px"></ha-icon>
                         ${localize("mold.notifications_enabled", l)}
+                        <ha-icon
+                          icon="mdi:alert-circle-outline"
+                          style="--mdc-icon-size: 14px; vertical-align: middle; margin-left: 4px; color: var(--warning-color, #ffa600)"
+                          title="${localize("mold.notifications_beta_hint", l)}"
+                        ></ha-icon>
                       </span>
                       <span class="toggle-hint">${localize("mold.notifications_enabled_hint", l)}</span>
                     </div>

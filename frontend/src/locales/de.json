@@ -286,6 +286,7 @@
   "mold.notifications_title": "Benachrichtigungen",
   "mold.notifications_enabled": "Benachrichtigungen aktivieren",
   "mold.notifications_enabled_hint": "Wenn deaktiviert, werden keine Benachrichtigungen gesendet — weder an Geräte noch an die HA-Seitenleiste.",
+  "mold.notifications_beta_hint": "Beta. Wird in einem zukünftigen Update überarbeitet.",
   "mold.notifications_desc": "Wähle die Geräte, die bei Schimmelgefahr benachrichtigt werden. Ohne Ziele erscheint eine Meldung in der HA-Seitenleiste.",
   "mold.add_target_label": "Benachrichtigungsgerät hinzufügen",
   "mold.add_target_hint": "Tippe die Entity-ID ein, falls dein Gerät nicht angezeigt wird (z.B. notify.mobile_app_...). Du findest sie unter Einstellungen → Geräte → dein Telefon → Notify-Entität.",
