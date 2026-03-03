@@ -15,7 +15,7 @@ from .const import DEFAULT_MOLD_COOLDOWN_MINUTES, DEFAULT_MOLD_HUMIDITY_THRESHOL
 from .mold_utils import calculate_mold_risk, mold_prevention_delta
 from .notification_utils import NotificationThrottler, dismiss_mold_notification, async_send_mold_notification
 from .history_store import HistoryStore
-from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, MPCController, async_turn_off_climate, get_can_heat_cool, is_mpc_active
+from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, MPCController, async_turn_off_climate, check_acs_can_heat, get_can_heat_cool, is_mpc_active
 from .sensor_utils import read_sensor_value
 from .solar import compute_q_solar_norm
 from .temp_utils import celsius_delta_to_ha, celsius_to_ha_temp, ha_temp_to_celsius, ha_temp_unit_str
@@ -485,7 +485,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 self._ekf_accumulated_mode[area_id] = mode
 
                 if self._ekf_accumulated_dt[area_id] >= EKF_UPDATE_MIN_DT:
-                    can_heat, can_cool = get_can_heat_cool(room)
+                    can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=check_acs_can_heat(self.hass, room))
                     pf = self._ekf_accumulated_pf.pop(area_id, 1.0)
                     self._model_manager.update(
                         area_id, current_temp, T_outdoor, mode,
@@ -508,7 +508,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         mpc_active = False
         if has_external_sensor and settings.get("control_mode") == "mpc":
             try:
-                can_heat, can_cool = get_can_heat_cool(room, self.outdoor_temp)
+                can_heat, can_cool = get_can_heat_cool(room, self.outdoor_temp, acs_can_heat=check_acs_can_heat(self.hass, room))
                 T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 mpc_active = is_mpc_active(
                     self._model_manager, area_id, can_heat, can_cool,
@@ -559,7 +559,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         prev_mode = self._ekf_accumulated_mode.pop(area_id, None)
         pf = self._ekf_accumulated_pf.pop(area_id, 1.0)
         if accumulated > 0 and prev_mode is not None:
-            can_heat, can_cool = get_can_heat_cool(room)
+            can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=check_acs_can_heat(self.hass, room))
             self._model_manager.update(
                 area_id, current_temp, T_outdoor, prev_mode, accumulated,
                 can_heat=can_heat, can_cool=can_cool, power_fraction=pf,

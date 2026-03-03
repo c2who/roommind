@@ -94,6 +94,7 @@ def simulate_prediction(
     settings: dict,
     all_points: list[dict],
     solar_series: list[float] | None = None,
+    acs_can_heat: bool = False,
 ) -> list[float]:
     """Simulate temperature prediction for the analytics chart.
 
@@ -106,9 +107,9 @@ def simulate_prediction(
         return _simulate_window_open(model, estimator, target_forecast, outdoor_series, current_temp)
 
     if mpc_active:
-        return _simulate_mpc(model, target_forecast, outdoor_series, current_temp, room_config, settings, solar_series=solar_series)
+        return _simulate_mpc(model, target_forecast, outdoor_series, current_temp, room_config, settings, solar_series=solar_series, acs_can_heat=acs_can_heat)
 
-    return _simulate_bangbang(model, target_forecast, outdoor_series, current_temp, room_config, all_points, solar_series=solar_series)
+    return _simulate_bangbang(model, target_forecast, outdoor_series, current_temp, room_config, all_points, solar_series=solar_series, acs_can_heat=acs_can_heat)
 
 
 def _simulate_window_open(
@@ -138,11 +139,12 @@ def _simulate_mpc(
     settings: dict,
     *,
     solar_series: list[float] | None = None,
+    acs_can_heat: bool = False,
 ) -> list[float]:
     """Rolling-horizon MPC simulation matching the real controller."""
     ocm = settings.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
     ohm = settings.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX)
-    can_heat, can_cool = get_can_heat_cool(room_config, None, ocm, ohm)
+    can_heat, can_cool = get_can_heat_cool(room_config, None, ocm, ohm, acs_can_heat=acs_can_heat)
     cw = settings.get("comfort_weight", 70)
 
     optimizer = MPCOptimizer(
@@ -220,10 +222,11 @@ def _simulate_bangbang(
     all_points: list[dict],
     *,
     solar_series: list[float] | None = None,
+    acs_can_heat: bool = False,
 ) -> list[float]:
     """Bang-bang fallback simulation with mode stickiness + idle rate cap."""
     observed_idle_rate = compute_observed_idle_rate(all_points)
-    has_heat = bool(room_config.get("thermostats"))
+    has_heat = bool(room_config.get("thermostats")) or acs_can_heat
     has_cool = bool(room_config.get("acs"))
 
     T = current_temp

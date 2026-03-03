@@ -126,20 +126,38 @@ MIN_IDLE_UPDATES = 60    # ~3 h of idle data at 3-min EKF intervals
 MIN_ACTIVE_UPDATES = 20  # ~1 h of heating or cooling data
 
 
+def check_acs_can_heat(hass: HomeAssistant, room_config: dict) -> bool:
+    """Check if any AC entity in the room supports heating."""
+    for eid in room_config.get("acs", []):
+        state = hass.states.get(eid)
+        if state is None:
+            continue
+        modes = state.attributes.get("hvac_modes", [])
+        if "heat" in modes or "heat_cool" in modes:
+            return True
+    return False
+
+
 def get_can_heat_cool(
     room_config: dict,
     outdoor_temp: float | None = None,
     outdoor_cooling_min: float = DEFAULT_OUTDOOR_COOLING_MIN,
     outdoor_heating_max: float = DEFAULT_OUTDOOR_HEATING_MAX,
+    acs_can_heat: bool = False,
 ) -> tuple[bool, bool]:
     """Determine whether heating/cooling are allowed for a room.
 
     Accounts for climate_mode, device availability, and outdoor temperature
     gating.  This is the single source of truth — used by coordinator,
     controller, and analytics.
+
+    When *acs_can_heat* is True, ACs that support heating (heat pumps)
+    contribute to the heating capability of the room.
     """
     climate_mode = room_config.get("climate_mode", "auto")
-    can_heat = climate_mode != CLIMATE_MODE_COOL_ONLY and bool(room_config.get("thermostats"))
+    can_heat = climate_mode != CLIMATE_MODE_COOL_ONLY and (
+        bool(room_config.get("thermostats")) or acs_can_heat
+    )
     can_cool = climate_mode != CLIMATE_MODE_HEAT_ONLY and bool(room_config.get("acs"))
 
     if outdoor_temp is not None:
@@ -409,6 +427,7 @@ class MPCController:
             self.outdoor_temp,
             self.outdoor_cooling_min,
             self.outdoor_heating_max,
+            acs_can_heat=check_acs_can_heat(self.hass, self.room_config),
         )
 
     def _compute_horizon_blocks(self, model, current_temp, target_temp) -> int:
@@ -486,8 +505,16 @@ class MPCController:
                 else:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
             for eid in self.acs:
-                if can_cool:
+                ac_state = self.hass.states.get(eid)
+                ac_modes = (ac_state.attributes.get("hvac_modes") or []) if ac_state else []
+                if "heat_cool" in ac_modes:
+                    await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat_cool"})
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target})
+                elif can_cool and "cool" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "cool"})
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target})
+                elif can_heat and "heat" in ac_modes:
+                    await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
                     await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target})
                 else:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
@@ -510,8 +537,19 @@ class MPCController:
             for eid in thermostats:
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
                 await self._call("set_temperature", {"entity_id": eid, "temperature": ha_trv})
+            # ACs: heat-capable ones get actual target temp, others turn off
+            ha_target = celsius_to_ha_temp(self.hass, target_temp)
             for eid in self.acs:
-                await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
+                ac_state = self.hass.states.get(eid)
+                ac_modes = (ac_state.attributes.get("hvac_modes") or []) if ac_state else []
+                if "heat" in ac_modes:
+                    await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target})
+                elif "heat_cool" in ac_modes:
+                    await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat_cool"})
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target})
+                else:
+                    await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
         elif mode == MODE_COOLING:
             ha_target = celsius_to_ha_temp(self.hass, target_temp)
             for eid in self.acs:

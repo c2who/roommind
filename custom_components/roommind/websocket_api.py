@@ -20,7 +20,7 @@ from .const import (
     OVERRIDE_TYPES,
     build_override_live,
 )
-from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, get_can_heat_cool, is_mpc_active
+from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, check_acs_can_heat, get_can_heat_cool, is_mpc_active
 from .thermal_model import RoomModelManager
 
 if TYPE_CHECKING:
@@ -568,7 +568,7 @@ async def websocket_get_analytics(
             room_config = store.get_room(area_id) or {}
             has_ext_sensor = bool(room_config.get("temperature_sensor"))
             if has_ext_sensor:
-                can_heat, can_cool = get_can_heat_cool(room_config, coordinator.outdoor_temp)
+                can_heat, can_cool = get_can_heat_cool(room_config, coordinator.outdoor_temp, acs_can_heat=check_acs_can_heat(hass, room_config))
                 T_out = coordinator.outdoor_temp if coordinator.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 mpc_active = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out)
             else:
@@ -640,6 +640,7 @@ async def websocket_get_analytics(
                     settings=settings,
                     all_points=all_points,
                     solar_series=solar_series,
+                    acs_can_heat=check_acs_can_heat(hass, room_config),
                 )
 
     # Merge into unified forecast points on shared 5-min grid
