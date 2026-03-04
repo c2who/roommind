@@ -422,10 +422,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Pause climate control when any window/door is open (with configurable delays)
         raw_open = self._is_window_open(room)
         open_delay = room.get("window_open_delay", 0)
-        # For underfloor heating, enforce a minimum window-open delay to prevent
-        # premature shutoff (the slab radiates regardless, and restarting is slow).
-        if system_type == "underfloor" and open_delay < 300:
-            open_delay = 300
         close_delay = room.get("window_close_delay", 0)
         now = time.time()
         was_paused = self._window_paused.get(area_id, False)

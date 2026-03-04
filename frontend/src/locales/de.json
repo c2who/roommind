@@ -126,10 +126,11 @@
   "devices.type_thermostat": "Thermostat",
   "devices.type_ac": "Klimaanlage",
   "devices.heating_system_type": "Heizungstyp",
-  "devices.heating_system_type_info": "Nach dem Abschalten geben Heizkörper und besonders Fußbodenheizungen gespeicherte Wärme weiter ab. RoomMind berücksichtigt diese Nachlaufwärme, um Überschwingen zu vermeiden und die Modellgenauigkeit zu verbessern. Fußbodenheizungen erhalten außerdem längere Mindestlaufzeiten und eine verzögerte Fenster-Pause.",
+  "devices.heating_system_type_info": "Nach dem Abschalten geben Heizkörper und besonders Fußbodenheizungen gespeicherte Wärme weiter ab. RoomMind berücksichtigt diese Nachlaufwärme, um Überschwingen zu vermeiden und die Modellgenauigkeit zu verbessern. Fußbodenheizungen erhalten außerdem längere Mindestlaufzeiten.",
   "devices.system_type_none": "Standard (kein Nachlauf)",
   "devices.system_type_radiator": "Heizkörper",
   "devices.system_type_underfloor": "Fußbodenheizung",
+  "devices.underfloor_delay_hint": "Fußbodenheizung hat lange Anlaufzeiten. Eine Fenster-Verzögerung von mindestens 5 Minuten wird empfohlen, um unnötige Abschaltungen zu vermeiden.",
 
   "hero.window_open": "Fenster offen – pausiert",
   "card.window_open": "Fenster offen",

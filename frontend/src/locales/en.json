@@ -126,10 +126,11 @@
   "devices.type_thermostat": "Thermostat",
   "devices.type_ac": "AC",
   "devices.heating_system_type": "Heating System Type",
-  "devices.heating_system_type_info": "After heating stops, radiators and especially underfloor systems continue to release stored heat. RoomMind accounts for this residual heat to avoid overshooting and improve model accuracy. Underfloor rooms also get longer minimum run times and a delayed window-open pause.",
+  "devices.heating_system_type_info": "After heating stops, radiators and especially underfloor systems continue to release stored heat. RoomMind accounts for this residual heat to avoid overshooting and improve model accuracy. Underfloor rooms also get longer minimum run times.",
   "devices.system_type_none": "Standard (no residual heat)",
   "devices.system_type_radiator": "Radiator",
   "devices.system_type_underfloor": "Underfloor Heating",
+  "devices.underfloor_delay_hint": "Underfloor heating has long restart times. A window-open delay of at least 5 minutes is recommended to avoid unnecessary shutoffs.",
 
   "hero.window_open": "Window open – paused",
   "card.window_open": "Window open",

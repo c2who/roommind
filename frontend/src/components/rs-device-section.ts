@@ -231,6 +231,22 @@ export class RsDeviceSection extends LitElement {
       color: var(--secondary-text-color);
       padding: 4px 14px 0;
     }
+
+    .delay-hint {
+      display: flex;
+      align-items: flex-start;
+      gap: 6px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--warning-color, #ff9800);
+      padding: 8px 14px 0;
+    }
+
+    .delay-hint ha-icon {
+      --mdc-icon-size: 16px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
   `;
 
   render() {
@@ -484,6 +500,12 @@ export class RsDeviceSection extends LitElement {
               @change=${this._onWindowCloseDelayChange}
             ></ha-textfield>
           </div>
+          ${this.heatingSystemType === "underfloor" && this.windowOpenDelay < 300 ? html`
+            <div class="delay-hint">
+              <ha-icon icon="mdi:information-outline"></ha-icon>
+              ${localize("devices.underfloor_delay_hint", this.hass.language)}
+            </div>
+          ` : nothing}
         ` : nothing}
       </div>
 

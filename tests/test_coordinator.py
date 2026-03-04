@@ -3042,12 +3042,11 @@ class TestResidualHeatTracking:
         assert aid not in coordinator._heating_on_since
 
     @pytest.mark.asyncio
-    async def test_underfloor_window_delay_minimum(self, hass, mock_config_entry):
-        """Underfloor rooms should have at least 300s window open delay.
+    async def test_underfloor_window_delay_respects_user_config(self, hass, mock_config_entry):
+        """Underfloor rooms respect the user-configured window open delay.
 
-        With window_open_delay=0, a standard room would immediately pause.
-        An underfloor room overrides this to 300s, so the first cycle should
-        NOT pause because 0 seconds < 300s.
+        With window_open_delay=0, underfloor rooms pause immediately just
+        like standard rooms (no backend override).
         """
         room = {
             **SAMPLE_ROOM,
@@ -3067,8 +3066,5 @@ class TestResidualHeatTracking:
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        # With window just opened and underfloor, heating should NOT immediately pause
-        # because of the 300s minimum delay (window_open_since was just set, elapsed=0 < 300s)
-        assert not coordinator._window_paused.get(room["area_id"], False)
-        # But the open timestamp should be tracked
-        assert room["area_id"] in coordinator._window_open_since
+        # With delay=0 and window open, underfloor room pauses immediately
+        assert coordinator._window_paused.get(room["area_id"], False)
