@@ -19,6 +19,7 @@ export class RsAreaCard extends LitElement {
   @property({ type: Number }) public tempSensorCount = 0;
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: String }) public controlMode: "mpc" | "bangbang" = "bangbang";
+  @property({ type: Boolean }) public climateControlActive = true;
   @property({ type: Boolean }) public reordering = false;
   @property({ type: Boolean }) public canMoveUp = false;
   @property({ type: Boolean }) public canMoveDown = false;
@@ -245,6 +246,12 @@ export class RsAreaCard extends LitElement {
       font-weight: 300;
       color: var(--secondary-text-color);
       line-height: 1;
+    }
+
+    .uncontrolled-hint {
+      font-size: 11px;
+      color: var(--disabled-text-color, #9e9e9e);
+      margin-top: 6px;
     }
 
     .reorder-overlay {
@@ -476,6 +483,9 @@ export class RsAreaCard extends LitElement {
             : nothing}
         </span>
       </div>
+      ${!this.climateControlActive
+        ? html`<div class="uncontrolled-hint">${localize("card.not_controlled", this.hass.language)}</div>`
+        : nothing}
     `;
   }
 

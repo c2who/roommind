@@ -447,10 +447,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mode = MODE_IDLE
             power_fraction = 0.0
 
+        # observed_mode/observed_pf: only populated when climate control is off
+        observed_mode: str | None = None
+        observed_pf = 0.0
+
+        climate_active = settings.get("climate_control_active", True)
+
         # --- Residual heat transition tracking ---
         # Update heating start/stop timestamps based on current mode.
         # q_residual was already computed above from previous cycle state.
-        if system_type:
+        # Only track when climate control is active — RoomMind-initiated heating
+        # transitions don't exist when control is disabled.
+        if climate_active and system_type:
             if mode == MODE_HEATING:
                 # Actively heating: track start time, clear residual
                 self._heating_off_since.pop(area_id, None)
@@ -468,8 +476,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Exclude TRVs currently being valve-protection-cycled from normal control
         cycling_eids = {eid for eid in room.get("thermostats", []) if eid in self._valve_cycling}
-
-        if settings.get("climate_control_active", True):
+        if climate_active:
             try:
                 await controller.async_apply(
                     mode, target_temp, power_fraction=power_fraction,
@@ -482,8 +489,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
         else:
-            # Climate control disabled (learn-only) — do NOT send any commands.
-            # Observe actual device state for accurate model training.
+            # Climate control disabled (learn-only) — do NOT send commands,
+            # do NOT touch mode/power_fraction (used for internal tracking).
             observed_mode, observed_pf = self._observe_device_action(room)
             if observed_mode is not None and observed_mode != MODE_IDLE:
                 _LOGGER.debug(
@@ -503,7 +510,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Determine mode for EKF training: when control is disabled, use
         # observed device state so self-regulating thermostats don't corrupt
         # the model (see #36).
-        climate_active = settings.get("climate_control_active", True)
         if climate_active:
             ekf_mode: str | None = mode
             ekf_pf = power_fraction
@@ -589,13 +595,30 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 trv_max_temps.append(st.attributes["max_temp"])
         device_max_temp = min(trv_max_temps) if trv_max_temps else None
 
+        # Compute display mode: when control is off, show actual device state
+        # without affecting internal tracking (residual heat, valve actuation,
+        # _previous_modes).  See #36.
+        if climate_active:
+            display_mode = mode
+            display_pf = power_fraction
+        else:
+            if observed_mode is not None and observed_mode != MODE_IDLE:
+                display_mode = observed_mode
+                display_pf = observed_pf
+            elif observed_mode is None:
+                display_mode = self._infer_device_mode(room)
+                display_pf = 1.0 if display_mode != MODE_IDLE else 0.0
+            else:
+                display_mode = MODE_IDLE
+                display_pf = 0.0
+
         return {
             "area_id": area_id,
             "current_temp": current_temp,
             "current_humidity": current_humidity,
             "target_temp": target_temp,
-            "mode": mode,
-            "heating_power": round(power_fraction * 100) if mode != MODE_IDLE else 0,
+            "mode": display_mode,
+            "heating_power": round(display_pf * 100) if display_mode != MODE_IDLE else 0,
             "trv_setpoint": self._compute_trv_setpoint(mode, power_fraction, current_temp, target_temp, has_external_sensor, device_max_temp),
             "window_open": window_open,
             **build_override_live(room),
@@ -795,6 +818,29 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         pf = 1.0 if dominated in ("heating", "cooling") else 0.0
         return (dominated, pf)
+
+    def _infer_device_mode(self, room: dict) -> str:
+        """Infer heating/cooling from hvac_mode when hvac_action is unavailable.
+
+        Compares current_temperature to the device setpoint to avoid showing
+        'Heating' when the thermostat is in heat mode but already at target.
+        Used only for dashboard display — EKF training uses _observe_device_action.
+        """
+        for eid in room.get("thermostats", []) + room.get("acs", []):
+            state = self.hass.states.get(eid)
+            if state is None or state.state in ("unavailable", "unknown", "off"):
+                continue
+            current = state.attributes.get("current_temperature")
+            setpoint = state.attributes.get("temperature")
+            if state.state == "heat":
+                if current is not None and setpoint is not None and current >= setpoint:
+                    continue  # at or above setpoint — not actively heating
+                return MODE_HEATING
+            if state.state == "cool":
+                if current is not None and setpoint is not None and current <= setpoint:
+                    continue  # at or below setpoint — not actively cooling
+                return MODE_COOLING
+        return MODE_IDLE
 
     def _is_window_open(self, room: dict) -> bool:
         """Return True if any configured window/door sensor reports 'on' (open)."""

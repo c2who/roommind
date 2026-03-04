@@ -53,6 +53,7 @@ export class RoomMindPanel extends LitElement {
   @state() private _hiddenRooms: string[] = [];
   @state() private _showHiddenRooms = false;
   @state() private _controlMode: "mpc" | "bangbang" = "bangbang";
+  @state() private _climateControlActive = true;
   @state() private _presenceEnabled = false;
   @state() private _anyoneHome = true;
   @state() private _presencePersons: string[] = [];
@@ -467,6 +468,7 @@ export class RoomMindPanel extends LitElement {
             .hass=${this.hass}
             .presenceEnabled=${this._presenceEnabled}
             .presencePersons=${this._presencePersons}
+            .climateControlActive=${this._climateControlActive}
             @back-clicked=${this._onBackFromDetail}
             @room-updated=${this._onRoomUpdated}
           ></rs-room-detail>
@@ -604,6 +606,7 @@ export class RoomMindPanel extends LitElement {
                 .tempSensorCount=${info.tempSensorCount}
                 .hass=${this.hass}
                 .controlMode=${this._controlMode}
+                .climateControlActive=${this._climateControlActive}
                 .reordering=${this._reorderMode}
                 .canMoveUp=${idx > 0}
                 .canMoveDown=${idx < group.items.length - 1}
@@ -720,6 +723,7 @@ export class RoomMindPanel extends LitElement {
         room_order: string[];
         group_by_floor: boolean;
         control_mode: "mpc" | "bangbang";
+        climate_control_active: boolean;
         presence_enabled: boolean;
         anyone_home: boolean;
         presence_persons: string[];
@@ -734,6 +738,7 @@ export class RoomMindPanel extends LitElement {
       this._roomOrder = result.room_order ?? [];
       this._groupByFloor = result.group_by_floor ?? false;
       this._controlMode = result.control_mode ?? "bangbang";
+      this._climateControlActive = result.climate_control_active ?? true;
       this._presenceEnabled = result.presence_enabled ?? false;
       this._anyoneHome = result.anyone_home ?? true;
       this._presencePersons = result.presence_persons ?? [];

@@ -16,6 +16,7 @@ export class RsHeroStatus extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public area!: HassArea;
   @property({ attribute: false }) public config: RoomConfig | null = null;
+  @property({ type: Boolean }) public climateControlActive = true;
   /** Optimistic override state passed from parent for instant feedback. */
   @property({ attribute: false }) public overrideInfo: {
     active: boolean;
@@ -252,6 +253,12 @@ export class RsHeroStatus extends LitElement {
         padding: 2px 0;
         text-decoration: underline;
       }
+
+      .uncontrolled-hint {
+        font-size: 12px;
+        color: var(--disabled-text-color, #9e9e9e);
+        margin-top: 8px;
+      }
     `,
   ];
 
@@ -484,6 +491,9 @@ export class RsHeroStatus extends LitElement {
                     <ha-icon icon="mdi:shield-check"></ha-icon>
                     ${localize("card.mold_prevention", this.hass?.language ?? "en", { delta: toDisplayDelta(live.mold_prevention_delta, this.hass).toFixed(0), unit: tempUnit(this.hass) })}
                   </div>`
+                : nothing}
+              ${!this.climateControlActive
+                ? html`<div class="uncontrolled-hint">${localize("card.not_controlled", this.hass?.language ?? "en")}</div>`
                 : nothing}
             `
           : this.config

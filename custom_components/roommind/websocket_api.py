@@ -162,6 +162,7 @@ async def websocket_list_rooms(
         "room_order": settings.get("room_order", []),
         "group_by_floor": settings.get("group_by_floor", False),
         "control_mode": settings.get("control_mode", "bangbang"),
+        "climate_control_active": settings.get("climate_control_active", True),
         "presence_enabled": settings.get("presence_enabled", False),
         "presence_persons": settings.get("presence_persons", []),
         "anyone_home": _compute_anyone_home(hass, settings),

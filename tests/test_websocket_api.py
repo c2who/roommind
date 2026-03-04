@@ -73,6 +73,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
         "room_order": [],
         "group_by_floor": False,
         "control_mode": "bangbang",
+        "climate_control_active": True,
         "presence_enabled": False,
         "presence_persons": [],
         "anyone_home": True,

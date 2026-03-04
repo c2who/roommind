@@ -64,6 +64,7 @@
   "card.tap_configure": "Tap to configure",
   "card.mpc_active": "MPC active",
   "card.mpc_learning": "MPC learning",
+  "card.not_controlled": "Not controlled by RoomMind",
 
   "mode.auto": "Auto",
   "mode.auto_desc": "Heats & cools automatically based on target temperature",

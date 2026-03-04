@@ -2262,10 +2262,10 @@ class TestClimateControlDisabled:
         for _ in range(13):
             data = await coordinator._async_update_data()
 
-        # Display mode must be idle (RoomMind isn't controlling)
+        # Display mode reflects observed device state (#36)
         room = data["rooms"]["living_room_abc12345"]
-        assert room["mode"] == "idle"
-        assert room["heating_power"] == 0
+        assert room["mode"] == "heating"
+        assert room["heating_power"] == 100
 
         # EKF should have trained with heating mode
         n_idle, n_heating, n_cooling = coordinator._model_manager.get_mode_counts(
@@ -2305,6 +2305,41 @@ class TestClimateControlDisabled:
         assert n_idle == 0 and n_heating == 0 and n_cooling == 0, (
             "No training should occur when hvac_action is missing"
         )
+
+    @pytest.mark.asyncio
+    async def test_inferred_heating_does_not_affect_previous_modes(
+        self, hass, mock_config_entry
+    ):
+        """Display mode (inferred heating) must not contaminate _previous_modes."""
+        room = {**SAMPLE_ROOM, "heating_system_type": "radiator"}
+        store = _make_store_mock({"living_room_abc12345": room})
+        store.get_settings.return_value = {"climate_control_active": False}
+        hass.data = {"roommind": {"store": store}}
+
+        # Thermostat in heat mode, no hvac_action → inferred heating for display
+        hass.states.get = MagicMock(
+            side_effect=make_mock_states_get(
+                temp="18.0", humidity="55.0",
+                extra={
+                    "climate.living_room": (
+                        "heat",
+                        {"current_temperature": 18, "temperature": 30},
+                    ),
+                },
+            ),
+        )
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room_data = data["rooms"]["living_room_abc12345"]
+        # Display should show heating (inferred from hvac_mode + setpoint)
+        assert room_data["mode"] == "heating"
+        # Internal _previous_modes must stay idle (no side effects)
+        assert coordinator._previous_modes.get("living_room_abc12345") == "idle"
+        # Residual heat tracking must not be triggered
+        assert "living_room_abc12345" not in coordinator._heating_on_since
 
     @pytest.mark.asyncio
     async def test_device_off_trains_as_idle(

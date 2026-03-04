@@ -24,6 +24,7 @@ export class RsRoomDetail extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Boolean }) public presenceEnabled = false;
   @property({ attribute: false }) public presencePersons: string[] = [];
+  @property({ type: Boolean }) public climateControlActive = true;
 
   @state() private _selectedThermostats: Set<string> = new Set();
   @state() private _selectedAcs: Set<string> = new Set();
@@ -464,6 +465,7 @@ export class RsRoomDetail extends LitElement {
             .area=${this.area}
             .config=${this.config}
             .overrideInfo=${this._getEffectiveOverride()}
+            .climateControlActive=${this.climateControlActive}
             @display-name-changed=${this._onDisplayNameChanged}
           ></rs-hero-status>
 
