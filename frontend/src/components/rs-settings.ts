@@ -493,6 +493,11 @@ export class RsSettings extends LitElement {
             <ha-select
               .label=${localize("schedule.off_action_label", l)}
               .value=${this._scheduleOffAction}
+              .options=${[
+                { value: "eco", label: localize("schedule.off_action_eco", l) },
+                { value: "off", label: localize("schedule.off_action_off", l) },
+              ]}
+              fixedMenuPosition
               @selected=${this._onScheduleOffActionChanged}
               @closed=${(e: Event) => e.stopPropagation()}
               style="margin-top: 8px"
@@ -643,6 +648,11 @@ export class RsSettings extends LitElement {
                     <ha-select
                       .label=${localize("presence.away_action_label", l)}
                       .value=${this._presenceAwayAction}
+                      .options=${[
+                        { value: "eco", label: localize("presence.away_action_eco", l) },
+                        { value: "off", label: localize("presence.away_action_off", l) },
+                      ]}
+                      fixedMenuPosition
                       @selected=${this._onPresenceAwayActionChanged}
                       @closed=${(e: Event) => e.stopPropagation()}
                       style="margin-top: 8px"
@@ -1184,16 +1194,16 @@ export class RsSettings extends LitElement {
     this._autoSave();
   }
 
-  private _onPresenceAwayActionChanged(e: CustomEvent) {
-    const val = (e.target as HTMLSelectElement).value as "eco" | "off";
+  private _onPresenceAwayActionChanged(e: Event) {
+    const val = getSelectValue(e) as "eco" | "off";
     if (val && val !== this._presenceAwayAction) {
       this._presenceAwayAction = val;
       this._autoSave();
     }
   }
 
-  private _onScheduleOffActionChanged(e: CustomEvent) {
-    const val = (e.target as HTMLSelectElement).value as "eco" | "off";
+  private _onScheduleOffActionChanged(e: Event) {
+    const val = getSelectValue(e) as "eco" | "off";
     if (val && val !== this._scheduleOffAction) {
       this._scheduleOffAction = val;
       this._autoSave();
