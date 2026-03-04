@@ -1353,6 +1353,115 @@ class TestPresenceDetection:
         assert room["target_temp"] == 21.0  # comfort (presence disabled)
         assert room["presence_away"] is False
 
+    @pytest.mark.asyncio
+    async def test_presence_away_action_off_forces_idle(self, hass, mock_config_entry):
+        """When presence_away_action is 'off', devices are turned off (target=None, force_off=True)."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        store.get_settings.return_value = {
+            "presence_enabled": True,
+            "presence_persons": ["person.kevin"],
+            "presence_away_action": "off",
+        }
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=_presence_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["target_temp"] is None
+        assert room["mode"] == "idle"
+        assert room["force_off"] is True
+        assert room["presence_away"] is True
+
+    @pytest.mark.asyncio
+    async def test_presence_away_action_eco_backward_compat(self, hass, mock_config_entry):
+        """When presence_away_action is 'eco' (default), eco_temp is used."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        store.get_settings.return_value = {
+            "presence_enabled": True,
+            "presence_persons": ["person.kevin"],
+            "presence_away_action": "eco",
+        }
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=_presence_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["target_temp"] == 17.0  # eco_temp
+        assert room["force_off"] is False
+
+    @pytest.mark.asyncio
+    async def test_schedule_off_action_off_forces_idle(self, hass, mock_config_entry):
+        """When schedule_off_action is 'off' and schedule is off, devices are turned off."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        store.get_settings.return_value = {
+            "schedule_off_action": "off",
+        }
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(
+            schedule_state="off",
+        ))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["target_temp"] is None
+        assert room["mode"] == "idle"
+        assert room["force_off"] is True
+
+    @pytest.mark.asyncio
+    async def test_schedule_off_action_eco_backward_compat(self, hass, mock_config_entry):
+        """When schedule_off_action is 'eco' (default), eco_temp is used."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        store.get_settings.return_value = {
+            "schedule_off_action": "eco",
+        }
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(
+            schedule_state="off",
+        ))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["target_temp"] == 17.0  # eco_temp
+        assert room["force_off"] is False
+
+    @pytest.mark.asyncio
+    async def test_override_beats_force_off(self, hass, mock_config_entry):
+        """Manual override takes priority even when presence_away_action is 'off'."""
+        room_with_override = {
+            **SAMPLE_ROOM,
+            "override_temp": 25.0,
+            "override_until": time.time() + 3600,
+            "override_type": "boost",
+        }
+        store = _make_store_mock({"living_room_abc12345": room_with_override})
+        store.get_settings.return_value = {
+            "presence_enabled": True,
+            "presence_persons": ["person.kevin"],
+            "presence_away_action": "off",
+        }
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=_presence_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["target_temp"] == 25.0  # override wins
+        assert room["force_off"] is False
+
 
 # ---------------------------------------------------------------------------
 # T3: Coordinator + MPC Integration Tests

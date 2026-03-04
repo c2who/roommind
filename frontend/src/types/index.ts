@@ -79,6 +79,8 @@ export interface GlobalSettings {
   vacation_until?: number | null;
   presence_enabled?: boolean;
   presence_persons?: string[];
+  presence_away_action?: "eco" | "off";
+  schedule_off_action?: "eco" | "off";
   valve_protection_enabled?: boolean;
   valve_protection_interval_days?: number;
   mold_detection_enabled?: boolean;

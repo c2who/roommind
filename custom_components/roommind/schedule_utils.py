@@ -26,8 +26,13 @@ def resolve_target_at_time(
     eco_temp: float,
     presence_away: bool = False,
     block_temp_converter: "Callable[[float], float] | None" = None,
-) -> float:
-    """Resolve what the target temp would be at a specific timestamp."""
+    presence_away_action: str = "eco",
+    schedule_off_action: str = "eco",
+) -> float | None:
+    """Resolve what the target temp would be at a specific timestamp.
+
+    Returns None when the action is "off" (devices should be turned off).
+    """
     # 1. Override
     if override_until is not None and ts < override_until and override_temp is not None:
         return float(override_temp)
@@ -36,6 +41,8 @@ def resolve_target_at_time(
         return float(vacation_temp)
     # 2.5 Presence
     if presence_away:
+        if presence_away_action == "off":
+            return None
         return eco_temp
     # 3. Schedule blocks
     if schedule_blocks is None:
@@ -59,7 +66,9 @@ def resolve_target_at_time(
                 except (ValueError, TypeError):
                     pass
             return comfort_temp
-    # Not in any block → eco
+    # Not in any block → eco or off
+    if schedule_off_action == "off":
+        return None
     return eco_temp
 
 
@@ -138,14 +147,19 @@ def make_target_resolver(
     hass: "HomeAssistant | None" = None,
     presence_away: bool = False,
     mold_prevention_delta: float = 0.0,
-) -> Callable[[float], float]:
-    """Create a sync target resolver function (schedule blocks pre-fetched)."""
+) -> Callable[[float], float | None]:
+    """Create a sync target resolver function (schedule blocks pre-fetched).
+
+    Returns None for timestamps where devices should be turned off.
+    """
     comfort_temp = room.get("comfort_temp", 21.0)
     eco_temp = room.get("eco_temp", 17.0)
     override_until = room.get("override_until")
     override_temp = room.get("override_temp")
     vacation_until = settings.get("vacation_until")
     vacation_temp = settings.get("vacation_temp")
+    presence_away_action = settings.get("presence_away_action", "eco")
+    schedule_off_action = settings.get("schedule_off_action", "eco")
 
     converter: Callable[[float], float] | None = None
     if hass is not None:
@@ -153,7 +167,7 @@ def make_target_resolver(
         _hass = hass
         converter = lambda v: ha_temp_to_celsius(_hass, v)  # noqa: E731
 
-    def resolver(ts: float) -> float:
+    def resolver(ts: float) -> float | None:
         base = resolve_target_at_time(
             ts, schedule_blocks,
             override_until, override_temp,
@@ -161,6 +175,10 @@ def make_target_resolver(
             comfort_temp, eco_temp,
             presence_away=presence_away,
             block_temp_converter=converter,
+            presence_away_action=presence_away_action,
+            schedule_off_action=schedule_off_action,
         )
+        if base is None:
+            return None
         return base + mold_prevention_delta
     return resolver

@@ -195,9 +195,13 @@ def _simulate_mpc(
     for i in range(len(target_forecast)):
         tgt = target_forecast[i]["target_temp"]
 
+        # Force idle when target is None (devices turned off)
+        if tgt is None:
+            action = MODE_IDLE
+            pf = 0.0
         # External stickiness: once heating/cooling, continue until
         # target is reached.  Mirrors real HVAC behaviour.
-        if prev_action == MODE_HEATING and T < tgt and can_heat:
+        elif prev_action == MODE_HEATING and T < tgt and can_heat:
             action = MODE_HEATING
             pf = 1.0
         elif prev_action == MODE_COOLING and T > tgt and can_cool:
@@ -209,7 +213,8 @@ def _simulate_mpc(
         else:
             remaining_outdoor = outdoor_series[i:]
             remaining_targets = [
-                tf["target_temp"] for tf in target_forecast[i:]
+                tf["target_temp"] if tf["target_temp"] is not None else T
+                for tf in target_forecast[i:]
             ]
             remaining_solar = solar_series[i:] if solar_series else None
             # Build residual series for remaining blocks
@@ -308,7 +313,11 @@ def _simulate_bangbang(
 
     for i, tf in enumerate(target_forecast):
         tgt = tf["target_temp"]
-        if sim_mode != MODE_IDLE and blocks_in_mode < min_run:
+        if tgt is None:
+            # Force idle when target is None (devices turned off)
+            sim_mode = MODE_IDLE
+            blocks_in_mode = 0
+        elif sim_mode != MODE_IDLE and blocks_in_mode < min_run:
             pass  # honour minimum run time
         elif sim_mode == MODE_HEATING:
             if T >= tgt:

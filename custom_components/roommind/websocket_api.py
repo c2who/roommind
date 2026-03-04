@@ -47,7 +47,8 @@ _SETTINGS_SAVE_FIELDS = (
     "control_mode", "comfort_weight", "weather_entity",
     "climate_control_active", "learning_disabled_rooms", "hidden_rooms",
     "vacation_temp", "vacation_until", "prediction_enabled",
-    "presence_enabled", "presence_persons",
+    "presence_enabled", "presence_persons", "presence_away_action",
+    "schedule_off_action",
     "valve_protection_enabled", "valve_protection_interval_days",
     "mold_detection_enabled", "mold_humidity_threshold",
     "mold_sustained_minutes", "mold_notification_cooldown",
@@ -165,6 +166,8 @@ async def websocket_list_rooms(
         "climate_control_active": settings.get("climate_control_active", True),
         "presence_enabled": settings.get("presence_enabled", False),
         "presence_persons": settings.get("presence_persons", []),
+        "presence_away_action": settings.get("presence_away_action", "eco"),
+        "schedule_off_action": settings.get("schedule_off_action", "eco"),
         "anyone_home": _compute_anyone_home(hass, settings),
     })
 
@@ -392,6 +395,8 @@ async def websocket_get_settings(
         vol.Optional("vacation_until"): vol.Any(vol.Coerce(float), None),
         vol.Optional("presence_enabled"): bool,
         vol.Optional("presence_persons"): [str],
+        vol.Optional("presence_away_action"): vol.In(["eco", "off"]),
+        vol.Optional("schedule_off_action"): vol.In(["eco", "off"]),
         vol.Optional("valve_protection_enabled"): bool,
         vol.Optional("valve_protection_interval_days"): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=90)
@@ -499,9 +504,16 @@ async def _compute_target_forecast(
             comfort_temp, eco_temp,
             presence_away=presence_away,
             block_temp_converter=converter,
+            presence_away_action=settings.get("presence_away_action", "eco"),
+            schedule_off_action=settings.get("schedule_off_action", "eco"),
         )
-        target += mold_prevention_delta
-        result.append({"ts": round(ts, 1), "target_temp": round(target, 1)})
+        if target is not None:
+            target = round(target + mold_prevention_delta, 1)
+        elif mold_prevention_delta > 0:
+            # Safety: mold prevention overrides "off" to prevent structural
+            # damage, matching coordinator behavior.
+            target = round(eco_temp + mold_prevention_delta, 1)
+        result.append({"ts": round(ts, 1), "target_temp": target})
         ts += interval_minutes * 60
     return result
 

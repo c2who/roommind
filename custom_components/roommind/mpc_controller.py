@@ -332,16 +332,20 @@ class MPCController:
         # Build residual heat series (decaying from current q_residual)
         residual_series = self._build_residual_series(horizon_blocks)
 
-        # Build target series with schedule lookahead for pre-heating/pre-cooling
+        # Build target series with schedule lookahead for pre-heating/pre-cooling.
+        # None values (from "off" action) are replaced with current_temp so the
+        # optimizer sees "no deviation needed = idle optimal".
         if self._target_resolver is not None:
             now = time.time()
             dt_seconds = PLAN_DT_MINUTES * 60
-            target_series = [
+            raw_targets = [
                 self._target_resolver(now + i * dt_seconds)
                 for i in range(horizon_blocks)
             ]
+            target_series = [t if t is not None else current_temp for t in raw_targets]
         else:
-            target_series = [target_temp] * horizon_blocks
+            fallback = target_temp if target_temp is not None else current_temp
+            target_series = [fallback] * horizon_blocks
 
         from .residual_heat import get_min_run_blocks
         min_run = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES)
@@ -375,7 +379,7 @@ class MPCController:
         # Prevents the optimizer from heating/cooling past the setpoint
         # due to model inaccuracies, while preserving pre-heating/pre-cooling
         # when a schedule change justifies it.
-        near_targets = target_series[:6]  # next 30 minutes
+        near_targets = target_series[:6]
         if near_targets:
             if action == MODE_HEATING and current_temp >= max(near_targets):
                 action = MODE_IDLE

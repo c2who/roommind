@@ -57,6 +57,7 @@ export class RoomMindPanel extends LitElement {
   @state() private _presenceEnabled = false;
   @state() private _anyoneHome = true;
   @state() private _presencePersons: string[] = [];
+  @state() private _presenceAwayAction: "eco" | "off" = "eco";
   @state() private _saveStatus: "idle" | "saving" | "saved" | "error" = "idle";
   @state() private _roomOrder: string[] = [];
   @state() private _groupByFloor = false;
@@ -587,7 +588,7 @@ export class RoomMindPanel extends LitElement {
                 <ha-icon icon="mdi:home-off-outline"></ha-icon>
                 <div class="vacation-text">
                   <span class="vacation-title">${localize("presence.banner_title", this.hass.language)}</span>
-                  <span class="vacation-detail">${localize("presence.banner_detail", this.hass.language)}</span>
+                  <span class="vacation-detail">${localize(this._presenceAwayAction === "off" ? "presence.banner_detail_off" : "presence.banner_detail", this.hass.language)}</span>
                 </div>
               </div>
             </ha-card>
@@ -727,6 +728,8 @@ export class RoomMindPanel extends LitElement {
         presence_enabled: boolean;
         anyone_home: boolean;
         presence_persons: string[];
+        presence_away_action: "eco" | "off";
+        schedule_off_action: "eco" | "off";
       }>({
         type: "roommind/rooms/list",
       });
@@ -742,6 +745,7 @@ export class RoomMindPanel extends LitElement {
       this._presenceEnabled = result.presence_enabled ?? false;
       this._anyoneHome = result.anyone_home ?? true;
       this._presencePersons = result.presence_persons ?? [];
+      this._presenceAwayAction = result.presence_away_action ?? "eco";
     } catch (err) {
       console.debug("[RoomMind] loadRooms:", err);
     } finally {

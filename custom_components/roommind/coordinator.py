@@ -356,11 +356,19 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         self._mold_throttler.clear(f"prevent_{area_id}")
 
         # Determine target temperature from HA schedule entity
+        # Returns None when devices should be turned off (presence_away_action
+        # or schedule_off_action is "off").
         target_temp = self._resolve_target_temp(room, settings)
 
-        # Apply mold prevention temperature delta (additive on resolved target)
+        # Apply mold prevention temperature delta (additive on resolved target).
+        # Safety: mold prevention overrides "off" to prevent structural damage.
+        force_off = target_temp is None
         if mold_prevention_active_room and mold_prevention_temp_delta > 0:
-            target_temp += mold_prevention_temp_delta
+            if force_off:
+                target_temp = room.get("eco_temp", 17.0) + mold_prevention_temp_delta
+                force_off = False
+            else:
+                target_temp += mold_prevention_temp_delta
 
         # Read schedule blocks for MPC lookahead (pre-heating/pre-cooling)
         from .schedule_utils import get_active_schedule_entity, make_target_resolver, read_schedule_blocks
@@ -406,6 +414,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             heating_system_type=system_type,
         )
         mode, power_fraction = await controller.async_evaluate(current_temp, target_temp)
+
+        # Force idle when target resolved to "off" (presence away or schedule off)
+        if force_off:
+            mode = MODE_IDLE
+            power_fraction = 0.0
 
         # Store MPC prediction forecast for analytics
         if controller.last_plan and len(controller.last_plan.temperatures) > 1:
@@ -626,6 +639,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "confidence": self._model_manager.get_confidence(area_id),
             "mpc_active": mpc_active,
             "presence_away": presence_away,
+            "force_off": force_off,
             "mold_risk_level": mold_risk_level,
             "mold_surface_rh": (
                 round(mold_surface_rh, 1) if mold_surface_rh is not None else None
@@ -863,10 +877,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         from .schedule_utils import resolve_schedule_index
         return resolve_schedule_index(self.hass, room)
 
-    def _resolve_target_temp(self, room: dict, settings: dict) -> float:
+    def _resolve_target_temp(self, room: dict, settings: dict) -> float | None:
         """Resolve target temperature.
 
         Priority: override > vacation > presence away > schedule block temp > comfort/eco temp.
+        Returns None when action is "off" (devices should be turned off).
         """
         # 1. Check active override
         override_until = room.get("override_until")
@@ -902,8 +917,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     })
                 )
 
-        # 2.5 Presence-based eco
+        # 2.5 Presence-based eco or off
         if self._is_presence_away(room, settings):
+            if settings.get("presence_away_action", "eco") == "off":
+                return None
             return room.get("eco_temp", 17.0)
 
         # 3. Schedule / comfort / eco
@@ -939,7 +956,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     pass
             return comfort_temp
 
-        # Schedule is "off" -> eco mode
+        # Schedule is "off" -> eco or off
+        if settings.get("schedule_off_action", "eco") == "off":
+            return None
         return eco_temp
 
     async def async_room_added(self, room: dict) -> None:

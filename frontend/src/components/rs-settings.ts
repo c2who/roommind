@@ -30,6 +30,8 @@ export class RsSettings extends LitElement {
   @state() private _vacationUntil = "";
   @state() private _presenceEnabled = false;
   @state() private _presencePersons: string[] = [];
+  @state() private _presenceAwayAction: "eco" | "off" = "eco";
+  @state() private _scheduleOffAction: "eco" | "off" = "eco";
   @state() private _valveProtectionEnabled = false;
   @state() private _valveProtectionInterval = 7;
   @state() private _moldDetectionEnabled = false;
@@ -408,6 +410,8 @@ export class RsSettings extends LitElement {
       }
       this._presenceEnabled = result.settings.presence_enabled ?? false;
       this._presencePersons = result.settings.presence_persons ?? [];
+      this._presenceAwayAction = result.settings.presence_away_action ?? "eco";
+      this._scheduleOffAction = result.settings.schedule_off_action ?? "eco";
       this._valveProtectionEnabled = result.settings.valve_protection_enabled ?? false;
       this._valveProtectionInterval = result.settings.valve_protection_interval_days ?? 7;
       this._moldDetectionEnabled = result.settings.mold_detection_enabled ?? false;
@@ -486,6 +490,16 @@ export class RsSettings extends LitElement {
                 @change=${this._onClimateControlChanged}
               ></ha-switch>
             </div>
+            <ha-select
+              .label=${localize("schedule.off_action_label", l)}
+              .value=${this._scheduleOffAction}
+              @selected=${this._onScheduleOffActionChanged}
+              @closed=${(e: Event) => e.stopPropagation()}
+              style="margin-top: 8px"
+            >
+              <ha-list-item value="eco">${localize("schedule.off_action_eco", l)}</ha-list-item>
+              <ha-list-item value="off">${localize("schedule.off_action_off", l)}</ha-list-item>
+            </ha-select>
           </div>
 
           <div class="settings-section">
@@ -626,6 +640,16 @@ export class RsSettings extends LitElement {
                         picker.value = "";
                       }}
                     ></ha-entity-picker>
+                    <ha-select
+                      .label=${localize("presence.away_action_label", l)}
+                      .value=${this._presenceAwayAction}
+                      @selected=${this._onPresenceAwayActionChanged}
+                      @closed=${(e: Event) => e.stopPropagation()}
+                      style="margin-top: 8px"
+                    >
+                      <ha-list-item value="eco">${localize("presence.away_action_eco", l)}</ha-list-item>
+                      <ha-list-item value="off">${localize("presence.away_action_off", l)}</ha-list-item>
+                    </ha-select>
                   </div>
                 `
               : nothing}
@@ -1160,6 +1184,22 @@ export class RsSettings extends LitElement {
     this._autoSave();
   }
 
+  private _onPresenceAwayActionChanged(e: CustomEvent) {
+    const val = (e.target as HTMLSelectElement).value as "eco" | "off";
+    if (val && val !== this._presenceAwayAction) {
+      this._presenceAwayAction = val;
+      this._autoSave();
+    }
+  }
+
+  private _onScheduleOffActionChanged(e: CustomEvent) {
+    const val = (e.target as HTMLSelectElement).value as "eco" | "off";
+    if (val && val !== this._scheduleOffAction) {
+      this._scheduleOffAction = val;
+      this._autoSave();
+    }
+  }
+
   private _onValveProtectionToggled(e: Event) {
     this._valveProtectionEnabled = (e.target as HTMLInputElement).checked;
     this._autoSave();
@@ -1417,6 +1457,8 @@ export class RsSettings extends LitElement {
           : null,
         presence_enabled: this._presenceEnabled,
         presence_persons: this._presencePersons.filter(p => p),
+        presence_away_action: this._presenceAwayAction,
+        schedule_off_action: this._scheduleOffAction,
         valve_protection_enabled: this._valveProtectionEnabled,
         valve_protection_interval_days: this._valveProtectionInterval,
         mold_detection_enabled: this._moldDetectionEnabled,

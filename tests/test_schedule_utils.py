@@ -391,6 +391,139 @@ class TestResolveTargetAtTime:
         )
         assert result == 22.0
 
+    def test_presence_away_action_off_returns_none(self):
+        """When presence_away_action is 'off' and presence away, returns None."""
+        now = time.time()
+        result = resolve_target_at_time(
+            ts=now,
+            schedule_blocks=None,
+            override_until=None,
+            override_temp=None,
+            vacation_until=None,
+            vacation_temp=None,
+            comfort_temp=21.0,
+            eco_temp=18.0,
+            presence_away=True,
+            presence_away_action="off",
+        )
+        assert result is None
+
+    def test_presence_away_action_eco_returns_eco(self):
+        """When presence_away_action is 'eco' and presence away, returns eco_temp."""
+        now = time.time()
+        result = resolve_target_at_time(
+            ts=now,
+            schedule_blocks=None,
+            override_until=None,
+            override_temp=None,
+            vacation_until=None,
+            vacation_temp=None,
+            comfort_temp=21.0,
+            eco_temp=18.0,
+            presence_away=True,
+            presence_away_action="eco",
+        )
+        assert result == 18.0
+
+    def test_schedule_off_action_off_returns_none(self):
+        """When schedule_off_action is 'off' and outside schedule blocks, returns None."""
+        dt = datetime(2025, 1, 6, 23, 0, 0)  # Monday 23:00 - outside blocks
+        ts = dt.timestamp()
+        schedule_blocks = {
+            "monday": [
+                {"from": "08:00:00", "to": "12:00:00", "data": {"temperature": 22.0}},
+            ],
+        }
+        result = resolve_target_at_time(
+            ts=ts,
+            schedule_blocks=schedule_blocks,
+            override_until=None,
+            override_temp=None,
+            vacation_until=None,
+            vacation_temp=None,
+            comfort_temp=21.0,
+            eco_temp=18.0,
+            schedule_off_action="off",
+        )
+        assert result is None
+
+    def test_schedule_off_action_eco_returns_eco(self):
+        """When schedule_off_action is 'eco' (default), returns eco_temp."""
+        dt = datetime(2025, 1, 6, 23, 0, 0)  # Monday 23:00 - outside blocks
+        ts = dt.timestamp()
+        schedule_blocks = {
+            "monday": [
+                {"from": "08:00:00", "to": "12:00:00", "data": {"temperature": 22.0}},
+            ],
+        }
+        result = resolve_target_at_time(
+            ts=ts,
+            schedule_blocks=schedule_blocks,
+            override_until=None,
+            override_temp=None,
+            vacation_until=None,
+            vacation_temp=None,
+            comfort_temp=21.0,
+            eco_temp=18.0,
+            schedule_off_action="eco",
+        )
+        assert result == 18.0
+
+    def test_override_beats_presence_away_off(self):
+        """Active override takes priority even when presence_away_action is 'off'."""
+        now = time.time()
+        result = resolve_target_at_time(
+            ts=now,
+            schedule_blocks=None,
+            override_until=now + 3600,
+            override_temp=25.0,
+            vacation_until=None,
+            vacation_temp=None,
+            comfort_temp=21.0,
+            eco_temp=18.0,
+            presence_away=True,
+            presence_away_action="off",
+        )
+        assert result == 25.0
+
+
+class TestMakeTargetResolverOffActions:
+    """Tests for off actions in make_target_resolver."""
+
+    def test_resolver_returns_none_for_presence_off(self):
+        """Resolver returns None when presence_away_action is 'off' and away."""
+        room = {"comfort_temp": 21.0, "eco_temp": 17.0}
+        settings = {"presence_away_action": "off"}
+        resolver = make_target_resolver(
+            None, room, settings, presence_away=True,
+        )
+        assert resolver(time.time()) is None
+
+    def test_resolver_returns_none_for_schedule_off(self):
+        """Resolver returns None when schedule_off_action is 'off' and outside blocks."""
+        room = {"comfort_temp": 21.0, "eco_temp": 17.0}
+        settings = {"schedule_off_action": "off"}
+        resolver = make_target_resolver(
+            None, room, settings,
+        )
+        # No schedule blocks → falls through to eco/off logic
+        # Actually with no schedule blocks, it returns comfort_temp (no blocks = comfort)
+        # So we need schedule_blocks with no matching block
+        dt = datetime(2025, 1, 6, 23, 0, 0)
+        ts = dt.timestamp()
+        blocks = {"monday": [{"from": "08:00:00", "to": "12:00:00", "data": {"temperature": 22.0}}]}
+        resolver2 = make_target_resolver(blocks, room, settings)
+        assert resolver2(ts) is None
+
+    def test_resolver_skips_mold_delta_when_none(self):
+        """Mold delta is NOT added when base target is None."""
+        room = {"comfort_temp": 21.0, "eco_temp": 17.0}
+        settings = {"presence_away_action": "off"}
+        resolver = make_target_resolver(
+            None, room, settings, presence_away=True, mold_prevention_delta=2.0,
+        )
+        assert resolver(time.time()) is None
+
 
 # ---------------------------------------------------------------------------
 # get_active_schedule_entity
