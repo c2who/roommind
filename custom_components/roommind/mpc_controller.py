@@ -238,6 +238,7 @@ class MPCController:
         cloud_series: list[float | None] | None = None,
         q_residual: float = 0.0,
         heating_system_type: str = "",
+        mode_on_since: float | None = None,
     ) -> None:
         self.hass = hass
         self.room_config = room_config
@@ -258,6 +259,7 @@ class MPCController:
         self._cloud_series = cloud_series or []
         self.q_residual = q_residual
         self._heating_system_type = heating_system_type
+        self._mode_on_since = mode_on_since
 
         s = settings or {}
         self.outdoor_cooling_min = s.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
@@ -307,6 +309,18 @@ class MPCController:
         if can_cool and n_cooling < MIN_ACTIVE_UPDATES:
             return False
         return True
+
+    def _within_min_run(self, mode: str) -> bool:
+        """Return True if the given mode is currently active and within its minimum run window.
+
+        Used to prevent premature shutdown of slow heating systems (e.g. underfloor)
+        that need a guaranteed minimum run time before being allowed to idle.
+        """
+        if self.previous_mode != mode or self._mode_on_since is None:
+            return False
+        from .residual_heat import get_min_run_blocks
+        min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
+        return (time.time() - self._mode_on_since) < min_run_seconds
 
     def _evaluate_mpc(
         self,
@@ -382,11 +396,13 @@ class MPCController:
         near_targets = target_series[:6]
         if near_targets:
             if action == MODE_HEATING and current_temp >= max(near_targets):
-                action = MODE_IDLE
-                power_fraction = 0.0
+                if not self._within_min_run(MODE_HEATING):
+                    action = MODE_IDLE
+                    power_fraction = 0.0
             elif action == MODE_COOLING and current_temp <= min(near_targets):
-                action = MODE_IDLE
-                power_fraction = 0.0
+                if not self._within_min_run(MODE_COOLING):
+                    action = MODE_IDLE
+                    power_fraction = 0.0
 
         return action, power_fraction
 
@@ -401,14 +417,14 @@ class MPCController:
 
         can_heat, can_cool = self._get_can_heat_cool()
 
-        # Mode stickiness
+        # Mode stickiness: also enforce minimum run time
         if self.previous_mode == MODE_HEATING and can_heat:
-            if current_temp < target_temp:
+            if current_temp < target_temp or self._within_min_run(MODE_HEATING):
                 return MODE_HEATING
             return MODE_IDLE
 
         if self.previous_mode == MODE_COOLING and can_cool:
-            if current_temp > target_temp:
+            if current_temp > target_temp or self._within_min_run(MODE_COOLING):
                 return MODE_COOLING
             return MODE_IDLE
 
