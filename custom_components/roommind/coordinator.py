@@ -78,6 +78,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._heating_off_since: dict[str, float] = {}
         self._heating_off_power: dict[str, float] = {}
         self._heating_on_since: dict[str, float] = {}
+        # Track which rooms already have sensor entities registered
+        self._entity_areas: set[str] = set()
 
     async def _async_update_data(self) -> dict:
         """Fetch and compute state for all rooms.
@@ -1004,11 +1006,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
     async def async_room_added(self, room: dict) -> None:
         """Create sensor entities for a newly added room and refresh data."""
-        if hasattr(self, "async_add_entities") and self.async_add_entities:
+        area_id = room["area_id"]
+        if area_id not in self._entity_areas and hasattr(self, "async_add_entities") and self.async_add_entities:
             from .sensor import _create_room_entities
 
-            entities = _create_room_entities(self, room["area_id"])
+            entities = _create_room_entities(self, area_id)
             self.async_add_entities(entities)
+            self._entity_areas.add(area_id)
         await self.async_request_refresh()
 
     async def async_room_removed(self, area_id: str) -> None:
@@ -1038,6 +1042,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._heating_off_since.pop(area_id, None)
         self._heating_off_power.pop(area_id, None)
         self._heating_on_since.pop(area_id, None)
+        self._entity_areas.discard(area_id)
         self._model_manager.remove_room(area_id)
         if self._history_store:
             await self.hass.async_add_executor_job(self._history_store.remove_room, area_id)

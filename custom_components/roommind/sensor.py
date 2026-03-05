@@ -40,6 +40,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = []
     for area_id in rooms:
         entities.extend(_create_room_entities(coordinator, area_id))
+        coordinator._entity_areas.add(area_id)
     if entities:
         async_add_entities(entities)
 
