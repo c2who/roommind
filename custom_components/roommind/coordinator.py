@@ -619,6 +619,34 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._mode_on_since.pop(area_id, None)
         self._previous_modes[area_id] = mode
 
+        # Compute planned run-end timestamp from MPC plan for UI display.
+        # Also enforce the minimum run time guarantee: the plan is computed
+        # fresh each cycle from MODE_IDLE, so it doesn't know how long the
+        # current run has already been active. When _within_min_run is in
+        # effect (e.g. room reached target but min-run keeps heating on), the
+        # plan may say "idle" while the actual mode stays active — we take the
+        # max of both so the estimate is always at least as long as min-run.
+        mode_planned_end_ts: float | None = None
+        if mode != MODE_IDLE and controller.last_plan and controller.last_plan.actions:
+            _plan = controller.last_plan
+            _run_blocks = 0
+            for _action in _plan.actions:
+                if _action == mode:
+                    _run_blocks += 1
+                else:
+                    break
+            if _run_blocks > 0:
+                mode_planned_end_ts = time.time() + _run_blocks * _plan.dt_minutes * 60
+
+        if mode != MODE_IDLE:
+            _mode_start = self._mode_on_since.get(area_id)
+            if _mode_start is not None:
+                from .mpc_controller import PLAN_DT_MINUTES as _PLAN_DT
+                from .residual_heat import get_min_run_blocks as _get_min_run
+                _min_run_end = _mode_start + _get_min_run(system_type, _PLAN_DT) * _PLAN_DT * 60
+                if mode_planned_end_ts is None or _min_run_end > mode_planned_end_ts:
+                    mode_planned_end_ts = _min_run_end
+
         # Compute MPC status for live data
         mpc_active = False
         if has_external_sensor and settings.get("control_mode") == "mpc":
@@ -680,6 +708,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ),
             "mold_prevention_active": mold_prevention_active_room,
             "mold_prevention_delta": mold_prevention_temp_delta,
+            "mode_on_since": self._mode_on_since.get(area_id),
+            "mode_planned_end_ts": mode_planned_end_ts,
         }
 
     @staticmethod
