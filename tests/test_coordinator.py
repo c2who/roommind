@@ -439,6 +439,37 @@ class TestRoomMindCoordinator:
         coordinator.async_request_refresh.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_async_room_added_twice_does_not_duplicate_entities(
+        self, hass, mock_config_entry
+    ):
+        """Calling async_room_added for an existing room must not register entities twice."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        mock_add_entities = MagicMock()
+        coordinator.async_add_entities = mock_add_entities
+
+        room = {"area_id": "bedroom_abc12345"}
+        await coordinator.async_room_added(room)
+        await coordinator.async_room_added(room)  # simulates a room update
+
+        # Entities should only be registered once
+        mock_add_entities.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_async_room_update_still_refreshes(self, hass, mock_config_entry):
+        """Updating an existing room must still trigger a coordinator refresh."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        mock_add_entities = MagicMock()
+        coordinator.async_add_entities = mock_add_entities
+
+        room = {"area_id": "bedroom_abc12345"}
+        await coordinator.async_room_added(room)
+        await coordinator.async_room_added(room)  # simulates a room update
+
+        assert coordinator.async_request_refresh.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_async_room_removed_triggers_refresh(self, hass, mock_config_entry):
         """Test that async_room_removed calls async_request_refresh."""
         coordinator = _create_coordinator(hass, mock_config_entry)
