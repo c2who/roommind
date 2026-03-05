@@ -1669,7 +1669,7 @@ async def test_bangbang_heating_min_run_holds_at_target():
         mode_on_since=time.time() - 60,  # 1 min in, window is 30 min
     )
     # current_temp equals target — without min-run this would go idle
-    mode = ctrl._evaluate_bangbang(21.0, 21.0)
+    mode = ctrl._evaluate_bangbang(21.0, TargetTemps(heat=21.0, cool=24.0))
     assert mode == MODE_HEATING
 
 
@@ -1687,7 +1687,7 @@ async def test_bangbang_heating_idles_after_min_run():
         heating_system_type="underfloor",
         mode_on_since=time.time() - 2000,  # 33 min ago, past 30-min window
     )
-    mode = ctrl._evaluate_bangbang(21.5, 21.0)
+    mode = ctrl._evaluate_bangbang(21.5, TargetTemps(heat=21.0, cool=24.0))
     assert mode == MODE_IDLE
 
 
@@ -1705,7 +1705,7 @@ async def test_bangbang_cooling_min_run_holds_at_target():
         heating_system_type="underfloor",
         mode_on_since=time.time() - 60,
     )
-    mode = ctrl._evaluate_bangbang(23.0, 23.0)
+    mode = ctrl._evaluate_bangbang(23.0, TargetTemps(heat=21.0, cool=23.0))
     assert mode == MODE_COOLING
 
 
@@ -2204,7 +2204,7 @@ def test_evaluate_mpc_safety_guard_respects_min_run_heating(monkeypatch):
         lambda *a, **kw: fake_plan,
     )
     # current_temp=22 >= target=21 but we're in min-run window → must keep heating
-    mode, pf = ctrl._evaluate_mpc(22.0, 21.0)
+    mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
     assert mode == MODE_HEATING
 
 
@@ -2230,7 +2230,7 @@ def test_evaluate_mpc_safety_guard_fires_after_min_run_heating(monkeypatch):
         "custom_components.roommind.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
-    mode, pf = ctrl._evaluate_mpc(22.0, 21.0)
+    mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
     assert mode == MODE_IDLE
     assert pf == 0.0
 
