@@ -1595,7 +1595,7 @@
       <div class="entity-picker-wrap">
         <ha-entity-picker
           .hass=${this.hass}
-          .includeDomains=${["climate","sensor","binary_sensor"]}
+          .includeDomains=${["climate","sensor","binary_sensor","input_number"]}
           .entityFilter=${this._entityFilter}
           .value=${""}
           label=${n("devices.add_entity",this.hass.language)}
@@ -1700,7 +1700,7 @@
           ${a?"●":"○"}
         </span>
       </div>
-    `}_detectClimateType(e){var s,o;const t=(o=(s=this.hass.states[e])==null?void 0:s.attributes)==null?void 0:o.hvac_modes;return t&&(t.includes("cool")||t.includes("heat_cool"))?"ac":"thermostat"}_onClimateToggle(e,t){this.dispatchEvent(new CustomEvent("climate-toggle",{detail:{entityId:e,checked:t,detectedType:this._detectClimateType(e)},bubbles:!0,composed:!0}))}_onDeviceTypeChange(e,t){this.dispatchEvent(new CustomEvent("device-type-change",{detail:{entityId:e,type:t},bubbles:!0,composed:!0}))}_onSensorSelected(e,t){this.dispatchEvent(new CustomEvent("sensor-selected",{detail:{entityId:e,type:t},bubbles:!0,composed:!0}))}_onWindowSensorToggle(e,t){this.dispatchEvent(new CustomEvent("window-sensor-toggle",{detail:{entityId:e,checked:t},bubbles:!0,composed:!0}))}_onWindowOpenDelayChange(e){const t=Math.max(0,parseInt(e.target.value)||0);this.dispatchEvent(new CustomEvent("window-open-delay-changed",{detail:{value:t},bubbles:!0,composed:!0}))}_onWindowCloseDelayChange(e){const t=Math.max(0,parseInt(e.target.value)||0);this.dispatchEvent(new CustomEvent("window-close-delay-changed",{detail:{value:t},bubbles:!0,composed:!0}))}_onHeatingSystemTypeChange(e){const t=te(e)??"",i=t==="standard"?"":t;this.dispatchEvent(new CustomEvent("heating-system-type-changed",{detail:{value:i},bubbles:!0,composed:!0}))}_onEntityPicked(e){var a,r,c;const t=(a=e.detail)==null?void 0:a.value;if(!t)return;let i;t.startsWith("climate.")?i="climate":t.startsWith("binary_sensor.")?i="window":i=((c=(r=this.hass.states[t])==null?void 0:r.attributes)==null?void 0:c.device_class)==="humidity"?"humidity":"temp";const s=i==="climate"?this._detectClimateType(t):void 0;this.dispatchEvent(new CustomEvent("external-entity-added",{detail:{entityId:t,category:i,detectedType:s},bubbles:!0,composed:!0}));const o=e.target;o.value=""}};I.styles=j`
+    `}_detectClimateType(e){var s,o;const t=(o=(s=this.hass.states[e])==null?void 0:s.attributes)==null?void 0:o.hvac_modes;return t&&(t.includes("cool")||t.includes("heat_cool"))?"ac":"thermostat"}_onClimateToggle(e,t){this.dispatchEvent(new CustomEvent("climate-toggle",{detail:{entityId:e,checked:t,detectedType:this._detectClimateType(e)},bubbles:!0,composed:!0}))}_onDeviceTypeChange(e,t){this.dispatchEvent(new CustomEvent("device-type-change",{detail:{entityId:e,type:t},bubbles:!0,composed:!0}))}_onSensorSelected(e,t){this.dispatchEvent(new CustomEvent("sensor-selected",{detail:{entityId:e,type:t},bubbles:!0,composed:!0}))}_onWindowSensorToggle(e,t){this.dispatchEvent(new CustomEvent("window-sensor-toggle",{detail:{entityId:e,checked:t},bubbles:!0,composed:!0}))}_onWindowOpenDelayChange(e){const t=Math.max(0,parseInt(e.target.value)||0);this.dispatchEvent(new CustomEvent("window-open-delay-changed",{detail:{value:t},bubbles:!0,composed:!0}))}_onWindowCloseDelayChange(e){const t=Math.max(0,parseInt(e.target.value)||0);this.dispatchEvent(new CustomEvent("window-close-delay-changed",{detail:{value:t},bubbles:!0,composed:!0}))}_onHeatingSystemTypeChange(e){const t=te(e)??"",i=t==="standard"?"":t;this.dispatchEvent(new CustomEvent("heating-system-type-changed",{detail:{value:i},bubbles:!0,composed:!0}))}_onEntityPicked(e){var a,r,c,d,p;const t=(a=e.detail)==null?void 0:a.value;if(!t)return;let i;t.startsWith("climate.")?i="climate":t.startsWith("binary_sensor.")?i="window":t.startsWith("input_number.")?i=((c=(r=this.hass.states[t])==null?void 0:r.attributes)==null?void 0:c.unit_of_measurement)==="%"?"humidity":"temp":i=((p=(d=this.hass.states[t])==null?void 0:d.attributes)==null?void 0:p.device_class)==="humidity"?"humidity":"temp";const s=i==="climate"?this._detectClimateType(t):void 0;this.dispatchEvent(new CustomEvent("external-entity-added",{detail:{entityId:t,category:i,detectedType:s},bubbles:!0,composed:!0}));const o=e.target;o.value=""}};I.styles=j`
     :host {
       display: block;
     }
@@ -2710,7 +2710,7 @@
                     `:h}
                     <ha-entity-picker
                       .hass=${this.hass}
-                      .includeDomains=${["person","binary_sensor","input_boolean"]}
+                      .includeDomains=${["person","device_tracker","binary_sensor","input_boolean"]}
                       .entityFilter=${c=>!this._presencePersons.includes(c.entity_id)}
                       .label=${n("presence.add_entity",e)}
                       @value-changed=${c=>{var m;const d=(m=c.detail)==null?void 0:m.value;d&&!this._presencePersons.includes(d)&&(this._presencePersons=[...this._presencePersons,d],this._autoSave());const p=c.target;p.value=""}}

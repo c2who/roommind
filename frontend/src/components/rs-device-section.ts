@@ -512,7 +512,7 @@ export class RsDeviceSection extends LitElement {
       <div class="entity-picker-wrap">
         <ha-entity-picker
           .hass=${this.hass}
-          .includeDomains=${["climate", "sensor", "binary_sensor"]}
+          .includeDomains=${["climate", "sensor", "binary_sensor", "input_number"]}
           .entityFilter=${this._entityFilter}
           .value=${""}
           label=${localize("devices.add_entity", this.hass.language)}
@@ -796,6 +796,7 @@ export class RsDeviceSection extends LitElement {
       const dc = this.hass.states[id]?.attributes?.device_class;
       if (dc !== "window" && dc !== "door") return false;
     }
+    // input_number: allow all (no device_class filtering)
     return true;
   };
 
@@ -809,6 +810,9 @@ export class RsDeviceSection extends LitElement {
       category = "climate";
     } else if (entityId.startsWith("binary_sensor.")) {
       category = "window";
+    } else if (entityId.startsWith("input_number.")) {
+      const uom = this.hass.states[entityId]?.attributes?.unit_of_measurement;
+      category = uom === "%" ? "humidity" : "temp";
     } else {
       const deviceClass =
         this.hass.states[entityId]?.attributes?.device_class;
