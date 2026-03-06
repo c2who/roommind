@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from custom_components.roommind.notification_utils import (
+from custom_components.roommind.utils.notification_utils import (
     NotificationThrottler,
     dismiss_mold_notification,
     async_send_mold_notification,
@@ -96,7 +96,7 @@ async def test_send_notification_home_only_skips_away():
     ]
 
     with patch(
-        "custom_components.roommind.notification_utils.async_create"
+        "custom_components.roommind.utils.notification_utils.async_create"
     ) as mock_persistent:
         await async_send_mold_notification(
             hass, "living_room", "Wohnzimmer", targets,
@@ -137,7 +137,7 @@ async def test_send_notification_no_targets_persistent():
     hass = MagicMock()
 
     with patch(
-        "custom_components.roommind.notification_utils.async_create"
+        "custom_components.roommind.utils.notification_utils.async_create"
     ) as mock_create:
         await async_send_mold_notification(
             hass, "living_room", "Wohnzimmer", [],
@@ -202,7 +202,7 @@ def test_dismiss_notification():
     hass = MagicMock()
 
     with patch(
-        "custom_components.roommind.notification_utils.async_dismiss"
+        "custom_components.roommind.utils.notification_utils.async_dismiss"
     ) as mock_dismiss:
         dismiss_mold_notification(hass, "living_room", "risk")
 
@@ -214,7 +214,7 @@ def test_dismiss_notification_prevention_suffix():
     hass = MagicMock()
 
     with patch(
-        "custom_components.roommind.notification_utils.async_dismiss"
+        "custom_components.roommind.utils.notification_utils.async_dismiss"
     ) as mock_dismiss:
         dismiss_mold_notification(hass, "bedroom", "prevention")
 

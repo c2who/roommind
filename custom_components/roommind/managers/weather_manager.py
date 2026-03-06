@@ -6,7 +6,7 @@ import logging
 
 from homeassistant.core import HomeAssistant
 
-from ..temp_utils import ha_temp_to_celsius
+from ..utils.temp_utils import ha_temp_to_celsius
 
 _LOGGER = logging.getLogger(__name__)
 

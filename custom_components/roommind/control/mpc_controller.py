@@ -23,7 +23,7 @@ from ..const import (
     TargetTemps,
 )
 from .mpc_optimizer import MPCOptimizer, MPCPlan
-from ..temp_utils import celsius_to_ha_temp
+from ..utils.temp_utils import celsius_to_ha_temp
 from .thermal_model import RoomModelManager
 
 _LOGGER = logging.getLogger(__name__)

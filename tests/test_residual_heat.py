@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from custom_components.roommind.residual_heat import (
+from custom_components.roommind.control.residual_heat import (
     build_residual_series,
     compute_residual_heat,
     get_min_run_blocks,

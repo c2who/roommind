@@ -1532,7 +1532,7 @@ class TestCoordinatorMPCIntegration:
         pre-training the model, mocking low prediction_std so MPC is selected,
         and confirming the coordinator produces the expected heating mode + state.
         """
-        from custom_components.roommind.thermal_model import RoomModelManager
+        from custom_components.roommind.control.thermal_model import RoomModelManager
 
         room = {
             **SAMPLE_ROOM,

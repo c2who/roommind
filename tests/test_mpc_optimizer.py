@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from custom_components.roommind.thermal_model import RCModel
-from custom_components.roommind.mpc_optimizer import MPCOptimizer, MPCPlan
+from custom_components.roommind.control.thermal_model import RCModel
+from custom_components.roommind.control.mpc_optimizer import MPCOptimizer, MPCPlan
 
 
 def test_optimizer_idle_at_target():

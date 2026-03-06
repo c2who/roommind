@@ -8,7 +8,7 @@ import pytest
 
 from homeassistant.const import UnitOfTemperature
 
-from custom_components.roommind.temp_utils import (
+from custom_components.roommind.utils.temp_utils import (
     celsius_delta_to_ha,
     celsius_to_ha_temp,
     ha_temp_to_celsius,

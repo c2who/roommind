@@ -12,13 +12,13 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import CLIMATE_MODE_COOL_ONLY, CLIMATE_MODE_HEAT_ONLY, DEFAULT_COMFORT_COOL, DEFAULT_COMFORT_HEAT, DEFAULT_ECO_COOL, DEFAULT_ECO_HEAT, DOMAIN, EKF_UPDATE_MIN_DT, HEATING_BOOST_TARGET, HISTORY_ROTATE_CYCLES, HISTORY_WRITE_CYCLES, MAX_PREDICTION_DELTA, MODE_COOLING, MODE_HEATING, MODE_IDLE, SCHEDULE_STATE_ON, THERMAL_SAVE_CYCLES, TargetTemps, UPDATE_INTERVAL, VALVE_PROTECTION_CHECK_CYCLES, build_override_live
-from .notification_utils import NotificationThrottler
-from .history_store import HistoryStore
-from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, MPCController, check_acs_can_heat, get_can_heat_cool, is_mpc_active
-from .sensor_utils import read_sensor_value
-from .solar import compute_q_solar_norm
-from .temp_utils import celsius_delta_to_ha, ha_temp_to_celsius, ha_temp_unit_str
-from .thermal_model import RoomModelManager
+from .utils.notification_utils import NotificationThrottler
+from .utils.history_store import HistoryStore
+from .control.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, MPCController, check_acs_can_heat, get_can_heat_cool, is_mpc_active
+from .utils.sensor_utils import read_sensor_value
+from .control.solar import compute_q_solar_norm
+from .utils.temp_utils import celsius_delta_to_ha, ha_temp_to_celsius, ha_temp_unit_str
+from .control.thermal_model import RoomModelManager
 from .managers.mold_manager import MoldManager
 from .managers.weather_manager import WeatherManager
 from .managers.residual_heat_tracker import ResidualHeatTracker
@@ -366,7 +366,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 )
 
         # Read schedule blocks for MPC lookahead (pre-heating/pre-cooling)
-        from .schedule_utils import get_active_schedule_entity, make_target_resolver, read_schedule_blocks
+        from .utils.schedule_utils import get_active_schedule_entity, make_target_resolver, read_schedule_blocks
         schedule_entity_id = get_active_schedule_entity(self.hass, room)
         schedule_blocks = await read_schedule_blocks(self.hass, schedule_entity_id) if schedule_entity_id else None
         presence_away = self._is_presence_away(room, settings)
@@ -749,7 +749,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
     def _is_presence_away(self, room: dict, settings: dict) -> bool:
         """Return True if presence detection says all relevant persons are away."""
-        from .presence_utils import is_presence_away
+        from .utils.presence_utils import is_presence_away
         return is_presence_away(self.hass, room, settings)  # all tracked persons are away
 
     def _get_active_schedule_index(self, room: dict) -> int:
@@ -757,7 +757,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         Returns -1 if there are no schedules.
         """
-        from .schedule_utils import resolve_schedule_index
+        from .utils.schedule_utils import resolve_schedule_index
         return resolve_schedule_index(self.hass, room)
 
     def _resolve_target_temps(self, room: dict, settings: dict) -> TargetTemps:

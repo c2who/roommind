@@ -778,7 +778,7 @@ async def test_save_settings_vacation_clear(ws_hass, store, connection):
 
 def _make_coordinator_with_model(ws_hass):
     """Create a coordinator mock with thermal model data."""
-    from custom_components.roommind.thermal_model import RoomModelManager
+    from custom_components.roommind.control.thermal_model import RoomModelManager
 
     mock_coordinator = MagicMock()
     mgr = RoomModelManager()
@@ -1054,7 +1054,7 @@ def _make_analytics_coordinator(history_rows=None, estimator=None, rooms_live=No
     else:
         coordinator._history_store = None
 
-    from custom_components.roommind.thermal_model import RoomModelManager
+    from custom_components.roommind.control.thermal_model import RoomModelManager
     mgr = RoomModelManager()
     if estimator:
         mgr._estimators["room_a"] = estimator

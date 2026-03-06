@@ -13,7 +13,7 @@ from ..const import (
     VALVE_PROTECTION_CYCLE_DURATION,
 )
 from ..control.mpc_controller import async_turn_off_climate, resolve_hvac_mode
-from ..temp_utils import celsius_to_ha_temp
+from ..utils.temp_utils import celsius_to_ha_temp
 
 _LOGGER = logging.getLogger(__name__)
 

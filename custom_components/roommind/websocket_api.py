@@ -29,7 +29,7 @@ from .services.analytics_service import (
     build_analytics_data,
     _compute_target_forecast,
 )
-from .thermal_model import RoomModelManager
+from .control.thermal_model import RoomModelManager
 
 if TYPE_CHECKING:
     from homeassistant.components.websocket_api import ActiveConnection
@@ -77,7 +77,7 @@ _SETTINGS_SAVE_FIELDS = (
 
 def _compute_anyone_home(hass, settings):
     """Return True if at least one tracked person is home (or fail-safe)."""
-    from .presence_utils import is_presence_away
+    from .utils.presence_utils import is_presence_away
     return not is_presence_away(hass, {}, settings)  # all away
 
 
