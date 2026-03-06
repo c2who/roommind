@@ -28,6 +28,7 @@ export class RsRoomDetail extends LitElement {
 
   @state() private _selectedThermostats: Set<string> = new Set();
   @state() private _selectedAcs: Set<string> = new Set();
+  @state() private _entityModes: Record<string, "auto" | "heat_only" | "cool_only"> = {};
   @state() private _selectedTempSensor = "";
   @state() private _selectedHumiditySensor = "";
   @state() private _selectedWindowSensors: Set<string> = new Set();
@@ -418,6 +419,7 @@ export class RsRoomDetail extends LitElement {
     if (this.config) {
       this._selectedThermostats = new Set(this.config.thermostats);
       this._selectedAcs = new Set(this.config.acs);
+      this._entityModes = { ...(this.config.entity_modes ?? {}) };
       this._selectedTempSensor = this.config.temperature_sensor;
       this._selectedHumiditySensor = this.config.humidity_sensor ?? "";
       this._selectedWindowSensors = new Set(this.config.window_sensors ?? []);
@@ -436,6 +438,7 @@ export class RsRoomDetail extends LitElement {
     } else {
       this._selectedThermostats = new Set();
       this._selectedAcs = new Set();
+      this._entityModes = {};
       this._selectedTempSensor = "";
       this._selectedHumiditySensor = "";
       this._selectedWindowSensors = new Set();
@@ -541,6 +544,7 @@ export class RsRoomDetail extends LitElement {
               .editing=${this._editingDevices}
               .selectedThermostats=${this._selectedThermostats}
               .selectedAcs=${this._selectedAcs}
+              .entityModes=${this._entityModes}
               .selectedTempSensor=${this._selectedTempSensor}
               .selectedHumiditySensor=${this._selectedHumiditySensor}
               .selectedWindowSensors=${this._selectedWindowSensors}
@@ -549,6 +553,7 @@ export class RsRoomDetail extends LitElement {
               .heatingSystemType=${this._heatingSystemType}
               @climate-toggle=${this._onClimateToggle}
               @device-type-change=${this._onDeviceTypeChange}
+              @entity-mode-change=${this._onEntityModeChange}
               @sensor-selected=${this._onSensorSelected}
               @window-sensor-toggle=${this._onWindowSensorToggle}
               @window-open-delay-changed=${this._onWindowOpenDelayChanged}
@@ -626,7 +631,24 @@ export class RsRoomDetail extends LitElement {
       newAcs.delete(entityId);
       this._selectedThermostats = newThermostats;
       this._selectedAcs = newAcs;
+      const updatedModes = { ...this._entityModes };
+      delete updatedModes[entityId];
+      this._entityModes = updatedModes;
     }
+    this._autoSave();
+  }
+
+  private _onEntityModeChange(
+    e: CustomEvent<{ entityId: string; mode: "auto" | "heat_only" | "cool_only" }>
+  ) {
+    const { entityId, mode } = e.detail;
+    const updated = { ...this._entityModes };
+    if (mode === "auto") {
+      delete updated[entityId];
+    } else {
+      updated[entityId] = mode;
+    }
+    this._entityModes = updated;
     this._autoSave();
   }
 
@@ -754,6 +776,7 @@ export class RsRoomDetail extends LitElement {
         presence_persons: this._selectedPresencePersons.filter(p => p),
         display_name: this._displayName,
         heating_system_type: this._heatingSystemType,
+        entity_modes: this._entityModes,
       });
 
       this._dirty = false;

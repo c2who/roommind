@@ -68,6 +68,7 @@ export interface RoomConfig {
   presence_persons?: string[];
   display_name?: string;
   heating_system_type?: string;
+  entity_modes?: Record<string, "auto" | "heat_only" | "cool_only">;
   live?: RoomLiveData;
 }
 

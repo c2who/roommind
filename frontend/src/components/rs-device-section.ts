@@ -15,6 +15,7 @@ export class RsDeviceSection extends LitElement {
   @property({ attribute: false }) public area!: HassArea;
   @property({ attribute: false }) public selectedThermostats: Set<string> = new Set();
   @property({ attribute: false }) public selectedAcs: Set<string> = new Set();
+  @property({ attribute: false }) public entityModes: Record<string, "auto" | "heat_only" | "cool_only"> = {};
   @property({ type: String }) public selectedTempSensor = "";
   @property({ type: String }) public selectedHumiditySensor = "";
   @property({ attribute: false }) public selectedWindowSensors: Set<string> = new Set();
@@ -138,9 +139,29 @@ export class RsDeviceSection extends LitElement {
       flex-shrink: 0;
     }
 
+    .device-selects {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
     .device-type-select {
       flex-shrink: 0;
-      --ha-select-min-width: 90px;
+      --ha-select-min-width: 110px;
+    }
+
+    .mode-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--primary-color);
+      background: rgba(3, 169, 244, 0.1);
+      padding: 2px 8px;
+      border-radius: 10px;
+      letter-spacing: 0.3px;
+      flex-shrink: 0;
     }
 
     .no-devices {
@@ -265,8 +286,8 @@ export class RsDeviceSection extends LitElement {
       ${hasClimate ? html`
         <div class="device-group">
           <div class="section-subtitle">${localize("devices.climate_entities", this.hass.language)}</div>
-          ${[...this.selectedThermostats].map((id) => this._renderViewRow(id, "climate"))}
-          ${[...this.selectedAcs].map((id) => this._renderViewRow(id, "climate"))}
+          ${[...this.selectedThermostats].map((id) => this._renderClimateViewRow(id))}
+          ${[...this.selectedAcs].map((id) => this._renderClimateViewRow(id))}
         </div>
       ` : nothing}
 
@@ -335,6 +356,26 @@ export class RsDeviceSection extends LitElement {
       <div class="view-row">
         <span class="view-name entity-link" @click=${() => openEntityInfo(this,entityId)}>${friendlyName}</span>
         ${displayValue ? html`<span class="view-value">${displayValue}</span>` : nothing}
+      </div>
+    `;
+  }
+
+  private _renderClimateViewRow(entityId: string) {
+    const entityState = this.hass.states[entityId];
+    const friendlyName = (entityState?.attributes?.friendly_name as string) || entityId;
+    const currentTemp = entityState?.attributes?.current_temperature as number | undefined;
+    const mode = this.entityModes[entityId];
+    const modeBadge = mode === "heat_only"
+      ? localize("devices.entity_mode_heat_only", this.hass.language)
+      : mode === "cool_only"
+        ? localize("devices.entity_mode_cool_only", this.hass.language)
+        : null;
+
+    return html`
+      <div class="view-row">
+        <span class="view-name entity-link" @click=${() => openEntityInfo(this, entityId)}>${friendlyName}</span>
+        ${modeBadge ? html`<span class="mode-badge">${modeBadge}</span>` : nothing}
+        ${currentTemp != null ? html`<span class="view-value">${currentTemp.toFixed(1)}\u00B0</span>` : nothing}
       </div>
     `;
   }
@@ -598,26 +639,50 @@ export class RsDeviceSection extends LitElement {
             : nothing}
         ${isSelected
           ? html`
-              <ha-select
-                class="device-type-select"
-                outlined
-                .value=${isAc ? "ac" : "thermostat"}
-                .options=${[
-                  { value: "thermostat", label: localize("devices.type_thermostat", this.hass.language) },
-                  { value: "ac", label: localize("devices.type_ac", this.hass.language) },
-                ]}
-                @selected=${(e: Event) => {
-                  this._onDeviceTypeChange(
-                    entityId,
-                    getSelectValue(e) as "thermostat" | "ac"
-                  );
-                }}
-                @closed=${(e: Event) => e.stopPropagation()}
-                fixedMenuPosition
-              >
-                <ha-list-item value="thermostat">${localize("devices.type_thermostat", this.hass.language)}</ha-list-item>
-                <ha-list-item value="ac">${localize("devices.type_ac", this.hass.language)}</ha-list-item>
-              </ha-select>
+              <div class="device-selects">
+                <ha-select
+                  class="device-type-select"
+                  outlined
+                  .value=${isAc ? "ac" : "thermostat"}
+                  .options=${[
+                    { value: "thermostat", label: localize("devices.type_thermostat", this.hass.language) },
+                    { value: "ac", label: localize("devices.type_ac", this.hass.language) },
+                  ]}
+                  @selected=${(e: Event) => {
+                    this._onDeviceTypeChange(
+                      entityId,
+                      getSelectValue(e) as "thermostat" | "ac"
+                    );
+                  }}
+                  @closed=${(e: Event) => e.stopPropagation()}
+                  fixedMenuPosition
+                >
+                  <ha-list-item value="thermostat">${localize("devices.type_thermostat", this.hass.language)}</ha-list-item>
+                  <ha-list-item value="ac">${localize("devices.type_ac", this.hass.language)}</ha-list-item>
+                </ha-select>
+                <ha-select
+                  class="device-type-select"
+                  outlined
+                  .value=${this.entityModes[entityId] ?? "auto"}
+                  .options=${[
+                    { value: "auto", label: localize("devices.entity_mode_auto", this.hass.language) },
+                    { value: "heat_only", label: localize("devices.entity_mode_heat_only", this.hass.language) },
+                    { value: "cool_only", label: localize("devices.entity_mode_cool_only", this.hass.language) },
+                  ]}
+                  @selected=${(e: Event) => {
+                    this._onEntityModeChange(
+                      entityId,
+                      getSelectValue(e) as "auto" | "heat_only" | "cool_only"
+                    );
+                  }}
+                  @closed=${(e: Event) => e.stopPropagation()}
+                  fixedMenuPosition
+                >
+                  <ha-list-item value="auto">${localize("devices.entity_mode_auto", this.hass.language)}</ha-list-item>
+                  <ha-list-item value="heat_only">${localize("devices.entity_mode_heat_only", this.hass.language)}</ha-list-item>
+                  <ha-list-item value="cool_only">${localize("devices.entity_mode_cool_only", this.hass.language)}</ha-list-item>
+                </ha-select>
+              </div>
             `
           : nothing}
       </div>
@@ -720,6 +785,16 @@ export class RsDeviceSection extends LitElement {
     this.dispatchEvent(
       new CustomEvent("device-type-change", {
         detail: { entityId, type },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  private _onEntityModeChange(entityId: string, mode: "auto" | "heat_only" | "cool_only") {
+    this.dispatchEvent(
+      new CustomEvent("entity-mode-change", {
+        detail: { entityId, mode },
         bubbles: true,
         composed: true,
       })
