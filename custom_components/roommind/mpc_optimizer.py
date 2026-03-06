@@ -190,7 +190,9 @@ class MPCOptimizer:
         future_residual: list[float] | None = None,
     ) -> float:
         """Evaluate the cost of taking an action, looking a few steps ahead."""
-        lookahead = min(6, len(future_T_outdoor))  # 30 min lookahead for local decision
+        # Scale lookahead with min_run_blocks so slow systems (e.g. underfloor)
+        # see enough horizon to distinguish heating benefit from idle drift.
+        lookahead = min(max(6, self.min_run_blocks * 2), len(future_T_outdoor))
         Q = self._action_to_Q(action)
         total_cost = 0.0
         T = T_room

@@ -1694,7 +1694,7 @@ async def test_bangbang_heating_idles_after_min_run():
         outdoor_temp=5.0, settings={}, has_external_sensor=True,
         previous_mode=MODE_HEATING,
         heating_system_type="underfloor",
-        mode_on_since=time.time() - 2000,  # 33 min ago, past 30-min window
+        mode_on_since=time.time() - 4000,  # 67 min ago, past 60-min window
     )
     mode = ctrl._evaluate_bangbang(21.5, TargetTemps(heat=21.0, cool=24.0))
     assert mode == MODE_IDLE
@@ -2228,7 +2228,7 @@ def test_evaluate_mpc_safety_guard_fires_after_min_run_heating(monkeypatch):
         outdoor_temp=5.0, settings={}, has_external_sensor=True,
         previous_mode=MODE_HEATING,
         heating_system_type="underfloor",
-        mode_on_since=time.time() - 2000,  # started 33 min ago (past 30-min window)
+        mode_on_since=time.time() - 4000,  # started 67 min ago (past 60-min window)
     )
     fake_plan = MPCPlan(
         actions=[MODE_HEATING] * 6,
