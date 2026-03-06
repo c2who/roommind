@@ -210,12 +210,14 @@ class TestSimulateMPC:
             "climate_mode": "auto",
         }
         settings = {"comfort_weight": 70}
-        result = _simulate_mpc(
+        temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=18.0, room_config=room_config, settings=settings,
         )
-        assert len(result) == 10
-        assert all(isinstance(t, float) for t in result)
+        assert len(temps) == 10
+        assert all(isinstance(t, float) for t in temps)
+        assert len(actions) == 10
+        assert all(a in ("heating", "cooling", "idle") for a in actions)
 
     def test_heating_increases_temperature(self):
         """Cold room with heating available should show temperature increase."""
@@ -228,12 +230,12 @@ class TestSimulateMPC:
             "climate_mode": "auto",
         }
         settings = {"comfort_weight": 70}
-        result = _simulate_mpc(
+        temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config, settings=settings,
         )
         # Temperature should increase when starting cold
-        assert result[-1] > 15.0
+        assert temps[-1] > 15.0
 
     def test_with_solar_series(self):
         """Solar series is accepted without error."""
@@ -247,12 +249,12 @@ class TestSimulateMPC:
             "climate_mode": "auto",
         }
         settings = {"comfort_weight": 70}
-        result = _simulate_mpc(
+        temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings=settings,
             solar_series=solar_series,
         )
-        assert len(result) == 5
+        assert len(temps) == 5
 
     def test_temperatures_clamped(self):
         """Output temps are clamped between 5 and 40."""
@@ -265,11 +267,11 @@ class TestSimulateMPC:
             "climate_mode": "auto",
         }
         settings = {}
-        result = _simulate_mpc(
+        temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings=settings,
         )
-        assert all(5.0 <= t <= 40.0 for t in result)
+        assert all(5.0 <= t <= 40.0 for t in temps)
 
     def test_no_devices_stays_near_idle(self):
         """No thermostats or ACs → all idle, temperature drifts toward outdoor."""
@@ -282,12 +284,12 @@ class TestSimulateMPC:
             "climate_mode": "auto",
         }
         settings = {}
-        result = _simulate_mpc(
+        temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings=settings,
         )
         # Without devices, temp should drift downward toward outdoor
-        assert result[-1] < 20.0
+        assert temps[-1] < 20.0
 
 
 # ---------------------------------------------------------------------------
@@ -309,14 +311,14 @@ class TestSimulateBangbang:
             "climate_mode": "auto",
         }
         all_points: list[dict] = []
-        result = _simulate_bangbang(
+        temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config,
             all_points=all_points,
         )
-        assert len(result) == 20
+        assert len(temps) == 20
         # Should warm up from 15°C
-        assert result[-1] > 15.0
+        assert temps[-1] > 15.0
 
     def test_mode_stickiness_minimum_run(self):
         """Once heating starts, minimum run time enforced (2 blocks)."""
@@ -330,13 +332,13 @@ class TestSimulateBangbang:
         }
         all_points: list[dict] = []
         # Start well below target to trigger heating
-        result = _simulate_bangbang(
+        temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
             all_points=all_points,
         )
         # With very high Q_heat, temp jumps quickly, but min run enforces at least 2 blocks
-        assert len(result) == 5
+        assert len(temps) == 5
 
     def test_cooling_scenario(self):
         """Hot room with ACs → temperature should decrease."""
@@ -349,13 +351,13 @@ class TestSimulateBangbang:
             "climate_mode": "auto",
         }
         all_points: list[dict] = []
-        result = _simulate_bangbang(
+        temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=28.0, room_config=room_config,
             all_points=all_points,
         )
         # Should cool down from 28°C
-        assert result[-1] < 28.0
+        assert temps[-1] < 28.0
 
     def test_idle_rate_cap_applied(self):
         """Observed idle rate caps how fast temperature can drift in idle mode."""
@@ -374,19 +376,19 @@ class TestSimulateBangbang:
             {"ts": now - 0, "room_temp": 19.9, "mode": "idle"},
         ]
         # The model has high U → would predict fast drift, but idle rate caps it
-        result_capped = _simulate_bangbang(
+        temps_capped, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
             all_points=all_points,
         )
         # Without cap (empty points → no cap)
-        result_uncapped = _simulate_bangbang(
+        temps_uncapped, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
             all_points=[],
         )
         # Capped should drift less aggressively than uncapped
-        assert result_capped[-1] >= result_uncapped[-1]
+        assert temps_capped[-1] >= temps_uncapped[-1]
 
     def test_temperatures_clamped(self):
         """Output temps are clamped between 5 and 40."""
@@ -398,12 +400,12 @@ class TestSimulateBangbang:
             "acs": [],
             "climate_mode": "auto",
         }
-        result = _simulate_bangbang(
+        temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
             all_points=[],
         )
-        assert all(5.0 <= t <= 40.0 for t in result)
+        assert all(5.0 <= t <= 40.0 for t in temps)
 
     def test_with_solar_series(self):
         """Solar series is accepted and affects prediction."""
@@ -416,19 +418,19 @@ class TestSimulateBangbang:
             "acs": [],
             "climate_mode": "auto",
         }
-        result_with_solar = _simulate_bangbang(
+        temps_with_solar, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
             all_points=[],
             solar_series=solar_series,
         )
-        result_no_solar = _simulate_bangbang(
+        temps_no_solar, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
             all_points=[],
         )
         # Solar gain should raise temperatures compared to no solar
-        assert result_with_solar[-1] > result_no_solar[-1]
+        assert temps_with_solar[-1] > temps_no_solar[-1]
 
     def test_hysteresis_prevents_short_cycling(self):
         """At target temp (within hysteresis), stays idle — no heating triggered."""
@@ -441,11 +443,11 @@ class TestSimulateBangbang:
             "acs": [],
             "climate_mode": "auto",
         }
-        result = _simulate_bangbang(
+        temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.9, room_config=room_config,
             all_points=[],
         )
         # Within hysteresis, should stay approximately the same (idle)
         # Not heating aggressively
-        assert all(t < 22.0 for t in result)
+        assert all(t < 22.0 for t in temps)

@@ -100,16 +100,19 @@ def simulate_prediction(
     heating_system_type: str = "",
     heating_duration_minutes: float = 0.0,
     last_power_fraction: float = 1.0,
-) -> list[float]:
+) -> tuple[list[float], list[str]]:
     """Simulate temperature prediction for the analytics chart.
 
     Dispatches to the appropriate simulation strategy:
     - Window open: pure heat exchange via window
     - MPC active: rolling-horizon optimizer simulation
     - Fallback: bang-bang with hysteresis
+
+    Returns (temperatures, planned_modes) — one entry per forecast block.
     """
     if window_open:
-        return _simulate_window_open(model, estimator, target_forecast, outdoor_series, current_temp)
+        temps = _simulate_window_open(model, estimator, target_forecast, outdoor_series, current_temp)
+        return temps, [MODE_IDLE] * len(temps)
 
     if mpc_active:
         return _simulate_mpc(
@@ -161,7 +164,7 @@ def _simulate_mpc(
     heating_system_type: str = "",
     heating_duration_minutes: float = 0.0,
     last_power_fraction: float = 1.0,
-) -> list[float]:
+) -> tuple[list[float], list[str]]:
     """Rolling-horizon MPC simulation matching the real controller."""
     ocm = settings.get("outdoor_cooling_min", DEFAULT_OUTDOOR_COOLING_MIN)
     ohm = settings.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX)
@@ -191,6 +194,7 @@ def _simulate_mpc(
     # Seed with real residual state
     current_q_residual = q_residual
     pred_temps: list[float] = []
+    pred_actions: list[str] = []
 
     for i in range(len(target_forecast)):
         tgt = target_forecast[i]["target_temp"]
@@ -282,8 +286,9 @@ def _simulate_mpc(
             blocks_in_action = 1
 
         pred_temps.append(round(T, 2))
+        pred_actions.append(action)
 
-    return pred_temps
+    return pred_temps, pred_actions
 
 
 def _simulate_bangbang(
@@ -300,7 +305,7 @@ def _simulate_bangbang(
     heating_system_type: str = "",
     heating_duration_minutes: float = 0.0,
     last_power_fraction: float = 1.0,
-) -> list[float]:
+) -> tuple[list[float], list[str]]:
     """Bang-bang fallback simulation with mode stickiness + idle rate cap."""
     observed_idle_rate = compute_observed_idle_rate(all_points)
     has_heat = bool(room_config.get("thermostats")) or acs_can_heat
@@ -317,6 +322,7 @@ def _simulate_bangbang(
     sim_was_heating = False
     current_q_residual = q_residual
     pred_temps: list[float] = []
+    pred_actions: list[str] = []
 
     for i, tf in enumerate(target_forecast):
         tgt = tf["target_temp"]
@@ -384,5 +390,6 @@ def _simulate_bangbang(
                 )
 
         pred_temps.append(round(T, 2))
+        pred_actions.append(sim_mode)
 
-    return pred_temps
+    return pred_temps, pred_actions

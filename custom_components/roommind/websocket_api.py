@@ -697,7 +697,8 @@ async def websocket_get_analytics(
     # Forward-simulate temperature prediction for the forecast period.
     from .analytics_simulator import build_forecast_outdoor_series, build_forecast_solar_series, simulate_prediction
 
-    pred_temps: list[float | None] = []
+    pred_temps: list[float] = []
+    pred_modes: list[str] = []
     prediction_enabled = settings.get("prediction_enabled", True)
     if prediction_enabled and target_forecast and coordinator:
         mgr = coordinator._model_manager
@@ -733,7 +734,7 @@ async def websocket_get_analytics(
                     from .residual_heat import compute_residual_heat
                     sim_q_residual = compute_residual_heat(elapsed, system_type, sim_last_pf, sim_heat_dur)
 
-                pred_temps = simulate_prediction(
+                pred_temps, pred_modes = simulate_prediction(
                     model=model,
                     estimator=est,
                     target_forecast=target_forecast,
@@ -764,6 +765,7 @@ async def websocket_get_analytics(
             "target_temp": tf["target_temp"],
             "mode": "forecast",
             "predicted_temp": pred_temps[i] if i < len(pred_temps) else None,
+            "planned_mode": pred_modes[i] if i < len(pred_modes) else "idle",
             "window_open": False,
         })
 

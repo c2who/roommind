@@ -452,8 +452,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             now_ts = time.time()
             dt_s = plan.dt_minutes * 60
             self._prediction_forecasts[area_id] = [
-                {"ts": round(now_ts + i * dt_s, 1), "temp": round(t, 2)}
-                for i, t in enumerate(plan.temperatures)
+                {
+                    "ts": round(now_ts + (i + 1) * dt_s, 1),
+                    "temp": round(plan.temperatures[i + 1], 2),
+                    "action": plan.actions[i],
+                }
+                for i in range(len(plan.actions))
             ]
         else:
             self._prediction_forecasts.pop(area_id, None)

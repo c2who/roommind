@@ -18,6 +18,7 @@ interface AnalyticsDataPoint {
   predicted_temp: number | null;
   window_open: boolean;
   heating_power: number | null;
+  planned_mode?: string;
 }
 
 interface AnalyticsData {
@@ -471,6 +472,25 @@ export class RsAnalytics extends LitElement {
       } else {
         windowBandData.push([ts, null]);
       }
+    }
+
+    // Extend heating/cooling bands into the forecast using planned_mode
+    for (const p of this._data?.forecast ?? []) {
+      const ts = p.ts * 1000;
+      const pm = p.planned_mode ?? "idle";
+      if (pm === "heating") {
+        heatingBandData.push([ts, 999]);
+        hasHeating = true;
+      } else {
+        heatingBandData.push([ts, null]);
+      }
+      if (pm === "cooling") {
+        coolingBandData.push([ts, 999]);
+        hasCooling = true;
+      } else {
+        coolingBandData.push([ts, null]);
+      }
+      windowBandData.push([ts, null]);
     }
 
     if (hasHeating) {
