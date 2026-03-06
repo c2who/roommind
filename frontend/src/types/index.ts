@@ -46,8 +46,6 @@ export interface RoomLiveData {
   mold_surface_rh: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
-  mode_on_since: number | null;
-  mode_planned_end_ts: number | null;
 }
 
 export interface RoomConfig {

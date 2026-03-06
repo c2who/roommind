@@ -46,8 +46,6 @@
   "hero.remaining": "{time} remaining",
   "hero.humidity": "{value}% humidity",
   "hero.trv_setpoint": "Thermostat set to {value}{unit}",
-  "hero.running_since": "Running for {duration}",
-  "hero.running_since_of": "Running for {elapsed} of ~{total}",
   "hero.waiting": "Waiting for sensor data...",
   "hero.not_configured": "Not configured yet",
 

@@ -153,8 +153,6 @@ async def websocket_list_rooms(
             "mold_surface_rh": live.get("mold_surface_rh"),
             "mold_prevention_active": live.get("mold_prevention_active", False),
             "mold_prevention_delta": live.get("mold_prevention_delta", 0),
-            "mode_on_since": live.get("mode_on_since"),
-            "mode_planned_end_ts": live.get("mode_planned_end_ts"),
         }
         result[area_id] = room_data
 
