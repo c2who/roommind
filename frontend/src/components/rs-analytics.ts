@@ -42,7 +42,7 @@ interface AnalyticsData {
 
 type TimeRange = "12h" | "24h" | "2d" | "7d" | "14d" | "30d" | "90d";
 
-const FORECAST_MS = 3 * 3600_000; // 3 hours into the future
+const FORECAST_MS = 4 * 3600_000; // 4 hours into the future
 
 const RANGE_MS: Record<TimeRange, number> = {
   "12h": 12 * 3600_000,

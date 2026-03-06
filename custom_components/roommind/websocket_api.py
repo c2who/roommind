@@ -688,7 +688,7 @@ async def websocket_get_analytics(
         mold_delta = live.get("mold_prevention_delta", 0.0)
     try:
         target_forecast = await _compute_target_forecast(
-            hass, room_config, settings, mold_prevention_delta=mold_delta,
+            hass, room_config, settings, mold_prevention_delta=mold_delta, hours=4.0,
         )
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Target forecast computation failed for '%s'", area_id)

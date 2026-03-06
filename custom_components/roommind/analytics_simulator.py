@@ -247,6 +247,17 @@ def _simulate_mpc(
             )
             action = plan.get_current_action()
             pf = plan.get_current_power_fraction()
+            # Safety guard matching real MPC controller: don't heat above target,
+            # don't cool below target (optimizer may still choose active mode due
+            # to tiny natural drift in the lookahead horizon).
+            near_heat = remaining_heat_targets[:6]
+            near_cool = remaining_cool_targets[:6]
+            if near_heat and action == MODE_HEATING and T >= max(near_heat):
+                action = MODE_IDLE
+                pf = 0.0
+            elif near_cool and action == MODE_COOLING and T <= min(near_cool):
+                action = MODE_IDLE
+                pf = 0.0
         if action == MODE_HEATING:
             Q = pf * model.Q_heat
         elif action == MODE_COOLING:
