@@ -18,6 +18,12 @@ export interface ScheduleEntry {
   entity_id: string;
 }
 
+export interface PassiveDevice {
+  entity_id: string;
+  mode: "auto" | "cooling" | "heating";
+  power_fraction: number;
+}
+
 export interface RoomLiveData {
   current_temp: number | null;
   current_humidity: number | null;
@@ -69,6 +75,7 @@ export interface RoomConfig {
   display_name?: string;
   heating_system_type?: string;
   entity_modes?: Record<string, "auto" | "heat_only" | "cool_only">;
+  passive_devices?: PassiveDevice[];
   live?: RoomLiveData;
 }
 

@@ -45,6 +45,7 @@ _ROOM_SAVE_FIELDS = (
     "comfort_heat", "comfort_cool", "eco_heat", "eco_cool",
     "presence_persons", "display_name",
     "heating_system_type", "entity_modes",
+    "passive_devices",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -212,6 +213,15 @@ async def websocket_list_rooms(
             ["", "radiator", "underfloor"]
         ),
         vol.Optional("entity_modes"): {str: vol.In(["auto", "heat_only", "cool_only"])},
+        vol.Optional("passive_devices"): [
+            {
+                vol.Required("entity_id"): str,
+                vol.Optional("mode", default="auto"): vol.In(["auto", "cooling", "heating"]),
+                vol.Optional("power_fraction", default=1.0): vol.All(
+                    vol.Coerce(float), vol.Range(min=0.01, max=5.0)
+                ),
+            }
+        ],
     }
 )
 @websocket_api.async_response

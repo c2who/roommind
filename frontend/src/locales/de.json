@@ -328,5 +328,18 @@
   "card.mold_warning": "Schimmelrisiko",
   "card.mold_critical": "Schimmelgefahr!",
   "card.mold_prevention": "Schimmelschutz +{delta}{unit}",
-  "room.mold_surface_rh": "Geschätzte Oberflächenfeuchte: {value}%"
+  "room.mold_surface_rh": "Geschätzte Oberflächenfeuchte: {value}%",
+
+  "passive_devices.section_title": "Passive Beobachtungen",
+  "passive_devices.section_hint": "Externe Geräte, die die Raumtemperatur beeinflussen, aber nicht von RoomMind gesteuert werden. Verbessert die Genauigkeit des Lernmodells.",
+  "passive_devices.entity": "Entität",
+  "passive_devices.mode": "Modus",
+  "passive_devices.mode_auto": "Automatisch (aus Entität lesen)",
+  "passive_devices.mode_cooling": "Kühlen",
+  "passive_devices.mode_heating": "Heizen",
+  "passive_devices.power_fraction": "Einfluss",
+  "passive_devices.power_fraction_hint": "Relativer Einfluss auf diesen Raum (1,0 = voller Einfluss, 0,2 = 20 %). Im Zweifel 1,0 lassen und das Modell lernen lassen.",
+  "passive_devices.add": "Passives Gerät hinzufügen",
+  "passive_devices.remove": "Entfernen",
+  "passive_devices.none_configured": "Keine passiven Geräte konfiguriert."
 }

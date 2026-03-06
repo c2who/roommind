@@ -556,6 +556,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ekf_mode = observed_mode   # may be None → skip training
             ekf_pf = observed_pf
 
+        # Augment with passive device observations when own devices are idle.
+        # Passive devices are external climate/binary entities whose thermal
+        # effect on this room should be accounted for in EKF training, but
+        # which RoomMind does not control.
+        if ekf_mode == MODE_IDLE:
+            passive_mode, passive_pf = self._observe_passive_devices(room)
+            if passive_mode is not None:
+                ekf_mode = passive_mode
+                ekf_pf = passive_pf
+
         # Update thermal model with observation (EKF online learning)
         # Updates are accumulated over ~3 min for better signal-to-noise ratio.
         # On mode change, the accumulator is flushed immediately with the old mode.
@@ -896,6 +906,76 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         pf = 1.0 if dominated in ("heating", "cooling") else 0.0
         return (dominated, pf)
+
+    def _observe_passive_devices(self, room: dict) -> tuple[str | None, float]:
+        """Observe passive devices to detect external heating/cooling for EKF training.
+
+        Passive devices are external entities (climate, binary_sensor, input_boolean)
+        whose thermal effect on this room should be accounted for during EKF training,
+        but which RoomMind does not control.
+
+        Each passive device entry has:
+          - entity_id: HA entity to observe
+          - mode: "auto" (climate only, read hvac_action), "cooling", or "heating"
+          - power_fraction: relative contribution weight (default 1.0)
+
+        When multiple passive devices are active simultaneously, their power_fractions
+        are summed so the EKF receives a composite signal. If both heating and cooling
+        sources are active, the dominant (larger pf) mode wins.
+
+        Returns (mode, composite_power_fraction):
+          - (MODE_COOLING, pf) / (MODE_HEATING, pf) if any passive device is active
+          - (None, 0.0) if no passive device is active
+        """
+        passive_devices = room.get("passive_devices", [])
+        if not passive_devices:
+            return None, 0.0
+
+        heating_pf = 0.0
+        cooling_pf = 0.0
+
+        for pd in passive_devices:
+            entity_id = pd.get("entity_id", "")
+            if not entity_id:
+                continue
+            config_mode = pd.get("mode", "auto")
+            pf = float(pd.get("power_fraction", 1.0))
+
+            state = self.hass.states.get(entity_id)
+            if state is None or state.state in ("unavailable", "unknown"):
+                continue
+
+            if entity_id.startswith("climate."):
+                hvac_action = state.attributes.get("hvac_action", "")
+                if config_mode == "auto":
+                    if hvac_action == "cooling":
+                        cooling_pf += pf
+                    elif hvac_action in ("heating", "preheating"):
+                        heating_pf += pf
+                elif config_mode == "cooling":
+                    if hvac_action == "cooling":
+                        cooling_pf += pf
+                elif config_mode == "heating":
+                    if hvac_action in ("heating", "preheating"):
+                        heating_pf += pf
+            else:
+                # binary_sensor, input_boolean, etc.: on = active
+                if state.state == "on":
+                    if config_mode == "cooling":
+                        cooling_pf += pf
+                    elif config_mode == "heating":
+                        heating_pf += pf
+
+        if cooling_pf > 0 and heating_pf > 0:
+            # Both active — use the dominant contribution
+            if cooling_pf >= heating_pf:
+                return MODE_COOLING, cooling_pf
+            return MODE_HEATING, heating_pf
+        if cooling_pf > 0:
+            return MODE_COOLING, cooling_pf
+        if heating_pf > 0:
+            return MODE_HEATING, heating_pf
+        return None, 0.0
 
     def _infer_device_mode(self, room: dict) -> str:
         """Infer heating/cooling from hvac_mode when hvac_action is unavailable.

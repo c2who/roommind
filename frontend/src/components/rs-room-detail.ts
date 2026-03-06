@@ -7,6 +7,7 @@ import type {
   ClimateMode,
   OverrideType,
   ScheduleEntry,
+  PassiveDevice,
 } from "../types";
 import "./rs-hero-status";
 import "./rs-climate-mode-selector";
@@ -58,6 +59,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _selectedPresencePersons: string[] = [];
   @state() private _displayName = "";
   @state() private _heatingSystemType = "";
+  @state() private _passiveDevices: PassiveDevice[] = [];
+  @state() private _editingPassiveDevices = false;
 
 
   private _prevAreaId: string | null = null;
@@ -374,6 +377,107 @@ export class RsRoomDetail extends LitElement {
       color: var(--secondary-text-color);
       line-height: 1.5;
     }
+
+    .passive-device-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      font-size: 14px;
+      color: var(--primary-text-color);
+      border-radius: 10px;
+      margin-bottom: 2px;
+      transition: background 0.15s;
+    }
+
+    .passive-device-row:hover {
+      background: rgba(0, 0, 0, 0.02);
+    }
+
+    .passive-device-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .passive-device-name {
+      font-size: 14px;
+      font-weight: 450;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .passive-device-entity {
+      font-family: var(--code-font-family, monospace);
+      font-size: 11px;
+      color: var(--secondary-text-color);
+      margin-top: 2px;
+      opacity: 0.7;
+    }
+
+    .passive-mode-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--primary-color);
+      background: rgba(3, 169, 244, 0.1);
+      padding: 2px 8px;
+      border-radius: 10px;
+      letter-spacing: 0.3px;
+      flex-shrink: 0;
+    }
+
+    .passive-selects {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .passive-select {
+      flex-shrink: 0;
+      --ha-select-min-width: 120px;
+    }
+
+    .passive-pf-field {
+      --ha-select-min-width: 80px;
+      width: 80px;
+    }
+
+    .passive-remove-btn {
+      background: none;
+      border: none;
+      padding: 4px;
+      cursor: pointer;
+      color: var(--secondary-text-color);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .passive-remove-btn:hover {
+      color: var(--error-color, #d32f2f);
+      background: rgba(211, 47, 47, 0.06);
+    }
+
+    .passive-entity-picker-wrap {
+      margin-top: 8px;
+      padding: 8px 14px 14px;
+      border-top: 1px solid var(--divider-color, #eee);
+    }
+
+    .passive-entity-picker-wrap ha-entity-picker {
+      width: 100%;
+    }
+
+    .passive-section-hint {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      padding: 0 14px 10px;
+      line-height: 1.4;
+    }
   `;
 
   connectedCallback() {
@@ -435,6 +539,7 @@ export class RsRoomDetail extends LitElement {
       this._selectedPresencePersons = this.config.presence_persons ?? [];
       this._displayName = this.config.display_name ?? "";
       this._heatingSystemType = this.config.heating_system_type ?? "";
+      this._passiveDevices = (this.config.passive_devices ?? []).map(pd => ({ ...pd }));
     } else {
       this._selectedThermostats = new Set();
       this._selectedAcs = new Set();
@@ -454,6 +559,7 @@ export class RsRoomDetail extends LitElement {
       this._selectedPresencePersons = [];
       this._displayName = "";
       this._heatingSystemType = "";
+      this._passiveDevices = [];
     }
     this._dirty = false;
 
@@ -564,6 +670,8 @@ export class RsRoomDetail extends LitElement {
           </rs-section-card>
 
           ${this._renderPresenceSection()}
+
+          ${this._renderPassiveDevicesSection()}
         </div>
       </div>
     `;
@@ -777,6 +885,7 @@ export class RsRoomDetail extends LitElement {
         display_name: this._displayName,
         heating_system_type: this._heatingSystemType,
         entity_modes: this._entityModes,
+        passive_devices: this._passiveDevices,
       });
 
       this._dirty = false;
@@ -899,6 +1008,138 @@ export class RsRoomDetail extends LitElement {
         `}
       </rs-section-card>
     `;
+  }
+
+  private _renderPassiveDevicesSection() {
+    const lang = this.hass.language;
+    const editing = this._editingPassiveDevices;
+
+    return html`
+      <rs-section-card
+        icon="mdi:eye-outline"
+        .heading=${localize("passive_devices.section_title", lang)}
+        editable
+        .editing=${editing}
+        .doneLabel=${localize("schedule.done", lang)}
+        @edit-click=${() => { this._editingPassiveDevices = true; }}
+        @done-click=${() => { this._editingPassiveDevices = false; }}
+      >
+        ${editing
+          ? html`<p class="passive-section-hint">${localize("passive_devices.section_hint", lang)}</p>`
+          : nothing}
+
+        ${this._passiveDevices.length === 0 && !editing
+          ? html`<div style="padding: 0 14px 14px"><span class="field-hint">${localize("passive_devices.none_configured", lang)}</span></div>`
+          : this._passiveDevices.map((pd, i) => this._renderPassiveDeviceRow(pd, i, editing))}
+
+        ${editing ? html`
+          <div class="passive-entity-picker-wrap">
+            <ha-entity-picker
+              .hass=${this.hass}
+              .includeDomains=${["climate", "binary_sensor", "input_boolean"]}
+              .entityFilter=${this._passiveEntityFilter}
+              .value=${""}
+              label=${localize("passive_devices.add", lang)}
+              @value-changed=${this._onPassiveEntityPicked}
+            ></ha-entity-picker>
+          </div>
+        ` : nothing}
+      </rs-section-card>
+    `;
+  }
+
+  private _renderPassiveDeviceRow(pd: PassiveDevice, i: number, editing: boolean) {
+    const lang = this.hass.language;
+    const entityState = this.hass.states[pd.entity_id];
+    const friendlyName = (entityState?.attributes?.friendly_name as string) || pd.entity_id;
+    const modeBadgeLabel = pd.mode === "auto"
+      ? localize("passive_devices.mode_auto", lang)
+      : pd.mode === "cooling"
+        ? localize("passive_devices.mode_cooling", lang)
+        : localize("passive_devices.mode_heating", lang);
+
+    return html`
+      <div class="passive-device-row">
+        <div class="passive-device-info">
+          <div class="passive-device-name">${friendlyName}</div>
+          <div class="passive-device-entity">${pd.entity_id}</div>
+        </div>
+        ${editing ? html`
+          <div class="passive-selects">
+            <ha-select
+              class="passive-select"
+              outlined
+              .value=${pd.mode}
+              @selected=${(e: Event) => {
+                const val = (e as CustomEvent).detail?.value ?? (e.target as HTMLSelectElement).value;
+                if (!val) return;
+                const updated = [...this._passiveDevices];
+                updated[i] = { ...updated[i], mode: val as "auto" | "cooling" | "heating" };
+                this._passiveDevices = updated;
+                this._autoSave();
+              }}
+              @closed=${(e: Event) => e.stopPropagation()}
+              fixedMenuPosition
+            >
+              <ha-list-item value="auto">${localize("passive_devices.mode_auto", lang)}</ha-list-item>
+              <ha-list-item value="cooling">${localize("passive_devices.mode_cooling", lang)}</ha-list-item>
+              <ha-list-item value="heating">${localize("passive_devices.mode_heating", lang)}</ha-list-item>
+            </ha-select>
+            <ha-textfield
+              class="passive-pf-field"
+              type="number"
+              min="0.01"
+              max="5"
+              step="0.1"
+              .label=${localize("passive_devices.power_fraction", lang)}
+              .value=${String(pd.power_fraction)}
+              @change=${(e: Event) => {
+                const val = parseFloat((e.target as HTMLInputElement).value);
+                if (!val || val <= 0) return;
+                const updated = [...this._passiveDevices];
+                updated[i] = { ...updated[i], power_fraction: val };
+                this._passiveDevices = updated;
+                this._autoSave();
+              }}
+            ></ha-textfield>
+          </div>
+          <button
+            class="passive-remove-btn"
+            title=${localize("passive_devices.remove", lang)}
+            @click=${() => {
+              this._passiveDevices = this._passiveDevices.filter((_, idx) => idx !== i);
+              this._autoSave();
+            }}
+          >
+            <ha-icon icon="mdi:close" style="--mdc-icon-size: 18px"></ha-icon>
+          </button>
+        ` : html`
+          <span class="passive-mode-badge">${modeBadgeLabel}</span>
+          <span style="font-size:12px; color:var(--secondary-text-color); flex-shrink:0">${pd.power_fraction}×</span>
+        `}
+      </div>
+    `;
+  }
+
+  private _passiveEntityFilter = (entity: { entity_id: string }): boolean => {
+    const id = entity.entity_id;
+    return !this._passiveDevices.some(pd => pd.entity_id === id);
+  };
+
+  private _onPassiveEntityPicked(e: CustomEvent) {
+    const entityId = e.detail?.value as string;
+    if (!entityId) return;
+    if (this._passiveDevices.some(pd => pd.entity_id === entityId)) return;
+    // Default mode: "auto" for climate entities, "cooling" for others
+    const defaultMode = entityId.startsWith("climate.") ? "auto" : "cooling";
+    this._passiveDevices = [
+      ...this._passiveDevices,
+      { entity_id: entityId, mode: defaultMode, power_fraction: 1.0 },
+    ];
+    this._autoSave();
+    // Clear picker
+    const picker = e.target as HTMLElement & { value: string };
+    picker.value = "";
   }
 
   private _renderOverrideSection() {
