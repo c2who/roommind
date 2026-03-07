@@ -9,12 +9,12 @@
 | custom\_components/roommind/const.py                            |       59 |        0 |    100% |           |
 | custom\_components/roommind/control/\_\_init\_\_.py             |        0 |        0 |    100% |           |
 | custom\_components/roommind/control/analytics\_simulator.py     |      186 |        0 |    100% |           |
-| custom\_components/roommind/control/mpc\_controller.py          |      379 |       16 |     96% |389-390, 520, 565-576, 636 |
+| custom\_components/roommind/control/mpc\_controller.py          |      370 |       16 |     96% |375-376, 503, 548-559, 619 |
 | custom\_components/roommind/control/mpc\_optimizer.py           |      157 |        7 |     96% |83, 114, 259, 264, 269, 277, 283 |
 | custom\_components/roommind/control/residual\_heat.py           |       24 |        1 |     96% |        51 |
 | custom\_components/roommind/control/solar.py                    |       51 |        0 |    100% |           |
 | custom\_components/roommind/control/thermal\_model.py           |      399 |       17 |     96% |358, 360, 612, 769-783, 946-950 |
-| custom\_components/roommind/coordinator.py                      |      462 |       12 |     97% |193-194, 333, 389-390, 494-495, 624, 767-768, 772-773 |
+| custom\_components/roommind/coordinator.py                      |      449 |       12 |     97% |188-189, 327, 383-384, 482-483, 612, 755-756, 760-761 |
 | custom\_components/roommind/diagnostics.py                      |       40 |        0 |    100% |           |
 | custom\_components/roommind/managers/\_\_init\_\_.py            |        0 |        0 |    100% |           |
 | custom\_components/roommind/managers/mold\_manager.py           |       68 |        0 |    100% |           |
@@ -36,7 +36,7 @@
 | custom\_components/roommind/utils/sensor\_utils.py              |       15 |        0 |    100% |           |
 | custom\_components/roommind/utils/temp\_utils.py                |       26 |        0 |    100% |           |
 | custom\_components/roommind/websocket\_api.py                   |      190 |       18 |     91% |291, 297, 316, 343-344, 354, 580-596 |
-| **TOTAL**                                                       | **3069** |  **182** | **94%** |           |
+| **TOTAL**                                                       | **3047** |  **182** | **94%** |           |
 
 
 ## Setup coverage badge
