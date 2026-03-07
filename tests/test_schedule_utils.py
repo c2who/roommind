@@ -7,7 +7,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 from custom_components.roommind.const import TargetTemps
-from custom_components.roommind.schedule_utils import (
+from custom_components.roommind.utils.schedule_utils import (
     get_active_schedule_entity,
     make_target_resolver,
     resolve_schedule_index,
@@ -761,7 +761,7 @@ class TestResolveTargetsAtTime:
 
     def test_comfort_fields_when_schedule_on(self):
         """Inside a schedule block without custom temp returns comfort_heat/comfort_cool."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 10, 0, 0)  # Monday 10:00
         ts = dt.timestamp()
@@ -786,7 +786,7 @@ class TestResolveTargetsAtTime:
 
     def test_eco_fields_when_schedule_off(self):
         """Outside schedule blocks returns eco_heat/eco_cool."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 6, 0, 0)  # Monday 06:00 - before blocks
         ts = dt.timestamp()
@@ -811,7 +811,7 @@ class TestResolveTargetsAtTime:
 
     def test_presence_away_action_off_returns_none_none(self):
         """presence_away_action='off' returns TargetTemps(None, None)."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         now = time.time()
         result = resolve_targets_at_time(
@@ -832,7 +832,7 @@ class TestResolveTargetsAtTime:
 
     def test_presence_away_eco_returns_eco_temps(self):
         """presence_away_action='eco' returns eco heat/cool."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         now = time.time()
         result = resolve_targets_at_time(
@@ -853,7 +853,7 @@ class TestResolveTargetsAtTime:
 
     def test_override_creates_single_point(self):
         """Active override creates TargetTemps(heat=override, cool=override)."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         now = time.time()
         result = resolve_targets_at_time(
@@ -872,7 +872,7 @@ class TestResolveTargetsAtTime:
 
     def test_schedule_block_with_temperature_creates_single_point(self):
         """Schedule block with custom temperature creates TargetTemps(heat=t, cool=t)."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 10, 0, 0)  # Monday 10:00
         ts = dt.timestamp()
@@ -942,7 +942,7 @@ class TestResolveTargetsAtTimeSplitBlockTemps:
 
     def test_resolve_targets_with_split_block_temps(self):
         """Block with heat_temperature and cool_temperature returns split TargetTemps."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 10, 0, 0)  # Monday 10:00
         ts = dt.timestamp()
@@ -971,7 +971,7 @@ class TestResolveTargetsAtTimeSplitBlockTemps:
 
     def test_resolve_targets_with_only_heat_block_temp(self):
         """Block with only heat_temperature falls back to comfort_cool."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 10, 0, 0)  # Monday 10:00
         ts = dt.timestamp()
@@ -1000,7 +1000,7 @@ class TestResolveTargetsAtTimeSplitBlockTemps:
 
     def test_resolve_targets_with_only_cool_block_temp(self):
         """Block with only cool_temperature falls back to comfort_heat."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 10, 0, 0)  # Monday 10:00
         ts = dt.timestamp()
@@ -1029,7 +1029,7 @@ class TestResolveTargetsAtTimeSplitBlockTemps:
 
     def test_resolve_targets_single_temp_still_works(self):
         """Block with only temperature creates single-point (backward compat)."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         dt = datetime(2025, 1, 6, 10, 0, 0)  # Monday 10:00
         ts = dt.timestamp()
@@ -1058,7 +1058,7 @@ class TestResolveTargetsAtTimeSplitBlockTemps:
 
     def test_vacation_cool_target_uses_eco_cool(self):
         """Vacation should keep cool at eco_cool, not collapse to vacation_temp."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         ts = time.time()
         result = resolve_targets_at_time(
@@ -1078,7 +1078,7 @@ class TestResolveTargetsAtTimeSplitBlockTemps:
 
     def test_vacation_cool_target_at_least_vacation_temp(self):
         """If vacation_temp > eco_cool, cool should be vacation_temp (max)."""
-        from custom_components.roommind.schedule_utils import resolve_targets_at_time
+        from custom_components.roommind.utils.schedule_utils import resolve_targets_at_time
 
         ts = time.time()
         result = resolve_targets_at_time(

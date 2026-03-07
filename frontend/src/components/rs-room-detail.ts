@@ -5,7 +5,6 @@ import type {
   HassArea,
   RoomConfig,
   ClimateMode,
-  OverrideType,
   ScheduleEntry,
   PassiveDevice,
 } from "../types";
@@ -14,9 +13,12 @@ import "./rs-climate-mode-selector";
 import "./rs-schedule-settings";
 import "./rs-device-section";
 import "./rs-section-card";
+import "./rs-override-section";
+import "./rs-presence-section";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
-import { formatTemp, tempUnit, toDisplay, toCelsius, tempStep, tempRange } from "../utils/temperature";
+
+import type { RsOverrideSection } from "./rs-override-section";
 
 @customElement("rs-room-detail")
 export class RsRoomDetail extends LitElement {
@@ -44,15 +46,6 @@ export class RsRoomDetail extends LitElement {
   @state() private _ecoCool = 27.0;
   @state() private _error = "";
   @state() private _dirty = false;
-  @state() private _overridePending: OverrideType | null = null;
-  @state() private _overrideCustomTemp = 21;
-  @state() private _overrideError = "";
-  @state() private _optimisticOverride: {
-    type: OverrideType;
-    temp: number;
-    until: number;
-  } | null = null;
-  @state() private _optimisticClear = false;
   @state() private _editingSchedule = false;
   @state() private _editingDevices = false;
   @state() private _editingPresence = false;
@@ -111,142 +104,6 @@ export class RsRoomDetail extends LitElement {
       margin-top: 8px;
     }
 
-    /* Override section */
-    .override-divider {
-      border: none;
-      border-top: 1px solid var(--divider-color, #e0e0e0);
-      margin: 16px 0 12px;
-    }
-
-    .override-label {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--secondary-text-color);
-      margin-bottom: 10px;
-    }
-
-    .override-presets {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .override-preset {
-      cursor: pointer;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      padding: 6px 12px;
-      font-size: 13px;
-      background: transparent;
-      color: var(--primary-text-color);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition: background 0.15s, border-color 0.15s;
-    }
-
-    .override-preset:hover {
-      background: rgba(0, 0, 0, 0.04);
-    }
-
-    .override-preset.pending {
-      border-color: var(--primary-color);
-      background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
-    }
-
-    .override-preset.active.boost {
-      border-color: var(--warning-color, #ff9800);
-      background: rgba(255, 152, 0, 0.15);
-      color: var(--warning-color, #ff9800);
-    }
-
-    .override-preset.active.eco {
-      border-color: #4caf50;
-      background: rgba(76, 175, 80, 0.15);
-      color: #4caf50;
-    }
-
-    .override-preset.active.custom {
-      border-color: #2196f3;
-      background: rgba(33, 150, 243, 0.15);
-      color: #2196f3;
-    }
-
-    .override-preset:disabled {
-      opacity: 0.35;
-      cursor: default;
-    }
-
-    .override-preset:disabled:hover {
-      background: transparent;
-    }
-
-    .override-preset ha-icon {
-      --mdc-icon-size: 16px;
-    }
-
-    .override-duration {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-      align-items: center;
-    }
-
-    .override-duration-label {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .override-dur-chip {
-      cursor: pointer;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 16px;
-      padding: 4px 12px;
-      font-size: 12px;
-      background: transparent;
-      color: var(--primary-text-color);
-      transition: background 0.15s;
-    }
-
-    .override-dur-chip:hover {
-      background: rgba(0, 0, 0, 0.04);
-    }
-
-    .override-dur-chip:disabled {
-      opacity: 0.5;
-      pointer-events: none;
-    }
-
-    .override-custom-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    .override-custom-row input {
-      width: 56px;
-      padding: 4px 8px;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      font-size: 13px;
-      text-align: center;
-      background: transparent;
-      color: var(--primary-text-color);
-    }
-
-    .override-custom-row span {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .override-error {
-      color: var(--error-color, #d32f2f);
-      font-size: 12px;
-      margin-top: 6px;
-    }
-
     .field-hint {
       color: var(--secondary-text-color);
       font-size: 12px;
@@ -269,115 +126,6 @@ export class RsRoomDetail extends LitElement {
     .exceptions-link:hover {
       text-decoration: underline;
     }
-
-    .presence-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .presence-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      cursor: pointer;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 16px;
-      padding: 4px 12px;
-      font-size: 13px;
-      font-family: inherit;
-      background: transparent;
-      color: var(--secondary-text-color);
-      transition: background 0.15s, border-color 0.15s, color 0.15s;
-    }
-
-    .presence-chip:hover {
-      background: rgba(0, 0, 0, 0.04);
-    }
-
-    .presence-chip.active {
-      border-color: var(--primary-color);
-      color: var(--primary-color);
-      background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
-    }
-
-    .presence-list {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .presence-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 14px;
-      border-radius: 8px;
-      transition: background 0.3s;
-    }
-
-    .presence-row.home {
-      background: rgba(76, 175, 80, 0.1);
-    }
-
-    .presence-row.away {
-      background: rgba(0, 0, 0, 0.04);
-    }
-
-    .presence-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
-    .presence-row.home .presence-dot {
-      background: #4caf50;
-      box-shadow: 0 0 6px rgba(76, 175, 80, 0.5);
-    }
-
-    .presence-row.away .presence-dot {
-      background: var(--disabled-text-color, #bdbdbd);
-    }
-
-    .presence-name {
-      flex: 1;
-      font-size: 14px;
-      font-weight: 500;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .presence-row.home .presence-name {
-      color: var(--primary-text-color);
-    }
-
-    .presence-row.away .presence-name {
-      color: var(--secondary-text-color);
-    }
-
-    .presence-state {
-      font-size: 12px;
-      white-space: nowrap;
-    }
-
-    .presence-row.home .presence-state {
-      color: #2e7d32;
-    }
-
-    .presence-row.away .presence-state {
-      color: var(--secondary-text-color);
-    }
-
-    .help-content {
-      padding: 0 16px 16px;
-      font-size: 13px;
-      color: var(--secondary-text-color);
-      line-height: 1.5;
-    }
-
     .passive-device-row {
       display: flex;
       align-items: center;
@@ -506,17 +254,6 @@ export class RsRoomDetail extends LitElement {
         this._initFromConfig();
       }
     }
-
-    // Clear optimistic override state once server data catches up
-    if (changedProps.has("config") && this.config?.live) {
-      const live = this.config.live;
-      if (this._optimisticOverride && live.override_active) {
-        this._optimisticOverride = null;
-      }
-      if (this._optimisticClear && !live.override_active) {
-        this._optimisticClear = false;
-      }
-    }
   }
 
   private _initFromConfig() {
@@ -567,6 +304,30 @@ export class RsRoomDetail extends LitElement {
     const hasDevices = this._selectedThermostats.size > 0 || this._selectedAcs.size > 0 || !!this._selectedTempSensor;
     this._editingSchedule = this._schedules.length === 0;
     this._editingDevices = !hasDevices;
+  }
+
+  /** Expose effective override for hero-status via the override sub-component. */
+  private _getEffectiveOverride(): {
+    active: boolean;
+    type: import("../types").OverrideType | null;
+    temp: number | null;
+    until: number | null;
+  } {
+    const overrideEl = this.shadowRoot?.querySelector("rs-override-section") as RsOverrideSection | null;
+    if (overrideEl) {
+      return overrideEl.getEffectiveOverride();
+    }
+    // Fallback before sub-component mounts
+    const live = this.config?.live;
+    if (live?.override_active && live.override_type) {
+      return {
+        active: true,
+        type: live.override_type,
+        temp: live.override_temp,
+        until: live.override_until,
+      };
+    }
+    return { active: false, type: null, temp: null, until: null };
   }
 
   render() {
@@ -628,7 +389,18 @@ export class RsRoomDetail extends LitElement {
               @eco-heat-changed=${this._onEcoHeatChanged}
               @eco-cool-changed=${this._onEcoCoolChanged}
             ></rs-schedule-settings>
-            ${this.config ? this._renderOverrideSection() : nothing}
+            ${this.config ? html`
+              <rs-override-section
+                .hass=${this.hass}
+                .config=${this.config}
+                .climateMode=${this._climateMode}
+                .comfortHeat=${this._comfortHeat}
+                .comfortCool=${this._comfortCool}
+                .ecoHeat=${this._ecoHeat}
+                .ecoCool=${this._ecoCool}
+                .language=${this.hass.language}
+              ></rs-override-section>
+            ` : nothing}
           </rs-section-card>
 
           ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
@@ -669,7 +441,16 @@ export class RsRoomDetail extends LitElement {
             ></rs-device-section>
           </rs-section-card>
 
-          ${this._renderPresenceSection()}
+          <rs-presence-section
+            .hass=${this.hass}
+            .presenceEnabled=${this.presenceEnabled}
+            .presencePersons=${this.presencePersons}
+            .selectedPresencePersons=${this._selectedPresencePersons}
+            .editing=${this._editingPresence}
+            .language=${this.hass.language}
+            @presence-persons-changed=${this._onPresencePersonsChanged}
+            @editing-changed=${this._onPresenceEditingChanged}
+          ></rs-presence-section>
 
           ${this._renderPassiveDevicesSection()}
         </div>
@@ -846,6 +627,15 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
+  private _onPresencePersonsChanged(e: CustomEvent<string[]>) {
+    this._selectedPresencePersons = e.detail;
+    this._autoSave();
+  }
+
+  private _onPresenceEditingChanged(e: CustomEvent<{ editing: boolean }>) {
+    this._editingPresence = e.detail.editing;
+  }
+
   // ---- Auto-save ----
 
   private _onDisplayNameChanged(e: CustomEvent<{ value: string }>) {
@@ -905,110 +695,6 @@ export class RsRoomDetail extends LitElement {
     }
   }
 
-  // ---- Override handlers ----
-
-  private _getEffectiveOverride(): {
-    active: boolean;
-    type: OverrideType | null;
-    temp: number | null;
-    until: number | null;
-  } {
-    // Optimistic clear takes priority
-    if (this._optimisticClear) {
-      return { active: false, type: null, temp: null, until: null };
-    }
-    // Optimistic set takes priority over server data
-    if (this._optimisticOverride) {
-      return {
-        active: true,
-        type: this._optimisticOverride.type,
-        temp: this._optimisticOverride.temp,
-        until: this._optimisticOverride.until,
-      };
-    }
-    // Fall back to server data
-    const live = this.config?.live;
-    if (live?.override_active && live.override_type) {
-      return {
-        active: true,
-        type: live.override_type,
-        temp: live.override_temp,
-        until: live.override_until,
-      };
-    }
-    return { active: false, type: null, temp: null, until: null };
-  }
-
-  private _renderPresenceSection() {
-    if (!this.presenceEnabled || this.presencePersons.length === 0) return nothing;
-
-    return html`
-      <rs-section-card
-        icon="mdi:home-account"
-        .heading=${localize("room.section.presence", this.hass.language)}
-        editable
-        .editing=${this._editingPresence}
-        .doneLabel=${localize("schedule.done", this.hass.language)}
-        @edit-click=${() => { this._editingPresence = true; }}
-        @done-click=${() => { this._editingPresence = false; }}
-      >
-        ${this._editingPresence ? html`
-          <div style="padding: 0 16px 16px">
-            <div class="presence-chips">
-              ${this.presencePersons.map((pid) => {
-                const active = this._selectedPresencePersons.includes(pid);
-                const name = this.hass.states[pid]?.attributes?.friendly_name ?? pid.split(".").slice(1).join(".");
-                return html`
-                  <button
-                    class="presence-chip ${active ? "active" : ""}"
-                    @click=${() => {
-                      if (active) {
-                        this._selectedPresencePersons = this._selectedPresencePersons.filter(p => p !== pid);
-                      } else {
-                        this._selectedPresencePersons = [...this._selectedPresencePersons, pid];
-                      }
-                      this._autoSave();
-                    }}
-                  >
-                    <ha-icon icon=${active ? "mdi:account-check" : "mdi:account-outline"} style="--mdc-icon-size: 16px"></ha-icon>
-                    ${name}
-                  </button>
-                `;
-              })}
-            </div>
-            <ha-expansion-panel outlined .header=${localize("presence.room_help_header", this.hass.language)} style="margin-top: 12px">
-              <div class="help-content">
-                <p>${localize("presence.room_help_body", this.hass.language)}</p>
-              </div>
-            </ha-expansion-panel>
-          </div>
-        ` : html`
-          <div style="padding: 0 16px 16px">
-            ${this._selectedPresencePersons.length > 0 ? html`
-              <div class="presence-list">
-                ${this._selectedPresencePersons.map((pid) => {
-                  const name = this.hass.states[pid]?.attributes?.friendly_name ?? pid.split(".").slice(1).join(".");
-                  const st = this.hass.states[pid]?.state;
-                  const isHome = pid.startsWith("person.") || pid.startsWith("device_tracker.") ? st === "home" : st === "on";
-                  return html`
-                    <div class="presence-row ${isHome ? "home" : "away"}">
-                      <span class="presence-dot"></span>
-                      <span class="presence-name">${name}</span>
-                      <span class="presence-state">${isHome
-                        ? localize("presence.state_home", this.hass.language)
-                        : localize("presence.state_away", this.hass.language)}</span>
-                    </div>
-                  `;
-                })}
-              </div>
-            ` : html`
-              <span class="field-hint">${localize("presence.room_none_assigned", this.hass.language)}</span>
-            `}
-          </div>
-        `}
-      </rs-section-card>
-    `;
-  }
 
   private _renderPassiveDevicesSection() {
     const lang = this.hass.language;
@@ -1142,175 +828,7 @@ export class RsRoomDetail extends LitElement {
     picker.value = "";
   }
 
-  private _renderOverrideSection() {
-    const ov = this._getEffectiveOverride();
 
-    return html`
-      <hr class="override-divider" />
-      <div class="override-label">${localize("override.label", this.hass.language)}</div>
-      ${this._renderOverrideButtons(ov)}
-      ${this._overrideError
-        ? html`<div class="override-error">${this._overrideError}</div>`
-        : nothing}
-    `;
-  }
-
-  private _renderOverrideButtons(ov: ReturnType<typeof this._getEffectiveOverride>) {
-    const activeType = ov.active ? ov.type : null;
-    const showDuration = !activeType && this._overridePending;
-
-    return html`
-      <div class="override-presets">
-        ${(["boost", "eco", "custom"] as OverrideType[]).map((t) => {
-          const isActive = activeType === t;
-          const isDisabled = activeType !== null && !isActive;
-          const isPending = !activeType && this._overridePending === t;
-
-          return html`
-            <button
-              class="override-preset ${t} ${isActive ? "active" : ""} ${isPending ? "pending" : ""}"
-              ?disabled=${isDisabled}
-              @click=${() => isActive ? this._onClearOverride() : this._onOverridePreset(t)}
-            >
-              <ha-icon icon=${t === "boost" ? "mdi:fire" : t === "eco" ? "mdi:leaf" : "mdi:thermometer"}></ha-icon>
-              ${t === "boost" ? `${localize("override.comfort", this.hass.language)} ${formatTemp(this._climateMode === "cool_only" ? this._comfortCool : this._comfortHeat, this.hass)}${tempUnit(this.hass)}`
-                : t === "eco" ? `${localize("override.eco", this.hass.language)} ${formatTemp(this._climateMode === "cool_only" ? this._ecoCool : this._ecoHeat, this.hass)}${tempUnit(this.hass)}`
-                : localize("override.custom", this.hass.language)}
-            </button>
-          `;
-        })}
-      </div>
-      ${showDuration
-        ? html`
-            ${this._overridePending === "custom"
-              ? html`
-                  <div class="override-custom-row">
-                    <span>${localize("override.target", this.hass.language)}</span>
-                    <input
-                      type="number"
-                      min=${tempRange(5, 35, this.hass).min}
-                      max=${tempRange(5, 35, this.hass).max}
-                      step=${tempStep(this.hass)}
-                      .value=${String(toDisplay(this._overrideCustomTemp, this.hass))}
-                      @input=${this._onOverrideCustomTempInput}
-                    />
-                    <span>${tempUnit(this.hass)}</span>
-                  </div>
-                `
-              : nothing}
-            <div class="override-duration">
-              <span class="override-duration-label">${localize("override.activate_for", this.hass.language)}</span>
-              ${[
-                { label: "1h", hours: 1 },
-                { label: "2h", hours: 2 },
-                { label: "4h", hours: 4 },
-              ].map(
-                (opt) => html`
-                  <button
-                    class="override-dur-chip"
-                    @click=${() => this._onOverrideActivate(opt.hours)}
-                  >
-                    ${opt.label}
-                  </button>
-                `
-              )}
-            </div>
-          `
-        : nothing}
-    `;
-  }
-
-  private _onOverridePreset(type: OverrideType): void {
-    if (this._overridePending === type) {
-      this._overridePending = null;
-    } else {
-      this._overridePending = type;
-      if (type === "custom") {
-        this._overrideCustomTemp = this._climateMode === "cool_only" ? this._comfortCool : this._comfortHeat;
-      }
-    }
-    this._overrideError = "";
-  }
-
-  private _onOverrideCustomTempInput(e: Event): void {
-    this._overrideCustomTemp = toCelsius(Number((e.target as HTMLInputElement).value) || toDisplay(21, this.hass), this.hass);
-  }
-
-  private async _onOverrideActivate(hours: number): Promise<void> {
-    if (!this._overridePending || !this.config) return;
-
-    const pendingType = this._overridePending;
-    let temp: number;
-    if (pendingType === "boost") {
-      temp = this._climateMode === "cool_only" ? this._comfortCool : this._comfortHeat;
-    } else if (pendingType === "eco") {
-      temp = this._climateMode === "cool_only" ? this._ecoCool : this._ecoHeat;
-    } else {
-      temp = this._overrideCustomTemp;
-    }
-
-    // Optimistic: show override immediately
-    this._optimisticOverride = {
-      type: pendingType,
-      temp,
-      until: Date.now() / 1000 + hours * 3600,
-    };
-    this._optimisticClear = false;
-    this._overridePending = null;
-    this._overrideError = "";
-
-    const msg: Record<string, unknown> = {
-      type: "roommind/override/set",
-      area_id: this.config.area_id,
-      override_type: pendingType,
-      duration: hours,
-    };
-    if (pendingType === "custom") {
-      msg.temperature = temp;
-    }
-
-    try {
-      await this.hass.callWS(msg);
-      // Refresh real data in background; optimistic state stays until
-      // server data arrives and confirms the override.
-      this._fireRoomUpdated();
-    } catch (err) {
-      // Rollback optimistic state on error
-      this._optimisticOverride = null;
-      this._overrideError =
-        err instanceof Error ? err.message : localize("override.error_set", this.hass.language);
-      console.error("Override set failed:", err);
-    }
-  }
-
-  private async _onClearOverride(): Promise<void> {
-    if (!this.config) return;
-
-    // Optimistic: hide override immediately
-    this._optimisticClear = true;
-    this._optimisticOverride = null;
-    this._overrideError = "";
-
-    try {
-      await this.hass.callWS({
-        type: "roommind/override/clear",
-        area_id: this.config.area_id,
-      });
-      this._fireRoomUpdated();
-    } catch (err) {
-      // Rollback optimistic state on error
-      this._optimisticClear = false;
-      this._overrideError =
-        err instanceof Error ? err.message : localize("override.error_clear", this.hass.language);
-      console.error("Override clear failed:", err);
-    }
-  }
-
-  private _fireRoomUpdated(): void {
-    this.dispatchEvent(
-      new CustomEvent("room-updated", { bubbles: true, composed: true })
-    );
-  }
 
 }
 

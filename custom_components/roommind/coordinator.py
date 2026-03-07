@@ -11,24 +11,30 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import CLIMATE_MODE_COOL_ONLY, CLIMATE_MODE_HEAT_ONLY, DEFAULT_COMFORT_COOL, DEFAULT_COMFORT_HEAT, DEFAULT_ECO_COOL, DEFAULT_ECO_HEAT, DEFAULT_MOLD_COOLDOWN_MINUTES, DEFAULT_MOLD_HUMIDITY_THRESHOLD, DEFAULT_MOLD_SUSTAINED_MINUTES, DEFAULT_VALVE_PROTECTION_INTERVAL, DOMAIN, EKF_UPDATE_MIN_DT, HEATING_BOOST_TARGET, HISTORY_ROTATE_CYCLES, HISTORY_WRITE_CYCLES, MAX_PREDICTION_DELTA, MODE_COOLING, MODE_HEATING, MODE_IDLE, MOLD_HYSTERESIS, MOLD_RISK_CRITICAL, MOLD_RISK_OK, MOLD_RISK_WARNING, MOLD_SURFACE_RH_WARNING, SCHEDULE_STATE_ON, THERMAL_SAVE_CYCLES, TargetTemps, UPDATE_INTERVAL, VALVE_PROTECTION_CHECK_CYCLES, VALVE_PROTECTION_CYCLE_DURATION, build_override_live
-from .mold_utils import calculate_mold_risk, mold_prevention_delta
-from .notification_utils import NotificationThrottler, dismiss_mold_notification, async_send_mold_notification
-from .history_store import HistoryStore
-from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, MPCController, async_turn_off_climate, check_acs_can_heat, get_can_heat_cool, is_mpc_active, resolve_hvac_mode
-from .sensor_utils import read_sensor_value
-from .solar import compute_q_solar_norm
-from .temp_utils import celsius_delta_to_ha, celsius_to_ha_temp, ha_temp_to_celsius, ha_temp_unit_str
-from .thermal_model import RoomModelManager
+from .const import CLIMATE_MODE_COOL_ONLY, CLIMATE_MODE_HEAT_ONLY, DEFAULT_COMFORT_COOL, DEFAULT_COMFORT_HEAT, DEFAULT_ECO_COOL, DEFAULT_ECO_HEAT, DOMAIN, EKF_UPDATE_MIN_DT, HEATING_BOOST_TARGET, HISTORY_ROTATE_CYCLES, HISTORY_WRITE_CYCLES, MAX_PREDICTION_DELTA, MODE_COOLING, MODE_HEATING, MODE_IDLE, SCHEDULE_STATE_ON, THERMAL_SAVE_CYCLES, TargetTemps, UPDATE_INTERVAL, VALVE_PROTECTION_CHECK_CYCLES, build_override_live
+from .utils.history_store import HistoryStore
+from .control.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, MPCController, check_acs_can_heat, get_can_heat_cool, is_mpc_active
+from .utils.sensor_utils import read_sensor_value
+from .control.solar import compute_q_solar_norm
+from .utils.temp_utils import celsius_delta_to_ha, ha_temp_to_celsius, ha_temp_unit_str
+from .control.thermal_model import RoomModelManager
+from .managers.mold_manager import MoldManager
+from .managers.weather_manager import WeatherManager
+from .managers.residual_heat_tracker import ResidualHeatTracker
+from .managers.valve_manager import ValveManager
+from .managers.window_manager import WindowManager
 
 _LOGGER = logging.getLogger(__name__)
 
 
 def _get_area_name(hass: HomeAssistant, area_id: str) -> str:
     """Get human-readable area name from area registry."""
-    area_reg = ar.async_get(hass)
-    area = area_reg.async_get_area(area_id)
-    return area.name if area else area_id
+    try:
+        area_reg = ar.async_get(hass)
+        area = area_reg.async_get_area(area_id)
+        return area.name if area else area_id
+    except Exception:  # noqa: BLE001
+        return area_id
 
 
 class RoomMindCoordinator(DataUpdateCoordinator):
@@ -46,9 +52,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self.rooms: dict = {}
         self.outdoor_temp: float | None = None
         self.outdoor_humidity: float | None = None
-        self._window_open_since: dict[str, float] = {}
-        self._window_closed_since: dict[str, float] = {}
-        self._window_paused: dict[str, bool] = {}
+        self._window_manager = WindowManager()
         self._previous_modes: dict[str, str] = {}
         self._model_manager: RoomModelManager = RoomModelManager()
         self._model_loaded = False
@@ -59,29 +63,22 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._history_rotate_count: int = 0
         self._pending_predictions: dict[str, float] = {}
         self._prediction_forecasts: dict[str, list[dict]] = {}
-        self._outdoor_forecast: list[dict] = []
+        self._weather_manager = WeatherManager(hass)
         # EKF accumulator: batch updates for better signal-to-noise ratio
         self._ekf_accumulated_dt: dict[str, float] = {}
         self._ekf_accumulated_mode: dict[str, str] = {}
         self._ekf_accumulated_pf: dict[str, float] = {}
         self._current_q_solar: float = 0.0
         # Valve protection (anti-seize)
-        self._valve_protection_count: int = 0
-        self._valve_cycling: dict[str, float] = {}
-        self._valve_last_actuation: dict[str, float] = {}
-        self._valve_actuation_dirty: bool = False
+        self._valve_manager = ValveManager(hass)
         # Mold risk tracking
-        self._mold_risk_since: dict[str, float] = {}
-        self._mold_prevention_active: dict[str, bool] = {}
-        self._mold_throttler = NotificationThrottler()
+        self._mold_manager = MoldManager(hass)
         # Residual heat tracking (heating → idle transition)
-        self._heating_off_since: dict[str, float] = {}
-        self._heating_off_power: dict[str, float] = {}
-        self._heating_on_since: dict[str, float] = {}
-        # Min-run enforcement: timestamp when current non-idle mode started
-        self._mode_on_since: dict[str, float] = {}
+        self._residual_tracker = ResidualHeatTracker()
         # Track which rooms already have sensor entities registered
         self._entity_areas: set[str] = set()
+        # Min-run enforcement: timestamp when current non-idle mode started
+        self._mode_on_since: dict[str, float] = {}
 
     async def _async_update_data(self) -> dict:
         """Fetch and compute state for all rooms.
@@ -112,7 +109,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             thermal_data = store.get_thermal_data()
             if thermal_data:
                 self._model_manager = RoomModelManager.from_dict(thermal_data)
-            self._valve_last_actuation = dict(settings.get("valve_last_actuation", {}))
+            self._valve_manager.load_actuation_data(settings.get("valve_last_actuation", {}))
             self._model_loaded = True
 
         # Initialize history store (once)
@@ -124,8 +121,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         room_states: dict[str, dict] = {}
 
         # Read weather forecast once for all rooms
-        outdoor_forecast = await self._read_weather_forecast(settings)
-        self._outdoor_forecast = outdoor_forecast
+        outdoor_forecast = await self._weather_manager.async_read_forecast(settings)
 
         # Compute solar irradiance once per cycle
         cloud_coverage = None
@@ -211,18 +207,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning("History rotation failed for '%s'", area_id)
 
         # Valve protection: finish active cycles (runs every tick, cheap)
-        await self._async_valve_protection_finish()
+        await self._valve_manager.async_finish_cycles()
 
         # Valve protection: check for stale valves (throttled)
-        self._valve_protection_count += 1
-        if self._valve_protection_count >= VALVE_PROTECTION_CHECK_CYCLES:
-            self._valve_protection_count = 0
-            await self._async_valve_protection_check(rooms, settings)
+        self._valve_manager._check_count += 1
+        if self._valve_manager._check_count >= VALVE_PROTECTION_CHECK_CYCLES:
+            self._valve_manager._check_count = 0
+            await self._valve_manager.async_check_and_cycle(rooms, settings)
 
         # Persist valve actuation timestamps (piggyback on thermal save cycle)
-        if self._valve_actuation_dirty and self._thermal_save_count == 0:
-            await store.async_save_settings({"valve_last_actuation": self._valve_last_actuation})
-            self._valve_actuation_dirty = False
+        if self._valve_manager.actuation_dirty and self._thermal_save_count == 0:
+            await store.async_save_settings({"valve_last_actuation": self._valve_manager._last_actuation})
+            self._valve_manager.actuation_dirty = False
 
         self.rooms = room_states
         return {"rooms": room_states}
@@ -249,115 +245,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         )
 
         # --- Mold risk calculation ---
-        mold_risk_level = MOLD_RISK_OK
-        mold_surface_rh = None
-        mold_prevention_active_room = False
-        mold_prevention_temp_delta = 0.0
-
-        if settings.get("mold_detection_enabled") or settings.get("mold_prevention_enabled"):
-            if current_humidity is not None and current_temp is not None:
-                mold_risk_level, mold_surface_rh = calculate_mold_risk(
-                    current_temp, current_humidity, self.outdoor_temp,
-                )
-
-                threshold = settings.get(
-                    "mold_humidity_threshold", DEFAULT_MOLD_HUMIDITY_THRESHOLD,
-                )
-
-                now = time.time()
-                is_risky = (
-                    current_humidity >= threshold
-                    or mold_risk_level in (MOLD_RISK_WARNING, MOLD_RISK_CRITICAL)
-                )
-                sustained_minutes = settings.get(
-                    "mold_sustained_minutes", DEFAULT_MOLD_SUSTAINED_MINUTES,
-                )
-
-                if is_risky:
-                    if area_id not in self._mold_risk_since:
-                        self._mold_risk_since[area_id] = now
-
-                    sustained_seconds = now - self._mold_risk_since[area_id]
-
-                    # Notify if sustained long enough
-                    if (
-                        settings.get("mold_detection_enabled")
-                        and settings.get("mold_notifications_enabled", True)
-                        and sustained_seconds >= sustained_minutes * 60
-                    ):
-                        cooldown = (
-                            settings.get(
-                                "mold_notification_cooldown",
-                                DEFAULT_MOLD_COOLDOWN_MINUTES,
-                            )
-                            * 60
-                        )
-                        if self._mold_throttler.should_send(
-                            f"detect_{area_id}", cooldown,
-                        ):
-                            targets = settings.get("mold_notification_targets", [])
-                            area_name = _get_area_name(self.hass, area_id)
-                            await async_send_mold_notification(
-                                self.hass, area_id, area_name, targets,
-                                message=(
-                                    f"Mold risk in {area_name}: "
-                                    f"{current_humidity:.0f}% humidity, "
-                                    f"estimated surface RH {mold_surface_rh:.0f}%"
-                                ),
-                                title="RoomMind: Mold Risk Warning",
-                                tag_suffix="risk",
-                            )
-                            self._mold_throttler.record_sent(f"detect_{area_id}")
-
-                    # Activate prevention
-                    if (
-                        settings.get("mold_prevention_enabled")
-                        and mold_risk_level in (MOLD_RISK_WARNING, MOLD_RISK_CRITICAL)
-                    ):
-                        intensity = settings.get("mold_prevention_intensity", "medium")
-                        mold_prevention_temp_delta = mold_prevention_delta(intensity)
-
-                        if not self._mold_prevention_active.get(area_id):
-                            self._mold_prevention_active[area_id] = True
-                            if (
-                                settings.get("mold_prevention_notify_enabled")
-                                and settings.get("mold_notifications_enabled", True)
-                            ):
-                                prev_targets = settings.get(
-                                    "mold_prevention_notify_targets", [],
-                                )
-                                area_name = _get_area_name(self.hass, area_id)
-                                await async_send_mold_notification(
-                                    self.hass, area_id, area_name, prev_targets,
-                                    message=(
-                                        f"Mold prevention active in {area_name}: "
-                                        f"temperature raised by "
-                                        f"{celsius_delta_to_ha(self.hass, mold_prevention_temp_delta):.0f}{ha_temp_unit_str(self.hass)}"
-                                    ),
-                                    title="RoomMind: Mold Prevention",
-                                    tag_suffix="prevention",
-                                )
-                                self._mold_throttler.record_sent(
-                                    f"prevent_{area_id}",
-                                )
-                        mold_prevention_active_room = True
-                else:
-                    # Risk cleared — use hysteresis for deactivation
-                    if (
-                        mold_surface_rh is not None
-                        and mold_surface_rh < (MOLD_SURFACE_RH_WARNING - MOLD_HYSTERESIS)
-                    ):
-                        self._mold_risk_since.pop(area_id, None)
-                        if self._mold_prevention_active.get(area_id):
-                            self._mold_prevention_active[area_id] = False
-                            dismiss_mold_notification(
-                                self.hass, area_id, "risk",
-                            )
-                            dismiss_mold_notification(
-                                self.hass, area_id, "prevention",
-                            )
-                        self._mold_throttler.clear(f"detect_{area_id}")
-                        self._mold_throttler.clear(f"prevent_{area_id}")
+        mold = await self._mold_manager.evaluate(
+            area_id, _get_area_name(self.hass, area_id), current_temp, current_humidity,
+            self.outdoor_temp, settings,
+            celsius_delta_to_ha_fn=lambda d: celsius_delta_to_ha(self.hass, d),
+            ha_temp_unit_str_fn=lambda: ha_temp_unit_str(self.hass),
+        )
+        mold_risk_level = mold.risk_level
+        mold_surface_rh = mold.surface_rh
+        mold_prevention_active_room = mold.prevention_active
+        mold_prevention_temp_delta = mold.prevention_delta
 
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
@@ -382,7 +279,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 )
 
         # Read schedule blocks for MPC lookahead (pre-heating/pre-cooling)
-        from .schedule_utils import get_active_schedule_entity, make_target_resolver, read_schedule_blocks
+        from .utils.schedule_utils import get_active_schedule_entity, make_target_resolver, read_schedule_blocks
         schedule_entity_id = get_active_schedule_entity(self.hass, room)
         schedule_blocks = await read_schedule_blocks(self.hass, schedule_entity_id) if schedule_entity_id else None
         presence_away = self._is_presence_away(room, settings)
@@ -395,16 +292,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # --- Compute residual heat from previous cycle state ---
         system_type = room.get("heating_system_type", "")
-        q_residual = 0.0
-        if system_type and area_id in self._heating_off_since and self._previous_modes.get(area_id, MODE_IDLE) != MODE_HEATING:
-            from .residual_heat import compute_residual_heat as _compute_qr
-            elapsed = (time.time() - self._heating_off_since[area_id]) / 60.0
-            heat_dur = (
-                self._heating_off_since[area_id]
-                - self._heating_on_since.get(area_id, self._heating_off_since[area_id])
-            ) / 60.0
-            last_pf = self._heating_off_power.get(area_id, 1.0)
-            q_residual = _compute_qr(elapsed, system_type, last_pf, heat_dur)
+        q_residual = self._residual_tracker.get_q_residual(
+            area_id, system_type, self._previous_modes.get(area_id, MODE_IDLE),
+        )
 
         # Determine and apply mode with MPC controller
         controller = MPCController(
@@ -421,7 +311,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             q_solar=self._current_q_solar,
             latitude=self.hass.config.latitude,
             longitude=self.hass.config.longitude,
-            cloud_series=self._extract_cloud_series(outdoor_forecast),
+            cloud_series=WeatherManager.extract_cloud_series(outdoor_forecast),
             q_residual=q_residual,
             heating_system_type=system_type,
         )
@@ -464,28 +354,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Pause climate control when any window/door is open (with configurable delays)
         raw_open = self._is_window_open(room)
-        open_delay = room.get("window_open_delay", 0)
-        close_delay = room.get("window_close_delay", 0)
-        now = time.time()
-        was_paused = self._window_paused.get(area_id, False)
-
-        if raw_open:
-            self._window_closed_since.pop(area_id, None)
-            if not was_paused:
-                if area_id not in self._window_open_since:
-                    self._window_open_since[area_id] = now
-                if now - self._window_open_since[area_id] >= open_delay:
-                    self._window_paused[area_id] = True
-        else:
-            self._window_open_since.pop(area_id, None)
-            if was_paused:
-                if area_id not in self._window_closed_since:
-                    self._window_closed_since[area_id] = now
-                if now - self._window_closed_since[area_id] >= close_delay:
-                    self._window_paused[area_id] = False
-                    self._window_closed_since.pop(area_id, None)
-
-        window_open = self._window_paused.get(area_id, False)
+        window_open = self._window_manager.update(
+            area_id, raw_open,
+            room.get("window_open_delay", 0),
+            room.get("window_close_delay", 0),
+        )
         if window_open:
             mode = MODE_IDLE
             power_fraction = 0.0
@@ -497,28 +370,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         climate_active = settings.get("climate_control_active", True)
 
         # --- Residual heat transition tracking ---
-        # Update heating start/stop timestamps based on current mode.
-        # q_residual was already computed above from previous cycle state.
         # Only track when climate control is active — RoomMind-initiated heating
         # transitions don't exist when control is disabled.
         if climate_active and system_type:
-            if mode == MODE_HEATING:
-                # Actively heating: track start time, clear residual
-                self._heating_off_since.pop(area_id, None)
-                self._heating_off_power[area_id] = power_fraction
-                if self._previous_modes.get(area_id, MODE_IDLE) != MODE_HEATING:
-                    self._heating_on_since[area_id] = time.time()
-            elif self._previous_modes.get(area_id, MODE_IDLE) == MODE_HEATING:
-                # Transition from heating: start residual tracking
-                self._heating_off_since[area_id] = time.time()
-            elif q_residual == 0.0 and area_id in self._heating_off_since:
-                # Residual has fully decayed, clean up
-                self._heating_off_since.pop(area_id, None)
-                self._heating_off_power.pop(area_id, None)
-                self._heating_on_since.pop(area_id, None)
+            self._residual_tracker.update(
+                area_id, mode, power_fraction,
+                self._previous_modes.get(area_id, MODE_IDLE),
+                q_residual=q_residual,
+            )
 
         # Exclude TRVs currently being valve-protection-cycled from normal control
-        cycling_eids = {eid for eid in room.get("thermostats", []) if eid in self._valve_cycling}
+        cycling_eids = {eid for eid in room.get("thermostats", []) if eid in self._valve_manager._cycling}
         if climate_active:
             try:
                 await controller.async_apply(
@@ -545,10 +407,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Track valve actuation during normal heating
         if mode == MODE_HEATING:
-            now_ts = time.time()
-            for eid in room.get("thermostats", []):
-                self._valve_last_actuation[eid] = now_ts
-            self._valve_actuation_dirty = True
+            self._valve_manager.record_heating(room.get("thermostats", []))
 
         # Determine mode for EKF training: when control is disabled, use
         # observed device state so self-regulating thermostats don't corrupt
@@ -711,6 +570,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ),
             "mold_prevention_active": mold_prevention_active_room,
             "mold_prevention_delta": mold_prevention_temp_delta,
+            "n_observations": self._model_manager.get_n_observations(area_id),
         }
 
     @staticmethod
@@ -745,96 +605,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 q_solar=self._current_q_solar,
                 q_residual=q_residual,
             )
-
-    async def _async_valve_protection_finish(self) -> None:
-        """End valve protection cycles that have exceeded their duration."""
-        if not self._valve_cycling:
-            return
-        now = time.time()
-        finished = [
-            eid for eid, start in self._valve_cycling.items()
-            if now - start >= VALVE_PROTECTION_CYCLE_DURATION
-        ]
-        for eid in finished:
-            try:
-                await async_turn_off_climate(self.hass, eid, area_id="valve_protection")
-            except Exception:  # noqa: BLE001
-                _LOGGER.warning("Valve protection: failed to close '%s'", eid)
-            self._valve_cycling.pop(eid, None)
-            self._valve_last_actuation[eid] = now
-            self._valve_actuation_dirty = True
-            _LOGGER.info("Valve protection: cycle complete for '%s'", eid)
-
-    async def _async_valve_protection_check(
-        self, rooms: dict, settings: dict,
-    ) -> None:
-        """Scan for TRV valves that have been idle too long and start cycling them."""
-        if not settings.get("valve_protection_enabled", False):
-            # Disabled — close any active cycles before clearing
-            for eid in list(self._valve_cycling):
-                try:
-                    await async_turn_off_climate(self.hass, eid, area_id="valve_protection")
-                except Exception:  # noqa: BLE001
-                    _LOGGER.warning("Valve protection: failed to close '%s' on disable", eid)
-            self._valve_cycling.clear()
-            return
-
-        interval_days = settings.get(
-            "valve_protection_interval_days", DEFAULT_VALVE_PROTECTION_INTERVAL,
-        )
-        threshold = interval_days * 86400
-        now = time.time()
-
-        # Collect all configured TRV entity IDs
-        all_trvs: set[str] = set()
-        for room in rooms.values():
-            for eid in room.get("thermostats", []):
-                all_trvs.add(eid)
-
-        # Start cycling stale valves
-        for eid in all_trvs:
-            if eid in self._valve_cycling:
-                continue
-            last = self._valve_last_actuation.get(eid, 0)
-            if now - last >= threshold:
-                try:
-                    eid_state = self.hass.states.get(eid)
-                    vp_modes = (eid_state.attributes.get("hvac_modes") or []) if eid_state else []
-                    vp_resolved = resolve_hvac_mode("heat", vp_modes)
-                    if vp_resolved is None:
-                        _LOGGER.debug(
-                            "Valve protection: '%s' supports neither 'heat' nor 'auto', skipping",
-                            eid,
-                        )
-                        continue
-                    await self.hass.services.async_call(
-                        "climate", "set_hvac_mode",
-                        {"entity_id": eid, "hvac_mode": vp_resolved}, blocking=True,
-                    )
-                    boost_temp = celsius_to_ha_temp(self.hass, HEATING_BOOST_TARGET)
-                    if eid_state:
-                        dev_max = eid_state.attributes.get("max_temp")
-                        if dev_max is not None and boost_temp > dev_max:
-                            boost_temp = dev_max
-                    await self.hass.services.async_call(
-                        "climate", "set_temperature",
-                        {"entity_id": eid, "temperature": boost_temp},
-                        blocking=True,
-                    )
-                    self._valve_cycling[eid] = now
-                    idle_days = int((now - last) / 86400) if last else 0
-                    _LOGGER.info(
-                        "Valve protection: cycling '%s' (idle for %d days)", eid, idle_days,
-                    )
-                except Exception:  # noqa: BLE001
-                    _LOGGER.warning("Valve protection: failed to start cycle for '%s'", eid)
-
-        # Cleanup stale entries (entities no longer configured)
-        stale = [eid for eid in self._valve_last_actuation if eid not in all_trvs]
-        for eid in stale:
-            del self._valve_last_actuation[eid]
-        if stale:
-            self._valve_actuation_dirty = True
 
     def _read_device_temp(self, room: dict) -> float | None:
         """Read current_temperature from the first thermostat or AC entity."""
@@ -1001,7 +771,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
     def _is_presence_away(self, room: dict, settings: dict) -> bool:
         """Return True if presence detection says all relevant persons are away."""
-        from .presence_utils import is_presence_away
+        from .utils.presence_utils import is_presence_away
         return is_presence_away(self.hass, room, settings)  # all tracked persons are away
 
     def _get_active_schedule_index(self, room: dict) -> int:
@@ -1009,7 +779,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         Returns -1 if there are no schedules.
         """
-        from .schedule_utils import resolve_schedule_index
+        from .utils.schedule_utils import resolve_schedule_index
         return resolve_schedule_index(self.hass, room)
 
     def _resolve_target_temps(self, room: dict, settings: dict) -> TargetTemps:
@@ -1143,77 +913,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             registry.async_remove(entity_id)
 
         # Clean up in-memory state
-        self._window_open_since.pop(area_id, None)
-        self._window_closed_since.pop(area_id, None)
-        self._window_paused.pop(area_id, None)
+        self._window_manager.remove_room(area_id)
         self._previous_modes.pop(area_id, None)
         self._last_temps.pop(area_id, None)
         self._pending_predictions.pop(area_id, None)
-        self._heating_off_since.pop(area_id, None)
-        self._heating_off_power.pop(area_id, None)
-        self._heating_on_since.pop(area_id, None)
-        self._mode_on_since.pop(area_id, None)
+        self._residual_tracker.remove_room(area_id)
         self._entity_areas.discard(area_id)
+        self._mode_on_since.pop(area_id, None)
         self._model_manager.remove_room(area_id)
         if self._history_store:
             await self.hass.async_add_executor_job(self._history_store.remove_room, area_id)
 
         await self.async_request_refresh()
 
-    async def _read_weather_forecast(self, settings: dict) -> list[dict]:
-        """Read weather forecast from configured weather entity."""
-        weather_entity = settings.get("weather_entity", "")
-        if not weather_entity:
-            return []
-
-        # Modern approach: use weather.get_forecasts service (HA 2024.6+)
-        try:
-            response = await self.hass.services.async_call(
-                "weather",
-                "get_forecasts",
-                {"entity_id": weather_entity, "type": "hourly"},
-                blocking=True,
-                return_response=True,
-            )
-            forecasts = response.get(weather_entity, {}).get("forecast", [])
-            if isinstance(forecasts, list) and forecasts:
-                return self._convert_forecast_temps(forecasts)
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug(
-                "weather.get_forecasts service call failed for %s, "
-                "falling back to state attributes",
-                weather_entity,
-            )
-
-        # Fallback: read deprecated state attribute (older HA versions)
-        state = self.hass.states.get(weather_entity)
-        if state is None:
-            return []
-        forecast = state.attributes.get("forecast")
-        if isinstance(forecast, list):
-            return self._convert_forecast_temps(forecast)
-        return []
-
-    def _convert_forecast_temps(self, forecasts: list[dict]) -> list[dict]:
-        """Convert forecast temperatures from HA units to Celsius."""
-        result = []
-        for f in forecasts:
-            if "temperature" in f:
-                result.append({**f, "temperature": ha_temp_to_celsius(self.hass, f["temperature"])})
-            else:
-                result.append(f)
-        return result
-
-    @staticmethod
-    def _extract_cloud_series(forecast: list[dict]) -> list[float | None] | None:
-        """Extract cloud_coverage values from forecast entries.
-
-        Returns None if no cloud data is available (clear-sky fallback).
-        """
-        if not forecast:
-            return None
-        series: list[float | None] = []
-        for entry in forecast:
-            cc = entry.get("cloud_coverage")
-            series.append(float(cc) if cc is not None else None)
-        return series if any(v is not None for v in series) else None

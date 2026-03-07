@@ -109,6 +109,7 @@ export interface GlobalSettings {
   mold_prevention_notify_targets?: NotificationTarget[];
   room_order?: string[];
   group_by_floor?: boolean;
+  boost_applied_at?: Record<string, number>;
 }
 
 // HA types for panel integration
@@ -158,3 +159,36 @@ export interface HassEntity {
   state: string;
   attributes: Record<string, unknown>;
 }
+
+export interface AnalyticsDataPoint {
+  ts: number;
+  room_temp: number | null;
+  outdoor_temp: number | null;
+  target_temp: number | null;
+  mode: string;
+  predicted_temp: number | null;
+  window_open: boolean;
+  heating_power: number | null;
+  planned_mode?: string;
+}
+
+export interface AnalyticsData {
+  detail: AnalyticsDataPoint[];
+  history: AnalyticsDataPoint[];
+  forecast?: AnalyticsDataPoint[];
+  model: {
+    confidence: number;
+    model: { C: number; U: number; Q_heat: number; Q_cool: number; Q_solar: number };
+    n_samples: number;
+    n_observations: number;
+    n_heating: number;
+    n_cooling: number;
+    applicable_modes: string[];
+    mpc_active: boolean;
+    sigma_e: number;
+    prediction_std_idle: number;
+    prediction_std_heating: number;
+  };
+}
+
+export type TimeRange = "12h" | "24h" | "2d" | "7d" | "14d" | "30d" | "90d";

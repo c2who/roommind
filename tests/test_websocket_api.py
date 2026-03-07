@@ -778,7 +778,7 @@ async def test_save_settings_vacation_clear(ws_hass, store, connection):
 
 def _make_coordinator_with_model(ws_hass):
     """Create a coordinator mock with thermal model data."""
-    from custom_components.roommind.thermal_model import RoomModelManager
+    from custom_components.roommind.control.thermal_model import RoomModelManager
 
     mock_coordinator = MagicMock()
     mgr = RoomModelManager()
@@ -1043,8 +1043,8 @@ def _make_analytics_coordinator(history_rows=None, estimator=None, rooms_live=No
     coordinator.rooms = rooms_live or {}
     coordinator.outdoor_temp = 5.0
     coordinator.outdoor_humidity = 60
-    coordinator._outdoor_forecast = []
-    coordinator._window_paused = {}
+    coordinator._weather_manager._outdoor_forecast = []
+    coordinator._window_manager._paused = {}
 
     if history_rows is not None:
         hs = MagicMock()
@@ -1054,7 +1054,7 @@ def _make_analytics_coordinator(history_rows=None, estimator=None, rooms_live=No
     else:
         coordinator._history_store = None
 
-    from custom_components.roommind.thermal_model import RoomModelManager
+    from custom_components.roommind.control.thermal_model import RoomModelManager
     mgr = RoomModelManager()
     if estimator:
         mgr._estimators["room_a"] = estimator
@@ -1267,13 +1267,13 @@ async def test_analytics_mold_delta_from_live(ws_hass, store, connection):
 
 
 def test_register_websocket_commands(hass):
-    """async_register_websocket_commands registers all 10 commands."""
+    """async_register_websocket_commands registers all 11 commands."""
     from unittest.mock import patch
     from custom_components.roommind.websocket_api import async_register_websocket_commands
 
     with patch("custom_components.roommind.websocket_api.websocket_api.async_register_command") as mock_reg:
         async_register_websocket_commands(hass)
-        assert mock_reg.call_count == 10
+        assert mock_reg.call_count == 11
 
 
 # ---------------------------------------------------------------------------

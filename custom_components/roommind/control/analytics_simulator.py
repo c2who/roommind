@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from .const import (
+from ..const import (
     BANGBANG_COOL_HYSTERESIS,
     BANGBANG_HEAT_HYSTERESIS,
     DEFAULT_OUTDOOR_COOLING_MIN,

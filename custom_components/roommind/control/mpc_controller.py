@@ -9,7 +9,7 @@ from typing import Callable
 
 from homeassistant.core import HomeAssistant
 
-from .const import (
+from ..const import (
     BANGBANG_COOL_HYSTERESIS,
     BANGBANG_HEAT_HYSTERESIS,
     CLIMATE_MODE_COOL_ONLY,
@@ -23,7 +23,7 @@ from .const import (
     TargetTemps,
 )
 from .mpc_optimizer import MPCOptimizer, MPCPlan
-from .temp_utils import celsius_to_ha_temp
+from ..utils.temp_utils import celsius_to_ha_temp
 from .thermal_model import RoomModelManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -607,7 +607,7 @@ class MPCController:
         """Build decaying residual heat series for MPC horizon."""
         if self.q_residual <= 0 or not self._heating_system_type:
             return None
-        from .const import HEATING_SYSTEM_PROFILES, RESIDUAL_HEAT_CUTOFF
+        from ..const import HEATING_SYSTEM_PROFILES, RESIDUAL_HEAT_CUTOFF
         profile = HEATING_SYSTEM_PROFILES.get(self._heating_system_type)
         if not profile:
             return None

@@ -6,7 +6,7 @@ from typing import NamedTuple
 from homeassistant.const import Platform
 
 DOMAIN = "roommind"
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR]

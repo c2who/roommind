@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from custom_components.roommind.thermal_model import (
+from custom_components.roommind.control.thermal_model import (
     RCModel,
     RoomModelManager,
     ThermalEKF,
@@ -1067,3 +1067,237 @@ def test_regression_residual_no_beta_s_inflation():
     # beta_s should NOT have inflated since q_solar was always 0
     beta_s = ekf._x[4]
     assert beta_s < 5.0, f"beta_s inflated to {beta_s} — residual misattributed to solar"
+
+
+# ---------------------------------------------------------------------------
+# Edge case / coverage tests
+# ---------------------------------------------------------------------------
+
+
+def test_rc_model_predict_zero_dt():
+    """dt_minutes <= 0 returns T_room unchanged."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    assert model.predict(21.0, 5.0, 1000.0, 0.0) == 21.0
+    assert model.predict(21.0, 5.0, 1000.0, -1.0) == 21.0
+
+
+def test_rc_model_predict_window_open_zero_dt():
+    """predict_window_open with dt <= 0 returns T_room."""
+    model = RCModel(C=1.0, U=2.0, Q_heat=50.0, Q_cool=75.0)
+    assert model.predict_window_open(22.0, 5.0, 10.0, 0.0) == 22.0
+    assert model.predict_window_open(22.0, 5.0, 10.0, -1.0) == 22.0
+
+
+def test_rc_model_predict_trajectory_length_mismatch():
+    """predict_trajectory raises ValueError on mismatched series lengths."""
+    model = RCModel()
+    with pytest.raises(ValueError, match="same length"):
+        model.predict_trajectory(20.0, [5.0, 5.0], [0.0], 5.0)
+
+
+def test_rc_model_repr():
+    """RCModel repr includes key parameters."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0, Q_solar=10.0)
+    r = repr(model)
+    assert "RCModel" in r
+    assert "Q_heat=1000" in r
+
+
+def test_ekf_update_zero_dt_is_noop():
+    """EKF update with dt_minutes <= 0 is a no-op."""
+    ekf = ThermalEKF()
+    ekf.update(20.0, 10.0, "idle", 5.0)  # initialize
+    x_before = list(ekf._x)
+    ekf.update(21.0, 10.0, "idle", 0.0)
+    assert ekf._x == x_before
+    ekf.update(21.0, 10.0, "idle", -1.0)
+    assert ekf._x == x_before
+
+
+def test_ekf_confidence_with_cooling_data():
+    """Confidence accounts for cooling mode data."""
+    true_model = RCModel(C=1.0, U=2.0, Q_heat=50.0, Q_cool=75.0)
+    ekf = ThermalEKF()
+    T = 28.0
+    T_out = 30.0
+
+    ekf.update(T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+
+    # Feed idle data
+    for _ in range(70):
+        T_new = true_model.predict(T, T_out, 0.0, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+        T = T_new
+
+    # Feed cooling data
+    for _ in range(30):
+        T_new = true_model.predict(T, T_out, -true_model.Q_cool, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="cooling", dt_minutes=5.0)
+        T = T_new
+
+    assert ekf._n_cooling >= 2
+    assert ekf.confidence > 0.0
+
+
+def test_ekf_confidence_accuracy_factor_perfect():
+    """When prediction std is at noise floor, accuracy factor is 1.0."""
+    ekf = ThermalEKF()
+    T = 20.0
+    T_out = 10.0
+    true_model = RCModel(C=1.0, U=2.0, Q_heat=50.0, Q_cool=75.0)
+
+    ekf.update(T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+
+    # Train extensively so P shrinks and prediction std approaches noise floor
+    for _ in range(200):
+        T_new = true_model.predict(T, T_out, 0.0, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+        T = T_new
+    for _ in range(100):
+        T_new = true_model.predict(T, T_out, true_model.Q_heat, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0)
+        T = T_new
+
+    # After extensive training, confidence should be high
+    assert ekf.confidence > 0.5
+
+
+def test_ekf_confidence_no_active_data():
+    """With only idle data, active_frac is 0 but confidence > 0."""
+    true_model = RCModel(C=1.0, U=2.0, Q_heat=50.0, Q_cool=75.0)
+    ekf = ThermalEKF()
+    T = 20.0
+    T_out = 10.0
+
+    ekf.update(T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+    for _ in range(70):
+        T_new = true_model.predict(T, T_out, 0.0, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+        T = T_new
+
+    # n_heating < 2 and n_cooling < 2 -> active_frac = 0
+    assert ekf._n_heating < 2
+    assert ekf._n_cooling < 2
+    # But with 70 idle updates, some confidence comes from data_factor
+    assert ekf.confidence > 0.0
+
+
+def test_ekf_prediction_std_zero_dt():
+    """prediction_std with dt <= 0 returns sqrt(P[0][0])."""
+    ekf = ThermalEKF()
+    std = ekf.prediction_std(0.0, 20.0, 10.0, 0.0)
+    assert std == pytest.approx(math.sqrt(ekf._P[0][0]))
+    std_neg = ekf.prediction_std(0.0, 20.0, 10.0, -1.0)
+    assert std_neg == pytest.approx(math.sqrt(ekf._P[0][0]))
+
+
+def test_ekf_update_window_open_small_dt_skipped():
+    """update_window_open with dt < _K_WINDOW_MIN_DT is skipped."""
+    ekf = ThermalEKF(22.0)
+    ekf.update(22.0, 10.0, "idle", 0.5)  # initialize
+    k_before = ekf._k_window
+    ekf.update_window_open(21.0, 5.0, 0.1)  # dt < 0.25
+    assert ekf._k_window == k_before
+    assert ekf._k_window_n == 0
+
+
+def test_ekf_update_window_open_small_delta_t():
+    """update_window_open with |T_outdoor - T_room| < threshold skips learning."""
+    ekf = ThermalEKF(20.0)
+    ekf.update(20.0, 10.0, "idle", 0.5)  # initialize
+    k_before = ekf._k_window
+    # T_room ~= T_outdoor (delta < 0.1)
+    ekf.update_window_open(20.05, 20.0, 1.0)
+    assert ekf._k_window == k_before
+    assert ekf._x[0] == 20.05  # temperature still tracked
+
+
+def test_ekf_update_window_open_invalid_ratio():
+    """update_window_open with ratio <= 0.01 or >= 1.0 skips learning."""
+    ekf = ThermalEKF(22.0)
+    ekf.update(22.0, 10.0, "idle", 0.5)  # initialize
+    k_before = ekf._k_window
+    # Ratio >= 1.0: T_measured moves AWAY from T_outdoor
+    ekf.update_window_open(23.0, 10.0, 0.5)
+    assert ekf._k_window == k_before
+    assert ekf._x[0] == 23.0
+
+
+def test_ekf_update_window_open_initializes():
+    """First call to update_window_open initializes the EKF."""
+    ekf = ThermalEKF(15.0)
+    assert not ekf._initialized
+    ekf.update_window_open(22.0, 5.0, 1.0)
+    assert ekf._initialized
+    assert ekf._x[0] == 22.0
+    assert ekf._k_window_n == 0  # no learning on first call
+
+
+def test_ekf_jacobian_cooling_linearized():
+    """Jacobian with very small alpha during cooling uses linearized form."""
+    ekf = ThermalEKF()
+    ekf._x[1] = 0.001  # alpha < _ALPHA_SMALL (0.01)
+    F = ekf._compute_jacobian(
+        T=20.0, alpha=0.001, u=-4.0, T_out=10.0, dt_h=1.0,
+        mode="cooling", power_fraction=1.0,
+    )
+    # F[0][3] should be nonzero (cooling column) in linearized form
+    assert F[0][3] != 0.0
+    # F[0][2] should be zero (not heating)
+    assert F[0][2] == 0.0
+
+
+def test_ekf_update_step_degenerate_S():
+    """When S < 1e-12, update step is skipped for numerical safety."""
+    ekf = ThermalEKF()
+    ekf._initialized = True
+    ekf._x[0] = 20.0
+    # Set P[0][0] to near-zero so S = P[0][0] + R is still > 1e-12 normally.
+    # Force S < 1e-12 by setting both P[0][0] and R effectively to 0.
+    ekf._P[0][0] = 0.0
+    original_R = ekf._R
+    ekf._R = 0.0
+    x_before = list(ekf._x)
+    ekf._update_step(21.0)
+    # State should be unchanged (update skipped)
+    assert ekf._x == x_before
+    ekf._R = original_R
+
+
+def test_ekf_enforce_psd_fixes_negative_diagonal():
+    """_enforce_psd sets negative diagonal to 1e-10."""
+    ekf = ThermalEKF()
+    ekf._P[2][2] = -0.5
+    ekf._enforce_psd()
+    assert ekf._P[2][2] == pytest.approx(1e-10)
+
+
+def test_ekf_repr():
+    """ThermalEKF repr includes key info."""
+    ekf = ThermalEKF()
+    r = repr(ekf)
+    assert "ThermalEKF" in r
+    assert "alpha=" in r
+    assert "confidence=" in r
+
+
+def test_manager_get_prediction_std_unknown_room():
+    """get_prediction_std for unknown room returns inf."""
+    mgr = RoomModelManager()
+    result = mgr.get_prediction_std("nonexistent", 0.0, 20.0, 10.0, 5.0)
+    assert result == float("inf")
+
+
+def test_manager_get_k_window_unknown_room():
+    """get_k_window for unknown room returns default."""
+    mgr = RoomModelManager()
+    assert mgr.get_k_window("nonexistent") == ThermalEKF._K_WINDOW_DEFAULT
+
+
+def test_manager_repr():
+    """RoomModelManager repr lists rooms with confidence."""
+    mgr = RoomModelManager()
+    mgr.update("room_a", 20.0, 5.0, "idle", 5.0)
+    r = repr(mgr)
+    assert "RoomModelManager" in r
+    assert "room_a" in r

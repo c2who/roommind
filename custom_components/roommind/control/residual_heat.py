@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from .const import HEATING_SYSTEM_PROFILES, RESIDUAL_HEAT_CUTOFF
+from ..const import HEATING_SYSTEM_PROFILES, RESIDUAL_HEAT_CUTOFF
 
 
 def compute_residual_heat(

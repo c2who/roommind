@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from .const import DEFAULT_COMFORT_COOL, DEFAULT_COMFORT_HEAT, DEFAULT_ECO_COOL, DEFAULT_ECO_HEAT, SCHEDULE_STATE_ON, TargetTemps
+from ..const import DEFAULT_COMFORT_COOL, DEFAULT_COMFORT_HEAT, DEFAULT_ECO_COOL, DEFAULT_ECO_HEAT, SCHEDULE_STATE_ON, TargetTemps
 
 _LOGGER = logging.getLogger(__name__)
 

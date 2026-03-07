@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .const import MIN_POWER_FRACTION, MODE_COOLING, MODE_HEATING, MODE_IDLE
+from ..const import MIN_POWER_FRACTION, MODE_COOLING, MODE_HEATING, MODE_IDLE
 from .thermal_model import RCModel
 
 

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 
-from .const import (
+from ..const import (
     MIN_MOLD_GROWTH_TEMP,
     MOLD_PREVENTION_DELTAS,
     MOLD_RISK_CRITICAL,

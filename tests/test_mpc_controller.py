@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock
 
 from custom_components.roommind.const import TargetTemps
-from custom_components.roommind.mpc_controller import (
+from custom_components.roommind.control.mpc_controller import (
     MPCController,
     async_turn_off_climate,
     check_acs_can_heat,
@@ -15,8 +15,8 @@ from custom_components.roommind.mpc_controller import (
     MODE_HEATING,
     MODE_IDLE,
 )
-from custom_components.roommind.mpc_optimizer import MPCPlan
-from custom_components.roommind.thermal_model import RoomModelManager, RCModel
+from custom_components.roommind.control.mpc_optimizer import MPCPlan
+from custom_components.roommind.control.thermal_model import RoomModelManager, RCModel
 
 
 def build_hass():
@@ -278,7 +278,7 @@ class TestComputeHorizonBlocks:
 
     def test_small_delta_returns_minimum_horizon(self):
         """Small temp delta should still produce at least MIN_HORIZON_HOURS worth of blocks."""
-        from custom_components.roommind.mpc_controller import MIN_HORIZON_HOURS, PLAN_DT_MINUTES
+        from custom_components.roommind.control.mpc_controller import MIN_HORIZON_HOURS, PLAN_DT_MINUTES
         ctrl = self._make_ctrl()
         model = ctrl._model_manager.get_model("living_room")
         blocks = ctrl._compute_horizon_blocks(model, 20.5, 21.0)
@@ -302,8 +302,8 @@ class TestComputeHorizonBlocks:
 
     def test_zero_Q_max_returns_default(self):
         """When Q_heat and Q_cool are both 0, fall back to default horizon."""
-        from custom_components.roommind.mpc_controller import MIN_HORIZON_HOURS, PLAN_DT_MINUTES
-        from custom_components.roommind.thermal_model import RCModel
+        from custom_components.roommind.control.mpc_controller import MIN_HORIZON_HOURS, PLAN_DT_MINUTES
+        from custom_components.roommind.control.thermal_model import RCModel
         ctrl = self._make_ctrl()
         model = RCModel(C=2.0, U=50.0, Q_heat=0.0, Q_cool=0.0)
         blocks = ctrl._compute_horizon_blocks(model, 15.0, 21.0)
@@ -311,7 +311,7 @@ class TestComputeHorizonBlocks:
 
     def test_high_power_model_shorter_horizon(self):
         """High HVAC power should yield fewer blocks (faster to reach target)."""
-        from custom_components.roommind.thermal_model import RCModel
+        from custom_components.roommind.control.thermal_model import RCModel
         ctrl = self._make_ctrl()
         model_low = RCModel(C=2.0, U=50.0, Q_heat=400.0, Q_cool=400.0)
         model_high = RCModel(C=2.0, U=50.0, Q_heat=4000.0, Q_cool=4000.0)
@@ -321,7 +321,7 @@ class TestComputeHorizonBlocks:
 
     def test_high_thermal_mass_longer_horizon(self):
         """High thermal capacitance should yield more blocks (slower temperature change)."""
-        from custom_components.roommind.thermal_model import RCModel
+        from custom_components.roommind.control.thermal_model import RCModel
         ctrl = self._make_ctrl()
         model_small_c = RCModel(C=1.0, U=50.0, Q_heat=800.0, Q_cool=800.0)
         model_large_c = RCModel(C=10.0, U=50.0, Q_heat=800.0, Q_cool=800.0)
@@ -351,7 +351,7 @@ class TestBuildOutdoorSeries:
 
     def test_fallback_when_outdoor_temp_none_no_forecast(self):
         """Without forecast and outdoor_temp=None, uses DEFAULT_OUTDOOR_TEMP_FALLBACK."""
-        from custom_components.roommind.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK
+        from custom_components.roommind.control.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK
         hass = build_hass()
         room = make_room()
         model_mgr = RoomModelManager()
@@ -437,7 +437,7 @@ class TestBuildOutdoorSeries:
 
     def test_forecast_missing_temp_key_and_outdoor_none_uses_fallback(self):
         """Forecast entry without temp + outdoor_temp=None uses DEFAULT_OUTDOOR_TEMP_FALLBACK."""
-        from custom_components.roommind.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK
+        from custom_components.roommind.control.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK
         hass = build_hass()
         room = make_room()
         model_mgr = RoomModelManager()
@@ -504,7 +504,7 @@ async def test_proportional_power_near_target():
 @pytest.mark.asyncio
 async def test_proportional_trv_setpoint():
     """TRV setpoint is proportional between current_temp and 30°C."""
-    from custom_components.roommind.mpc_controller import HEATING_BOOST_TARGET
+    from custom_components.roommind.control.mpc_controller import HEATING_BOOST_TARGET
     hass = build_hass()
     room = make_room()
     model_mgr = RoomModelManager()
@@ -540,7 +540,7 @@ async def test_bangbang_returns_full_power():
 @pytest.mark.asyncio
 async def test_async_apply_backward_compat():
     """Calling async_apply without power_fraction uses default 1.0 → 30°C boost."""
-    from custom_components.roommind.mpc_controller import HEATING_BOOST_TARGET
+    from custom_components.roommind.control.mpc_controller import HEATING_BOOST_TARGET
     hass = build_hass()
     room = make_room()
     model_mgr = RoomModelManager()
@@ -561,7 +561,7 @@ async def test_async_apply_backward_compat():
 async def test_mpc_apply_heating_fahrenheit():
     """set_temperature uses Fahrenheit when HA is configured for °F."""
     from homeassistant.const import UnitOfTemperature
-    from custom_components.roommind.mpc_controller import HEATING_BOOST_TARGET
+    from custom_components.roommind.control.mpc_controller import HEATING_BOOST_TARGET
 
     hass = build_hass()
     hass.config.units.temperature_unit = UnitOfTemperature.FAHRENHEIT
@@ -620,7 +620,7 @@ class TestGetCanHeatCool:
 
     def test_auto_mode_with_both_devices(self):
         """auto mode with thermostats and ACs → (True, True)."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="auto", acs=["climate.ac"])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is True
@@ -628,7 +628,7 @@ class TestGetCanHeatCool:
 
     def test_heat_only_mode(self):
         """heat_only mode → (True, False) regardless of ACs."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="heat_only", acs=["climate.ac"])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is True
@@ -636,7 +636,7 @@ class TestGetCanHeatCool:
 
     def test_cool_only_mode(self):
         """cool_only mode → (False, True) regardless of thermostats."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="cool_only", acs=["climate.ac"])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is False
@@ -644,7 +644,7 @@ class TestGetCanHeatCool:
 
     def test_no_thermostats_heat_only(self):
         """heat_only but no thermostats → (False, False)."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="heat_only", thermostats=[], acs=[])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is False
@@ -652,7 +652,7 @@ class TestGetCanHeatCool:
 
     def test_no_acs_cool_only(self):
         """cool_only but no ACs → (False, False)."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="cool_only", thermostats=[], acs=[])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is False
@@ -660,7 +660,7 @@ class TestGetCanHeatCool:
 
     def test_outdoor_temp_none_no_gating(self):
         """outdoor_temp=None → no gating applied."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(acs=["climate.ac"])
         can_heat, can_cool = get_can_heat_cool(room, outdoor_temp=None)
         assert can_heat is True
@@ -668,7 +668,7 @@ class TestGetCanHeatCool:
 
     def test_outdoor_above_heating_max_blocks_heat(self):
         """Outdoor temp above outdoor_heating_max → can_heat=False."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(acs=["climate.ac"])
         can_heat, can_cool = get_can_heat_cool(
             room, outdoor_temp=25.0, outdoor_heating_max=22.0,
@@ -678,7 +678,7 @@ class TestGetCanHeatCool:
 
     def test_outdoor_below_cooling_min_blocks_cool(self):
         """Outdoor temp below outdoor_cooling_min → can_cool=False."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(acs=["climate.ac"])
         can_heat, can_cool = get_can_heat_cool(
             room, outdoor_temp=10.0, outdoor_cooling_min=16.0,
@@ -688,7 +688,7 @@ class TestGetCanHeatCool:
 
     def test_outdoor_at_threshold_boundary(self):
         """Outdoor temp equal to heating_max → not blocked (>= not used, > is)."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(acs=["climate.ac"])
         # At exactly outdoor_heating_max=22.0 → 22 > 22 is False, so still allowed
         can_heat, can_cool = get_can_heat_cool(
@@ -703,7 +703,7 @@ class TestGetCanHeatCool:
 
     def test_auto_no_devices_returns_false_false(self):
         """auto mode but no devices → (False, False)."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="auto", thermostats=[], acs=[])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is False
@@ -719,14 +719,14 @@ class TestIsMpcActive:
 
     def test_area_not_in_estimators(self):
         """Returns False when area_id has no estimator."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         result = is_mpc_active(model_mgr, "unknown_room", True, False, 20.0, 10.0)
         assert result is False
 
     def test_prediction_std_too_high(self):
         """Returns False when prediction_std >= MPC_MAX_PREDICTION_STD."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.6)
@@ -736,7 +736,7 @@ class TestIsMpcActive:
 
     def test_insufficient_idle_samples(self):
         """Returns False when idle samples below MIN_IDLE_UPDATES."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.1)
@@ -746,7 +746,7 @@ class TestIsMpcActive:
 
     def test_insufficient_heating_samples(self):
         """Returns False when can_heat but heating samples below MIN_ACTIVE_UPDATES."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.1)
@@ -756,7 +756,7 @@ class TestIsMpcActive:
 
     def test_insufficient_cooling_samples(self):
         """Returns False when can_cool but cooling samples below MIN_ACTIVE_UPDATES."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.1)
@@ -766,7 +766,7 @@ class TestIsMpcActive:
 
     def test_all_conditions_met_returns_true(self):
         """Returns True when all conditions satisfied."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.1)
@@ -776,7 +776,7 @@ class TestIsMpcActive:
 
     def test_heat_and_cool_both_need_samples(self):
         """When both can_heat and can_cool, both need MIN_ACTIVE_UPDATES."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.1)
@@ -787,7 +787,7 @@ class TestIsMpcActive:
 
     def test_no_heat_no_cool_only_idle_needed(self):
         """When neither can_heat nor can_cool, only idle check matters."""
-        from custom_components.roommind.mpc_controller import is_mpc_active
+        from custom_components.roommind.control.mpc_controller import is_mpc_active
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=0.1)
@@ -797,7 +797,7 @@ class TestIsMpcActive:
 
     def test_prediction_std_at_threshold(self):
         """pred_std exactly at MPC_MAX_PREDICTION_STD (0.5) → False."""
-        from custom_components.roommind.mpc_controller import is_mpc_active, MPC_MAX_PREDICTION_STD
+        from custom_components.roommind.control.mpc_controller import is_mpc_active, MPC_MAX_PREDICTION_STD
         model_mgr = RoomModelManager()
         model_mgr.update("living_room", 20.0, 10.0, "idle", 5.0)
         model_mgr.get_prediction_std = MagicMock(return_value=MPC_MAX_PREDICTION_STD)
@@ -873,7 +873,7 @@ async def test_apply_clamps_to_device_min_temp():
 @pytest.mark.asyncio
 async def test_turn_off_climate_normal_device():
     """Device with 'off' in hvac_modes uses standard set_hvac_mode off."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -892,7 +892,7 @@ async def test_turn_off_climate_normal_device():
 @pytest.mark.asyncio
 async def test_turn_off_climate_heat_only_uses_min_temp():
     """Heat-only device (no 'off' mode) gets set_temperature with min_temp."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -911,7 +911,7 @@ async def test_turn_off_climate_heat_only_uses_min_temp():
 @pytest.mark.asyncio
 async def test_turn_off_climate_cool_only_uses_max_temp():
     """Cool-only device without 'off' uses max_temp as fallback."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -930,7 +930,7 @@ async def test_turn_off_climate_cool_only_uses_max_temp():
 @pytest.mark.asyncio
 async def test_turn_off_climate_already_off_skipped():
     """Device already in 'off' state: call is skipped."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -945,7 +945,7 @@ async def test_turn_off_climate_already_off_skipped():
 @pytest.mark.asyncio
 async def test_turn_off_climate_empty_modes_uses_off():
     """Empty hvac_modes list: assume 'off' is supported (backward compat)."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -964,7 +964,7 @@ async def test_turn_off_climate_empty_modes_uses_off():
 @pytest.mark.asyncio
 async def test_turn_off_climate_no_modes_attr_uses_off():
     """No hvac_modes attribute at all: assume 'off' is supported (backward compat)."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -983,7 +983,7 @@ async def test_turn_off_climate_no_modes_attr_uses_off():
 @pytest.mark.asyncio
 async def test_turn_off_climate_heat_only_no_min_temp():
     """Heat-only device without min_temp: logs warning, no crash."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -998,7 +998,7 @@ async def test_turn_off_climate_heat_only_no_min_temp():
 @pytest.mark.asyncio
 async def test_turn_off_climate_heat_only_already_at_min_temp():
     """Heat-only device already at min_temp: redundant call skipped."""
-    from custom_components.roommind.mpc_controller import async_turn_off_climate
+    from custom_components.roommind.control.mpc_controller import async_turn_off_climate
 
     hass = build_hass()
     state = MagicMock()
@@ -1123,7 +1123,7 @@ class TestGetCanHeatCoolAcsCanHeat:
 
     def test_acs_can_heat_no_thermostats(self):
         """acs_can_heat=True allows heating even without thermostats."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(thermostats=[], acs=["climate.hp"])
         can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=True)
         assert can_heat is True
@@ -1131,7 +1131,7 @@ class TestGetCanHeatCoolAcsCanHeat:
 
     def test_acs_can_heat_cool_only_mode(self):
         """acs_can_heat=True but cool_only mode → can_heat still False."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(climate_mode="cool_only", thermostats=[], acs=["climate.hp"])
         can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=True)
         assert can_heat is False
@@ -1139,7 +1139,7 @@ class TestGetCanHeatCoolAcsCanHeat:
 
     def test_acs_can_heat_with_outdoor_gating(self):
         """acs_can_heat=True but outdoor above heating max → can_heat gated."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(thermostats=[], acs=["climate.hp"])
         can_heat, can_cool = get_can_heat_cool(
             room, outdoor_temp=25.0, outdoor_heating_max=22.0, acs_can_heat=True,
@@ -1148,7 +1148,7 @@ class TestGetCanHeatCoolAcsCanHeat:
 
     def test_default_acs_can_heat_false(self):
         """Default acs_can_heat=False preserves old behavior."""
-        from custom_components.roommind.mpc_controller import get_can_heat_cool
+        from custom_components.roommind.control.mpc_controller import get_can_heat_cool
         room = make_room(thermostats=[], acs=["climate.hp"])
         can_heat, can_cool = get_can_heat_cool(room)
         assert can_heat is False
@@ -1238,7 +1238,7 @@ async def test_apply_heating_cool_only_ac_turned_off():
 @pytest.mark.asyncio
 async def test_apply_heating_trv_still_gets_boost():
     """Heating: TRV in thermostats[] still gets proportional 30°C boost."""
-    from custom_components.roommind.mpc_controller import HEATING_BOOST_TARGET
+    from custom_components.roommind.control.mpc_controller import HEATING_BOOST_TARGET
     hass = build_hass()
     trv_state = MagicMock()
     trv_state.state = "heat"
@@ -1308,7 +1308,7 @@ async def test_ac_only_room_can_heat():
 @pytest.mark.asyncio
 async def test_apply_heating_mixed_trv_and_heat_pump():
     """Heating with TRV + heat-capable AC: TRV gets boost, AC gets actual target."""
-    from custom_components.roommind.mpc_controller import HEATING_BOOST_TARGET
+    from custom_components.roommind.control.mpc_controller import HEATING_BOOST_TARGET
     hass = build_hass()
 
     trv_state = MagicMock()
@@ -2156,7 +2156,7 @@ def test_evaluate_mpc_safety_guard_heating_above_target(monkeypatch):
         power_fractions=[0.8] * 6,
     )
     monkeypatch.setattr(
-        "custom_components.roommind.mpc_controller.MPCOptimizer.optimize",
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
     # current_temp=22 >= target=21 → safety guard should override to idle
@@ -2181,7 +2181,7 @@ def test_evaluate_mpc_safety_guard_cooling_below_target(monkeypatch):
         power_fractions=[0.8] * 6,
     )
     monkeypatch.setattr(
-        "custom_components.roommind.mpc_controller.MPCOptimizer.optimize",
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
     # current_temp=22 <= target=23 → safety guard should override to idle
@@ -2209,7 +2209,7 @@ def test_evaluate_mpc_safety_guard_respects_min_run_heating(monkeypatch):
         power_fractions=[0.8] * 6,
     )
     monkeypatch.setattr(
-        "custom_components.roommind.mpc_controller.MPCOptimizer.optimize",
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
     # current_temp=22 >= target=21 but we're in min-run window → must keep heating
@@ -2236,7 +2236,7 @@ def test_evaluate_mpc_safety_guard_fires_after_min_run_heating(monkeypatch):
         power_fractions=[0.8] * 6,
     )
     monkeypatch.setattr(
-        "custom_components.roommind.mpc_controller.MPCOptimizer.optimize",
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
     mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
