@@ -226,5 +226,3 @@ UI_DESIGN.md
 # Worktrees
 .worktrees/
 
-# Local scripts
-deploy.sh
