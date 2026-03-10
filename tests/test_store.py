@@ -34,9 +34,7 @@ async def test_save_room_updates_existing(store):
     await store.async_load()
 
     await store.async_save_room("wohnzimmer", {"thermostats": ["climate.wz_trv"]})
-    updated = await store.async_save_room(
-        "wohnzimmer", {"thermostats": ["climate.wz_trv", "climate.wz_trv2"]}
-    )
+    updated = await store.async_save_room("wohnzimmer", {"thermostats": ["climate.wz_trv", "climate.wz_trv2"]})
 
     assert updated["area_id"] == "wohnzimmer"
     assert updated["thermostats"] == ["climate.wz_trv", "climate.wz_trv2"]
@@ -240,9 +238,7 @@ async def test_save_settings_persists(store):
 @pytest.mark.asyncio
 async def test_settings_migration_from_old_store(store):
     """Stores without 'settings' key get an empty dict."""
-    store._store.async_load = AsyncMock(return_value={
-        "rooms": {"r1": {"area_id": "r1", "schedules": []}}
-    })
+    store._store.async_load = AsyncMock(return_value={"rooms": {"r1": {"area_id": "r1", "schedules": []}}})
     await store.async_load()
     assert store.get_settings() == {}
 
@@ -260,9 +256,7 @@ async def test_thermal_data_persistence(store):
 @pytest.mark.asyncio
 async def test_thermal_data_migration_from_old_store(store):
     """Old store without thermal_data key loads cleanly."""
-    store._store.async_load = AsyncMock(return_value={
-        "rooms": {"r1": {"area_id": "r1", "schedules": []}}
-    })
+    store._store.async_load = AsyncMock(return_value={"rooms": {"r1": {"area_id": "r1", "schedules": []}}})
     await store.async_load()
     # After fresh load, thermal data should be empty dict
     assert store.get_thermal_data() == {}
@@ -363,3 +357,41 @@ async def test_save_eco_temp_reverse_syncs_eco_heat(store):
     updated = await store.async_save_room("wohnzimmer", {"eco_temp": 16.0})
 
     assert updated["eco_heat"] == 16.0
+
+
+@pytest.mark.asyncio
+async def test_save_room_syncs_comfort_heat_to_comfort_temp_on_update(store):
+    """Updating an existing room with comfort_heat should sync comfort_temp."""
+    await store.async_load()
+    await store.async_save_room("wohnzimmer", {})
+    updated = await store.async_save_room("wohnzimmer", {"comfort_heat": 23.0})
+    assert updated["comfort_temp"] == 23.0
+
+
+@pytest.mark.asyncio
+async def test_save_room_syncs_eco_heat_to_eco_temp_on_update(store):
+    """Updating an existing room with eco_heat should sync eco_temp."""
+    await store.async_load()
+    await store.async_save_room("wohnzimmer", {})
+    updated = await store.async_save_room("wohnzimmer", {"eco_heat": 15.0})
+    assert updated["eco_temp"] == 15.0
+
+
+@pytest.mark.asyncio
+async def test_update_room_missing_raises_key_error(store):
+    """async_update_room on a non-existent room should raise KeyError."""
+    await store.async_load()
+    with pytest.raises(KeyError):
+        await store.async_update_room("nonexistent", {"comfort_temp": 21.0})
+
+
+@pytest.mark.asyncio
+async def test_is_outdoor_default(store):
+    """Saving without is_outdoor defaults to False; explicit True persists."""
+    await store.async_load()
+
+    room = await store.async_save_room("terrasse", {})
+    assert room["is_outdoor"] is False
+
+    outdoor = await store.async_save_room("balkon", {"is_outdoor": True})
+    assert outdoor["is_outdoor"] is True

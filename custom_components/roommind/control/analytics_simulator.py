@@ -13,20 +13,20 @@ from ..const import (
     MODE_HEATING,
     MODE_IDLE,
 )
-from .mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK, get_can_heat_cool
+from .mpc_controller import get_can_heat_cool
 from .mpc_optimizer import MPCOptimizer
 from .residual_heat import build_residual_series, get_min_run_blocks
 from .thermal_model import RCModel, ThermalEKF
 
 
 def build_forecast_outdoor_series(
-    forecast: list[dict], current_outdoor: float, n_blocks: int,
+    forecast: list[dict],
+    current_outdoor: float,
+    n_blocks: int,
 ) -> list[float]:
     """Build outdoor temperature series from weather forecast or fallback."""
     if forecast:
-        series = [
-            f.get("temperature", current_outdoor) for f in forecast
-        ]
+        series = [f.get("temperature", current_outdoor) for f in forecast]
         while len(series) < n_blocks:
             series.append(series[-1] if series else current_outdoor)
         return series[:n_blocks]
@@ -34,8 +34,11 @@ def build_forecast_outdoor_series(
 
 
 def build_forecast_solar_series(
-    latitude: float, longitude: float,
-    forecast: list[dict], n_blocks: int,
+    latitude: float,
+    longitude: float,
+    forecast: list[dict],
+    n_blocks: int,
+    shading_factor: float = 1.0,
 ) -> list[float] | None:
     """Build solar series for analytics prediction from forecast cloud coverage.
 
@@ -49,7 +52,10 @@ def build_forecast_solar_series(
     cloud_series: list[float | None] | None = None
     if forecast:
         cloud_series = [f.get("cloud_coverage") for f in forecast]
-    return build_solar_series(latitude, longitude, n_blocks, 5.0, cloud_series=cloud_series)
+    series = build_solar_series(latitude, longitude, n_blocks, 5.0, cloud_series=cloud_series)
+    if series is not None and shading_factor != 1.0:
+        series = [s * shading_factor for s in series]
+    return series
 
 
 def compute_observed_idle_rate(
@@ -116,17 +122,31 @@ def simulate_prediction(
 
     if mpc_active:
         return _simulate_mpc(
-            model, target_forecast, outdoor_series, current_temp, room_config, settings,
-            solar_series=solar_series, acs_can_heat=acs_can_heat,
-            q_residual=q_residual, heating_system_type=heating_system_type,
+            model,
+            target_forecast,
+            outdoor_series,
+            current_temp,
+            room_config,
+            settings,
+            solar_series=solar_series,
+            acs_can_heat=acs_can_heat,
+            q_residual=q_residual,
+            heating_system_type=heating_system_type,
             heating_duration_minutes=heating_duration_minutes,
             last_power_fraction=last_power_fraction,
         )
 
     return _simulate_bangbang(
-        model, target_forecast, outdoor_series, current_temp, room_config, all_points,
-        solar_series=solar_series, acs_can_heat=acs_can_heat,
-        q_residual=q_residual, heating_system_type=heating_system_type,
+        model,
+        target_forecast,
+        outdoor_series,
+        current_temp,
+        room_config,
+        all_points,
+        solar_series=solar_series,
+        acs_can_heat=acs_can_heat,
+        q_residual=q_residual,
+        heating_system_type=heating_system_type,
         heating_duration_minutes=heating_duration_minutes,
         last_power_fraction=last_power_fraction,
     )
@@ -231,8 +251,10 @@ def _simulate_mpc(
             remaining_residual = None
             if heating_system_type and current_q_residual > 0:
                 remaining_residual = build_residual_series(
-                    sim_residual_elapsed, heating_system_type,
-                    len(remaining_outdoor), 5.0,
+                    sim_residual_elapsed,
+                    heating_system_type,
+                    len(remaining_outdoor),
+                    5.0,
                     last_power_fraction,
                     sim_heating_blocks * 5.0 if sim_was_heating else heating_duration_minutes,
                 )
@@ -266,7 +288,11 @@ def _simulate_mpc(
             Q = 0.0
         qs = solar_series[i] if solar_series and i < len(solar_series) else 0.0
         T_new = model.predict(
-            T, outdoor_series[i], Q, 5.0, q_solar=qs,
+            T,
+            outdoor_series[i],
+            Q,
+            5.0,
+            q_solar=qs,
             q_residual=current_q_residual if Q == 0.0 else 0.0,
         )
         T = max(5.0, min(40.0, T_new))
@@ -284,8 +310,10 @@ def _simulate_mpc(
             sim_residual_elapsed += 5.0
             if heating_system_type and sim_was_heating:
                 from .residual_heat import compute_residual_heat
+
                 current_q_residual = compute_residual_heat(
-                    sim_residual_elapsed, heating_system_type,
+                    sim_residual_elapsed,
+                    heating_system_type,
                     last_power_fraction,
                     sim_heating_blocks * 5.0,
                 )
@@ -370,7 +398,11 @@ def _simulate_bangbang(
 
         qs = solar_series[i] if solar_series and i < len(solar_series) else 0.0
         T_new = model.predict(
-            T, outdoor_series[i], Q, 5.0, q_solar=qs,
+            T,
+            outdoor_series[i],
+            Q,
+            5.0,
+            q_solar=qs,
             q_residual=current_q_residual if Q == 0.0 else 0.0,
         )
         if Q == 0.0 and observed_idle_rate is not None:
@@ -394,8 +426,10 @@ def _simulate_bangbang(
             sim_residual_elapsed += 5.0
             if heating_system_type and sim_was_heating:
                 from .residual_heat import compute_residual_heat
+
                 current_q_residual = compute_residual_heat(
-                    sim_residual_elapsed, heating_system_type,
+                    sim_residual_elapsed,
+                    heating_system_type,
                     last_power_fraction,
                     sim_heating_blocks * 5.0,
                 )

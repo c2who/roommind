@@ -6,13 +6,21 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint": "eslint src/",
+    "format": "prettier --write src/",
+    "format:check": "prettier --check src/"
   },
   "dependencies": {
-    "lit": "^3.1.0",
-    "home-assistant-js-websocket": "^9.4.0"
+    "home-assistant-js-websocket": "^9.4.0",
+    "lit": "^3.1.0"
   },
   "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.56.1",
+    "@typescript-eslint/parser": "^8.56.1",
+    "eslint": "^10.0.3",
+    "eslint-plugin-lit": "^2.2.1",
+    "prettier": "^3.8.1",
     "typescript": "^5.4.0",
     "vite": "^5.4.0"
   }

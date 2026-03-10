@@ -15,11 +15,13 @@ export class RsSettingsVacation extends LitElement {
   @property({ type: String }) public vacationUntil = "";
 
   private _fire(key: string, value: unknown) {
-    this.dispatchEvent(new CustomEvent("setting-changed", {
-      detail: { key, value },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("setting-changed", {
+        detail: { key, value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   render() {
@@ -49,7 +51,8 @@ export class RsSettingsVacation extends LitElement {
                   .value=${this.vacationUntil}
                   .label=${localize("vacation.end_date", l)}
                   type="datetime-local"
-                  @change=${(e: Event) => this._fire("vacationUntil", (e.target as HTMLInputElement).value)}
+                  @change=${(e: Event) =>
+                    this._fire("vacationUntil", (e.target as HTMLInputElement).value)}
                 ></ha-textfield>
               </div>
               <div class="threshold-field">
@@ -74,19 +77,51 @@ export class RsSettingsVacation extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; }
+    :host {
+      display: block;
+    }
 
-    .toggle-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-    .toggle-text { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-    .toggle-label { font-size: 14px; font-weight: 500; color: var(--primary-text-color); }
-    .toggle-hint { font-size: 13px; color: var(--secondary-text-color); line-height: 1.4; }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .toggle-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+    .toggle-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--primary-text-color);
+    }
+    .toggle-hint {
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      line-height: 1.4;
+    }
 
-    .threshold-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .threshold-field { display: flex; flex-direction: column; gap: 4px; }
-    .threshold-field ha-textfield { width: 100%; }
+    .threshold-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .threshold-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .threshold-field ha-textfield {
+      width: 100%;
+    }
 
     @media (max-width: 600px) {
-      .threshold-grid { grid-template-columns: 1fr; }
+      .threshold-grid {
+        grid-template-columns: 1fr;
+      }
     }
   `;
 }

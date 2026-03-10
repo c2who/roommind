@@ -15,10 +15,7 @@ export function localize(
   language: string,
   params?: Record<string, string | number>,
 ): string {
-  const lang =
-    translations[language] ??
-    translations[language.split("-")[0]] ??
-    translations.en;
+  const lang = translations[language] ?? translations[language.split("-")[0]] ?? translations.en;
   let result = lang[key] ?? translations.en[key] ?? key;
 
   if (params) {

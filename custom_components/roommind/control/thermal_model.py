@@ -25,6 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 # RCModel -- deterministic first-order RC thermal model
 # ---------------------------------------------------------------------------
 
+
 class RCModel:
     """First-order RC thermal model with analytical solution.
 
@@ -39,11 +40,11 @@ class RCModel:
     where dt is in hours (matching Wh units for C).
     """
 
-    DEFAULT_C: float = 2.0        # Wh/degC  -- thermal capacitance
-    DEFAULT_U: float = 50.0       # W/degC   -- heat loss coefficient
-    DEFAULT_Q_HEAT: float = 800.0   # W      -- heating power
+    DEFAULT_C: float = 2.0  # Wh/degC  -- thermal capacitance
+    DEFAULT_U: float = 50.0  # W/degC   -- heat loss coefficient
+    DEFAULT_Q_HEAT: float = 800.0  # W      -- heating power
     DEFAULT_Q_COOL: float = 1200.0  # W      -- cooling power
-    DEFAULT_Q_SOLAR: float = 0.0    # degC/h per kW/m² GHI -- solar gain
+    DEFAULT_Q_SOLAR: float = 0.0  # degC/h per kW/m² GHI -- solar gain
 
     def __init__(
         self,
@@ -149,14 +150,12 @@ class RCModel:
             List of len(series) + 1 temperatures (including the initial value).
         """
         if len(T_outdoor_series) != len(Q_active_series):
-            raise ValueError(
-                "T_outdoor_series and Q_active_series must have the same length"
-            )
+            raise ValueError("T_outdoor_series and Q_active_series must have the same length")
         solar = q_solar_series or [0.0] * len(T_outdoor_series)
         residual = q_residual_series or [0.0] * len(T_outdoor_series)
         trajectory = [T_room]
         T = T_room
-        for i, (T_out, Q) in enumerate(zip(T_outdoor_series, Q_active_series)):
+        for i, (T_out, Q) in enumerate(zip(T_outdoor_series, Q_active_series, strict=False)):
             qs = solar[i] if i < len(solar) else 0.0
             qr = residual[i] if i < len(residual) else 0.0
             T = self.predict(T, T_out, Q, dt_minutes, q_solar=qs, q_residual=qr)
@@ -196,6 +195,7 @@ class RCModel:
 # ThermalEKF -- Extended Kalman Filter for online RC parameter learning
 # ---------------------------------------------------------------------------
 
+
 class ThermalEKF:
     """Extended Kalman Filter for 1R1C thermal model.
 
@@ -231,24 +231,24 @@ class ThermalEKF:
 
     # Parameter bounds (C=1 normalization: alpha=U/C, beta=Q/C)
     _ALPHA_MIN: float = 0.005  # time constant up to 200 h (very heavy building)
-    _ALPHA_MAX: float = 5.0    # time constant down to 12 min (lightweight space)
-    _BETA_H_MIN: float = 0.1   # very weak heater relative to thermal mass
-    _BETA_H_MAX: float = 200.0 # powerful heater in lightweight room
+    _ALPHA_MAX: float = 5.0  # time constant down to 12 min (lightweight space)
+    _BETA_H_MIN: float = 0.1  # very weak heater relative to thermal mass
+    _BETA_H_MAX: float = 200.0  # powerful heater in lightweight room
     _BETA_C_MIN: float = 0.1
     _BETA_C_MAX: float = 300.0
-    _BETA_S_MIN: float = 0.0     # interior rooms / north-facing → 0
-    _BETA_S_MAX: float = 50.0    # large south-facing sunroom
+    _BETA_S_MIN: float = 0.0  # interior rooms / north-facing → 0
+    _BETA_S_MAX: float = 50.0  # large south-facing sunroom
 
     # Default initial parameter values (C=1 normalization)
-    _DEFAULT_ALPHA: float = 0.15   # ~7 h time constant (moderate residential room)
-    _DEFAULT_BETA_H: float = 3.0   # moderate heater: T_eq = T_out + 20°C
-    _DEFAULT_BETA_C: float = 4.0   # moderate AC
-    _DEFAULT_BETA_S: float = 0.5   # small initial solar gain; learns from data
+    _DEFAULT_ALPHA: float = 0.15  # ~7 h time constant (moderate residential room)
+    _DEFAULT_BETA_H: float = 3.0  # moderate heater: T_eq = T_out + 20°C
+    _DEFAULT_BETA_C: float = 4.0  # moderate AC
+    _DEFAULT_BETA_S: float = 0.5  # small initial solar gain; learns from data
 
     # Process noise (diagonal of Q_noise matrix)
     # Higher values keep the filter adaptive; lower values freeze parameters.
-    _Q_T: float = 0.01        # unmodeled disturbances (~0.1 degC/step)
-    _Q_ALPHA: float = 0.001   # building property drift (10x previous)
+    _Q_T: float = 0.01  # unmodeled disturbances (~0.1 degC/step)
+    _Q_ALPHA: float = 0.001  # building property drift (10x previous)
     _Q_BETA_H: float = 0.005  # HVAC power drift (5x previous)
     _Q_BETA_C: float = 0.005  # HVAC power drift (5x previous)
     _Q_BETA_S: float = 0.002  # solar gain drift
@@ -259,17 +259,17 @@ class ThermalEKF:
     # Initial covariance diagonal — sized to prevent first-update overshoot.
     # Rule: K = F*P_init / (F^2*P_init + R) should stay below ~1.0.
     _P_INIT_T: float = 0.5
-    _P_INIT_ALPHA: float = 0.5    # σ≈0.7 around default 0.15
-    _P_INIT_BETA: float = 50.0    # σ≈7 around default 3.0
+    _P_INIT_ALPHA: float = 0.5  # σ≈0.7 around default 0.15
+    _P_INIT_BETA: float = 50.0  # σ≈7 around default 3.0
     _P_INIT_BETA_S: float = 25.0  # σ≈5 around default 0.5
 
     # Window-open heat exchange multiplier
-    _K_WINDOW_DEFAULT: float = 5.0     # initial: 5x faster than closed
-    _K_WINDOW_MIN: float = 1.5         # must be at least somewhat faster
-    _K_WINDOW_MAX: float = 50.0        # physical upper bound
+    _K_WINDOW_DEFAULT: float = 5.0  # initial: 5x faster than closed
+    _K_WINDOW_MIN: float = 1.5  # must be at least somewhat faster
+    _K_WINDOW_MAX: float = 50.0  # physical upper bound
     _K_WINDOW_EMA_ALPHA: float = 0.05  # EMA smoothing factor
-    _K_WINDOW_MIN_DT: float = 0.25     # min dt (minutes) for learning
-    _K_WINDOW_MIN_DELTA_T: float = 0.1 # min |T_outdoor - T_room| for learning
+    _K_WINDOW_MIN_DT: float = 0.25  # min dt (minutes) for learning
+    _K_WINDOW_MIN_DELTA_T: float = 0.1  # min |T_outdoor - T_room| for learning
 
     # Number of state dimensions
     _N: int = 5
@@ -395,15 +395,11 @@ class ThermalEKF:
 
         # P_pred = F @ P @ F^T + Q_noise (only need element [0][0])
         # Compute F[0,:] @ P
-        FP_row = [
-            sum(F[0][k] * self._P[k][j] for k in range(self._N))
-            for j in range(self._N)
-        ]
+        FP_row = [sum(F[0][k] * self._P[k][j] for k in range(self._N)) for j in range(self._N)]
         # Compute FP_row @ F[0,:]^T = F[0,:] @ P @ F[0,:]^T
         var = sum(FP_row[j] * F[0][j] for j in range(self._N))
         var += self._Q_T  # add process noise
         return math.sqrt(max(var, 0.0))
-
 
     @property
     def k_window(self) -> float:
@@ -510,7 +506,9 @@ class ThermalEKF:
         dt_h = dt_minutes / 60.0
 
         # --- Predict step ---
-        self._predict_step(T_outdoor, predict_mode, dt_h, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual)
+        self._predict_step(
+            T_outdoor, predict_mode, dt_h, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual
+        )
 
         # --- Update step ---
         self._update_step(T_measured)
@@ -551,14 +549,12 @@ class ThermalEKF:
     def _mode_to_u(self, mode: str) -> float:
         """Return the thermal input u from EKF state for the given mode."""
         if mode == "heating":
-            return self._x[2]   # beta_h
+            return self._x[2]  # beta_h
         if mode == "cooling":
             return -self._x[3]  # -beta_c
         return 0.0
 
-    def _state_transition(
-        self, T: float, alpha: float, u: float, T_out: float, dt_h: float
-    ) -> float:
+    def _state_transition(self, T: float, alpha: float, u: float, T_out: float, dt_h: float) -> float:
         """Compute predicted temperature using the analytical 1R1C solution.
 
         Uses linearized (Euler) form when alpha is very small to avoid
@@ -617,10 +613,7 @@ class ThermalEKF:
             one_minus_decay = 1.0 - decay
             F[0][0] = decay
             # dT_new/d_alpha (derived analytically, see plan for derivation)
-            F[0][1] = (
-                -(u / (alpha * alpha)) * one_minus_decay
-                - (T - T_out - u / alpha) * dt_h * decay
-            )
+            F[0][1] = -(u / (alpha * alpha)) * one_minus_decay - (T - T_out - u / alpha) * dt_h * decay
             if mode == "heating":
                 F[0][2] = power_fraction * (1.0 / alpha) * one_minus_decay
             elif mode == "cooling":
@@ -632,7 +625,14 @@ class ThermalEKF:
         return F
 
     def _predict_step(
-        self, T_outdoor: float, mode: str, dt_h: float, *, power_fraction: float = 1.0, q_solar: float = 0.0, q_residual: float = 0.0
+        self,
+        T_outdoor: float,
+        mode: str,
+        dt_h: float,
+        *,
+        power_fraction: float = 1.0,
+        q_solar: float = 0.0,
+        q_residual: float = 0.0,
     ) -> None:
         """EKF predict: propagate state and covariance forward."""
         T, alpha, beta_h, beta_c, beta_s = self._x
@@ -646,7 +646,9 @@ class ThermalEKF:
         self._x = [T_new, alpha, beta_h, beta_c, beta_s]
 
         # Jacobian at current state
-        F = self._compute_jacobian(T, alpha, u, T_outdoor, dt_h, mode, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual)
+        F = self._compute_jacobian(
+            T, alpha, u, T_outdoor, dt_h, mode, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual
+        )
 
         # Covariance prediction: P = F @ P @ F^T + Q_noise
         N = self._N
@@ -654,8 +656,7 @@ class ThermalEKF:
         Q = [self._Q_T, self._Q_ALPHA, self._Q_BETA_H, self._Q_BETA_C, self._Q_BETA_S]
 
         # FP = F @ P
-        FP = [[sum(F[i][k] * P[k][j] for k in range(N)) for j in range(N)]
-              for i in range(N)]
+        FP = [[sum(F[i][k] * P[k][j] for k in range(N)) for j in range(N)] for i in range(N)]
 
         # P_new = FP @ F^T + diag(Q)
         P_new = [[0.0] * N for _ in range(N)]
@@ -688,8 +689,7 @@ class ThermalEKF:
             norm_innov = abs(innovation) / math.sqrt(S)
             if norm_innov > self._ANOMALY_SIGMA:
                 _LOGGER.debug(
-                    "EKF: outlier detected (innovation=%.2f, %.1f sigma), "
-                    "softening update",
+                    "EKF: outlier detected (innovation=%.2f, %.1f sigma), softening update",
                     innovation,
                     norm_innov,
                 )
@@ -708,8 +708,7 @@ class ThermalEKF:
 
         # Covariance update: P = (I - K @ H) @ P
         # Since H = [1, 0, 0, 0]:  P_new[i][j] = P[i][j] - K[i] * P[0][j]
-        P_new = [[P[i][j] - K[i] * P[0][j] for j in range(N)]
-                 for i in range(N)]
+        P_new = [[P[i][j] - K[i] * P[0][j] for j in range(N)] for i in range(N)]
 
         # Add K * R_eff * K^T for numerical stability (Joseph-form correction)
         for i in range(N):
@@ -807,7 +806,6 @@ class ThermalEKF:
         return ekf
 
     def __repr__(self) -> str:
-        model = self.get_model()
         return (
             f"ThermalEKF(T={self._x[0]:.1f}, alpha={self._x[1]:.2f}, "
             f"beta_h={self._x[2]:.1f}, beta_c={self._x[3]:.1f}, "
@@ -819,6 +817,7 @@ class ThermalEKF:
 # ---------------------------------------------------------------------------
 # RoomModelManager -- per-room model management
 # ---------------------------------------------------------------------------
+
 
 class RoomModelManager:
     """Manages per-room ThermalEKF instances.
@@ -853,7 +852,9 @@ class RoomModelManager:
         """Feed an observed transition to the room's estimator."""
         est = self.get_estimator(area_id)
         est.set_applicable_modes(can_heat, can_cool)
-        est.update(T_new, T_outdoor, mode, dt_minutes, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual)
+        est.update(
+            T_new, T_outdoor, mode, dt_minutes, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual
+        )
 
     def predict(
         self,
@@ -864,9 +865,7 @@ class RoomModelManager:
         dt_minutes: float,
     ) -> float:
         """Predict future temperature for *area_id*."""
-        return self.get_estimator(area_id).get_model().predict(
-            T_room, T_outdoor, Q_active, dt_minutes
-        )
+        return self.get_estimator(area_id).get_model().predict(T_room, T_outdoor, Q_active, dt_minutes)
 
     def get_model(self, area_id: str) -> RCModel:
         """Return the learned RCModel for *area_id* (C=1 normalization)."""
@@ -928,9 +927,7 @@ class RoomModelManager:
     ) -> float:
         """Predict temperature during window-open using learned k_window."""
         est = self.get_estimator(area_id)
-        return est.get_model().predict_window_open(
-            T_room, T_outdoor, est.k_window, dt_minutes
-        )
+        return est.get_model().predict_window_open(T_room, T_outdoor, est.k_window, dt_minutes)
 
     def get_k_window(self, area_id: str) -> float:
         """Return the learned window multiplier for *area_id*."""
@@ -955,10 +952,7 @@ class RoomModelManager:
 
     def to_dict(self) -> dict:
         """Serialize all room estimators."""
-        return {
-            area_id: est.to_dict()
-            for area_id, est in self._estimators.items()
-        }
+        return {area_id: est.to_dict() for area_id, est in self._estimators.items()}
 
     @classmethod
     def from_dict(cls, data: dict) -> RoomModelManager:
@@ -969,7 +963,5 @@ class RoomModelManager:
         return mgr
 
     def __repr__(self) -> str:
-        rooms = ", ".join(
-            f"{aid}({e.confidence:.0%})" for aid, e in self._estimators.items()
-        )
+        rooms = ", ".join(f"{aid}({e.confidence:.0%})" for aid, e in self._estimators.items())
         return f"RoomModelManager([{rooms}])"

@@ -6,10 +6,10 @@ from typing import NamedTuple
 from homeassistant.const import Platform
 
 DOMAIN = "roommind"
-VERSION = "1.3.4"
+VERSION = "1.4.1"
 
 # Platforms
-PLATFORMS = [Platform.SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
 
 # Climate modes
 CLIMATE_MODE_AUTO = "auto"
@@ -48,20 +48,23 @@ class TargetTemps(NamedTuple):
     heat: float | None = None  # None = don't heat / force off
     cool: float | None = None  # None = don't cool / force off
 
+
 # Smart control defaults
 BANGBANG_HEAT_HYSTERESIS = 0.2  # °C below target → start heating (bang-bang fallback)
 BANGBANG_COOL_HYSTERESIS = 0.2  # °C above target → start cooling (bang-bang fallback)
 DEFAULT_OUTDOOR_COOLING_MIN = 16  # Hard block: NEVER cool if outdoor < this
 DEFAULT_OUTDOOR_HEATING_MAX = 22  # Don't heat if outdoor > this
-HEATING_BOOST_TARGET = 30  # TRV target when actively heating (forces valve open)
+HEATING_BOOST_TARGET = 30  # Fallback TRV heating boost (used when entity max_temp unavailable)
+AC_HEATING_BOOST_TARGET = 30  # Fallback AC heating boost (used when entity max_temp unavailable)
+AC_COOLING_BOOST_TARGET = 16  # Fallback AC cooling boost (used when entity min_temp unavailable)
 MIN_POWER_FRACTION = 0.15  # Minimum non-zero power fraction (prevents TRV dead zone)
 
 # Update interval in seconds
 UPDATE_INTERVAL = 30
 
 # Coordinator throttle intervals (in cycles of UPDATE_INTERVAL)
-HISTORY_WRITE_CYCLES = 6     # ~3 min at 30s cycle
-THERMAL_SAVE_CYCLES = 30     # ~15 min
+HISTORY_WRITE_CYCLES = 6  # ~3 min at 30s cycle
+THERMAL_SAVE_CYCLES = 30  # ~15 min
 HISTORY_ROTATE_CYCLES = 360  # ~3 hours
 
 # EKF update: accumulate observations before updating (better signal-to-noise)
@@ -71,7 +74,7 @@ EKF_UPDATE_MIN_DT = 3.0  # minutes — matches HISTORY_WRITE_CYCLES
 MAX_PREDICTION_DELTA = 3.0
 
 # Valve protection (anti-seize): periodic cycling of idle TRV valves
-VALVE_PROTECTION_CHECK_CYCLES = 120   # ~1 hour — how often to scan for stale valves
+VALVE_PROTECTION_CHECK_CYCLES = 120  # ~1 hour — how often to scan for stale valves
 VALVE_PROTECTION_CYCLE_DURATION = 15  # seconds — minimum before closing (actual ≥ UPDATE_INTERVAL)
 DEFAULT_VALVE_PROTECTION_INTERVAL = 7  # days — default idle threshold before cycling
 
@@ -79,14 +82,14 @@ DEFAULT_VALVE_PROTECTION_INTERVAL = 7  # days — default idle threshold before 
 MOLD_RISK_OK = "ok"
 MOLD_RISK_WARNING = "warning"
 MOLD_RISK_CRITICAL = "critical"
-MOLD_SURFACE_RH_WARNING = 70.0       # estimated surface RH % — warning threshold
-MOLD_SURFACE_RH_CRITICAL = 80.0      # estimated surface RH % — critical threshold
+MOLD_SURFACE_RH_WARNING = 70.0  # estimated surface RH % — warning threshold
+MOLD_SURFACE_RH_CRITICAL = 80.0  # estimated surface RH % — critical threshold
 DEFAULT_MOLD_HUMIDITY_THRESHOLD = 70.0  # room air RH % — notification trigger
-DEFAULT_MOLD_SUSTAINED_MINUTES = 30   # minutes risk must persist before notification
-DEFAULT_MOLD_COOLDOWN_MINUTES = 60    # minutes between repeated notifications per room
+DEFAULT_MOLD_SUSTAINED_MINUTES = 30  # minutes risk must persist before notification
+DEFAULT_MOLD_COOLDOWN_MINUTES = 60  # minutes between repeated notifications per room
 MOLD_PREVENTION_DELTAS = {"light": 1.0, "medium": 2.0, "strong": 3.0}
-MOLD_HYSTERESIS = 5.0                 # surface RH must drop this much below warning to clear
-MIN_MOLD_GROWTH_TEMP = 5.0            # °C — below this surface temp, mold risk negligible
+MOLD_HYSTERESIS = 5.0  # surface RH must drop this much below warning to clear
+MIN_MOLD_GROWTH_TEMP = 5.0  # °C — below this surface temp, mold risk negligible
 
 # Heating system profiles — residual heat modeling per system type
 # tau_minutes: exponential decay time constant of residual heat after heating stops
@@ -109,14 +112,32 @@ HEATING_SYSTEM_PROFILES: dict[str, dict[str, float]] = {
 }
 RESIDUAL_HEAT_CUTOFF = 0.02  # below this q_residual is treated as zero
 
+# Blind/cover control
+COVER_SOLAR_MIN: float = 0.15
+COVER_HYSTERESIS: float = 1.0
+COVER_MIN_HOLD_SECONDS: int = 900
+COVER_POS_SCALE: float = 25.0
+COVER_MAX_EFFECTIVENESS: float = 0.85
+COVER_USER_CONFLICT_THRESHOLD: int = 15
+COVER_USER_OVERRIDE_MINUTES: int = 60
+COVER_DEFAULT_BETA_S: float = 3.0  # °C/h per unit q_solar (default for rooms without learned data)
+COVER_LINEAR_LOOKAHEAD_H: float = 1.0  # linear fallback: 1h (no heat-loss correction → keep short)
+COVER_RC_LOOKAHEAD_H: float = 2.0  # RC trajectory: 2h (physics-corrected → longer horizon is safe)
+COVER_PREDICTION_DT_MINUTES: float = 5.0  # time step for RC trajectory simulation
+COVER_MAX_PREDICTION_STD: float = 0.5  # max idle+solar prediction_std to activate RC tier
+COVER_CONFIDENCE_REFERENCE_SOLAR: float = 0.5  # reference q_solar for confidence check
+COVER_MIN_IDLE_FOR_LEARNED: int = 30  # Min idle observations before trusting EKF's beta_s
+COVER_POS_DEADBAND: int = 5  # min position change (%) to trigger motor movement
+
 
 def build_override_live(room: dict) -> dict:
     """Build override fields for live data from a room config dict."""
+    override_temp = room.get("override_temp")
     override_until = room.get("override_until")
-    active = bool(override_until is not None and time.time() < override_until)
+    active = bool(override_temp is not None and (override_until is None or time.time() < override_until))
     return {
         "override_active": active,
         "override_type": room.get("override_type") if active else None,
-        "override_temp": room.get("override_temp") if active else None,
+        "override_temp": override_temp if active else None,
         "override_until": override_until if active else None,
     }

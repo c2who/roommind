@@ -15,11 +15,13 @@ export class RsSettingsSensors extends LitElement {
   @property({ type: String }) public weatherEntity = "";
 
   private _fire(key: string, value: unknown) {
-    this.dispatchEvent(new CustomEvent("setting-changed", {
-      detail: { key, value },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("setting-changed", {
+        detail: { key, value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _filterTemperature = (entity: HassEntity): boolean => {
@@ -39,8 +41,12 @@ export class RsSettingsSensors extends LitElement {
 
   render() {
     const l = this.hass.language;
-    const outdoorTemp = this.outdoorTempSensor ? this._getSensorValue(this.outdoorTempSensor) : null;
-    const outdoorHumidity = this.outdoorHumiditySensor ? this._getSensorValue(this.outdoorHumiditySensor) : null;
+    const outdoorTemp = this.outdoorTempSensor
+      ? this._getSensorValue(this.outdoorTempSensor)
+      : null;
+    const outdoorHumidity = this.outdoorHumiditySensor
+      ? this._getSensorValue(this.outdoorHumiditySensor)
+      : null;
 
     return html`
       <div class="settings-section first">
@@ -60,10 +66,15 @@ export class RsSettingsSensors extends LitElement {
             ></ha-entity-picker>
             ${outdoorTemp !== null
               ? html`<div class="current-value">
-                  ${localize("settings.outdoor_current", l, { temp: outdoorTemp.toFixed(1), unit: tempUnit(this.hass) })}
+                  ${localize("settings.outdoor_current", l, {
+                    temp: outdoorTemp.toFixed(1),
+                    unit: tempUnit(this.hass),
+                  })}
                 </div>`
               : this.outdoorTempSensor
-                ? html`<div class="current-value muted">${localize("settings.outdoor_waiting", l)}</div>`
+                ? html`<div class="current-value muted">
+                    ${localize("settings.outdoor_waiting", l)}
+                  </div>`
                 : nothing}
           </div>
           <div class="sensor-field">
@@ -81,10 +92,14 @@ export class RsSettingsSensors extends LitElement {
             ></ha-entity-picker>
             ${outdoorHumidity !== null
               ? html`<div class="current-value">
-                  ${localize("settings.outdoor_humidity_current", l, { value: String(outdoorHumidity) })}
+                  ${localize("settings.outdoor_humidity_current", l, {
+                    value: String(outdoorHumidity),
+                  })}
                 </div>`
               : this.outdoorHumiditySensor
-                ? html`<div class="current-value muted">${localize("settings.outdoor_waiting", l)}</div>`
+                ? html`<div class="current-value muted">
+                    ${localize("settings.outdoor_waiting", l)}
+                  </div>`
                 : nothing}
           </div>
         </div>
@@ -108,18 +123,42 @@ export class RsSettingsSensors extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; }
+    :host {
+      display: block;
+    }
 
-    .settings-section { padding: 16px 0; border-top: 1px solid var(--divider-color); }
-    .settings-section:first-child, .settings-section.first { border-top: none; padding-top: 0; }
+    .settings-section {
+      padding: 16px 0;
+      border-top: 1px solid var(--divider-color);
+    }
+    .settings-section:first-child,
+    .settings-section.first {
+      border-top: none;
+      padding-top: 0;
+    }
 
-    .sensor-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .current-value { margin-top: 8px; font-size: 14px; color: var(--primary-text-color); }
-    .current-value.muted { color: var(--secondary-text-color); }
-    .field-hint { color: var(--secondary-text-color); font-size: 12px; }
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .current-value {
+      margin-top: 8px;
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .current-value.muted {
+      color: var(--secondary-text-color);
+    }
+    .field-hint {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+    }
 
     @media (max-width: 600px) {
-      .sensor-grid { grid-template-columns: 1fr; }
+      .sensor-grid {
+        grid-template-columns: 1fr;
+      }
     }
   `;
 }

@@ -6,11 +6,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from custom_components.roommind.const import DOMAIN
 from custom_components.roommind.diagnostics import (
     _build_model_info,
     async_get_config_entry_diagnostics,
 )
-from custom_components.roommind.const import DOMAIN
 
 
 def _make_estimator():
@@ -159,8 +159,14 @@ async def test_diagnostics_history_store_with_rows(hass, mock_config_entry):
 
     history_store = MagicMock()
     history_store.read_detail.return_value = [
-        {"timestamp": "1000", "room_temp": "21.0", "outdoor_temp": "5.0",
-         "target_temp": "21.0", "mode": "idle", "predicted_temp": "21.1"},
+        {
+            "timestamp": "1000",
+            "room_temp": "21.0",
+            "outdoor_temp": "5.0",
+            "target_temp": "21.0",
+            "mode": "idle",
+            "predicted_temp": "21.1",
+        },
     ]
 
     coordinator = MagicMock()
@@ -227,8 +233,14 @@ async def test_diagnostics_history_capped_at_240(hass, mock_config_entry):
     store.get_rooms.return_value = {"room_a": {}}
 
     rows = [
-        {"timestamp": str(i), "room_temp": "21.0", "outdoor_temp": "5.0",
-         "target_temp": "21.0", "mode": "idle", "predicted_temp": "21.0"}
+        {
+            "timestamp": str(i),
+            "room_temp": "21.0",
+            "outdoor_temp": "5.0",
+            "target_temp": "21.0",
+            "mode": "idle",
+            "predicted_temp": "21.0",
+        }
         for i in range(300)
     ]
     history_store = MagicMock()

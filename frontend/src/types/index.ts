@@ -24,6 +24,10 @@ export interface PassiveDevice {
   power_fraction: number;
 }
 
+export interface CoverScheduleEntry {
+  entity_id: string;
+}
+
 export interface RoomLiveData {
   current_temp: number | null;
   current_humidity: number | null;
@@ -32,7 +36,7 @@ export interface RoomLiveData {
   cool_target: number | null;
   mode: RoomMode;
   heating_power: number; // 0-100
-  trv_setpoint: number | null; // TRV target temp when heating (Full Control)
+  device_setpoint: number | null; // Device target temp in Full Control mode
   override_active: boolean;
   override_type: OverrideType | null;
   override_temp: number | null;
@@ -46,6 +50,10 @@ export interface RoomLiveData {
   mold_surface_rh: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
+  blind_position: number | null;
+  cover_auto_paused: boolean;
+  cover_forced_reason: string;
+  active_cover_schedule_index: number;
 }
 
 export interface RoomConfig {
@@ -74,6 +82,16 @@ export interface RoomConfig {
   heating_system_type?: string;
   entity_modes?: Record<string, "auto" | "heat_only" | "cool_only">;
   passive_devices?: PassiveDevice[];
+  covers?: string[];
+  covers_auto_enabled?: boolean;
+  covers_deploy_threshold?: number;
+  covers_min_position?: number;
+  covers_override_minutes?: number;
+  cover_schedules?: CoverScheduleEntry[];
+  cover_schedule_selector_entity?: string;
+  covers_night_close?: boolean;
+  covers_night_position?: number;
+  is_outdoor?: boolean;
   live?: RoomLiveData;
 }
 
@@ -115,11 +133,7 @@ export interface GlobalSettings {
 // HA types for panel integration
 export interface HomeAssistant {
   callWS: <T>(msg: Record<string, unknown>) => Promise<T>;
-  callService: (
-    domain: string,
-    service: string,
-    data?: Record<string, unknown>
-  ) => Promise<void>;
+  callService: (domain: string, service: string, data?: Record<string, unknown>) => Promise<void>;
   states: Record<string, HassEntity>;
   areas: Record<string, HassArea>;
   floors?: Record<string, HassFloor>;
@@ -170,6 +184,8 @@ export interface AnalyticsDataPoint {
   window_open: boolean;
   heating_power: number | null;
   planned_mode?: string;
+  solar_irradiance: number | null;
+  blind_position?: number | null;
 }
 
 export interface AnalyticsData {

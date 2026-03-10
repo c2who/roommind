@@ -11,7 +11,6 @@ from .conftest import ROOM_LIVING, make_hass_states, setup_room
 
 
 class TestUpdateCycle:
-
     @pytest.mark.asyncio
     async def test_heating_cycle_produces_service_call(self, coordinator, real_store):
         await setup_room(real_store)
@@ -28,9 +27,7 @@ class TestUpdateCycle:
     @pytest.mark.asyncio
     async def test_eco_temp_when_schedule_off(self, coordinator, real_store):
         await setup_room(real_store)
-        coordinator.hass.states.get = MagicMock(
-            side_effect=make_hass_states(schedule_state="off")
-        )
+        coordinator.hass.states.get = MagicMock(side_effect=make_hass_states(schedule_state="off"))
 
         data = await coordinator._async_update_data()
 
@@ -39,11 +36,14 @@ class TestUpdateCycle:
     @pytest.mark.asyncio
     async def test_override_takes_priority(self, coordinator, real_store):
         await setup_room(real_store)
-        await real_store.async_update_room("living_room", {
-            "override_temp": 25.0,
-            "override_until": time.time() + 3600,
-            "override_type": "custom",
-        })
+        await real_store.async_update_room(
+            "living_room",
+            {
+                "override_temp": 25.0,
+                "override_until": time.time() + 3600,
+                "override_type": "custom",
+            },
+        )
 
         data = await coordinator._async_update_data()
 
@@ -65,12 +65,16 @@ class TestUpdateCycle:
         }
         await real_store.async_save_room("bedroom", room2)
 
-        coordinator.hass.states.get = MagicMock(side_effect=make_hass_states(extra={
-            "sensor.bedroom_temp": ("17.0", {}),
-            "sensor.bedroom_humidity": ("50.0", {}),
-            "schedule.bedroom": ("on", {}),
-            "climate.bedroom": ("idle", {"hvac_modes": ["off", "heat"], "hvac_action": "idle"}),
-        }))
+        coordinator.hass.states.get = MagicMock(
+            side_effect=make_hass_states(
+                extra={
+                    "sensor.bedroom_temp": ("17.0", {}),
+                    "sensor.bedroom_humidity": ("50.0", {}),
+                    "schedule.bedroom": ("on", {}),
+                    "climate.bedroom": ("idle", {"hvac_modes": ["off", "heat"], "hvac_action": "idle"}),
+                }
+            )
+        )
 
         data = await coordinator._async_update_data()
 

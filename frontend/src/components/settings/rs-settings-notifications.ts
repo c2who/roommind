@@ -18,11 +18,13 @@ export class RsSettingsNotifications extends LitElement {
   @property({ type: Boolean }) public moldPreventionNotify = false;
 
   private _fire(key: string, value: unknown) {
-    this.dispatchEvent(new CustomEvent("setting-changed", {
-      detail: { key, value },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("setting-changed", {
+        detail: { key, value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   render() {
@@ -36,7 +38,8 @@ export class RsSettingsNotifications extends LitElement {
         </div>
         <ha-switch
           .checked=${this.notificationsEnabled}
-          @change=${(e: Event) => this._fire("moldNotificationsEnabled", (e.target as HTMLInputElement).checked)}
+          @change=${(e: Event) =>
+            this._fire("moldNotificationsEnabled", (e.target as HTMLInputElement).checked)}
         ></ha-switch>
       </div>
 
@@ -48,18 +51,24 @@ export class RsSettingsNotifications extends LitElement {
               <div class="target-list">
                 ${this.notificationTargets.map((t, idx) => {
                   const name = t.entity_id
-                    ? (this.hass.states[t.entity_id]?.attributes?.friendly_name
-                      ?? t.entity_id.replace("notify.", ""))
+                    ? (this.hass.states[t.entity_id]?.attributes?.friendly_name ??
+                      t.entity_id.replace("notify.", ""))
                     : localize("notifications.target_unnamed", l);
                   return html`
                     <div class="target-card">
                       <div class="target-header">
-                        <ha-icon icon="mdi:bell" style="--mdc-icon-size: 18px; color: var(--secondary-text-color)"></ha-icon>
+                        <ha-icon
+                          icon="mdi:bell"
+                          style="--mdc-icon-size: 18px; color: var(--secondary-text-color)"
+                        ></ha-icon>
                         <span>${name}</span>
                         <ha-icon-button
                           .path=${"M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"}
                           @click=${() => {
-                            this._fire("moldNotificationTargets", this.notificationTargets.filter((_, i) => i !== idx));
+                            this._fire(
+                              "moldNotificationTargets",
+                              this.notificationTargets.filter((_, i) => i !== idx),
+                            );
                           }}
                         ></ha-icon-button>
                       </div>
@@ -72,15 +81,24 @@ export class RsSettingsNotifications extends LitElement {
                           allow-custom-entity
                           @value-changed=${(e: CustomEvent) => {
                             const targets = [...this.notificationTargets];
-                            targets[idx] = { ...targets[idx], person_entity: (e.detail?.value as string) ?? "" };
+                            targets[idx] = {
+                              ...targets[idx],
+                              person_entity: (e.detail?.value as string) ?? "",
+                            };
                             this._fire("moldNotificationTargets", targets);
                           }}
                         ></ha-entity-picker>
                         <ha-select
                           .value=${t.notify_when}
                           .options=${[
-                            { value: "always", label: localize("notifications.target_when_always", l) },
-                            { value: "home_only", label: localize("notifications.target_when_home", l) },
+                            {
+                              value: "always",
+                              label: localize("notifications.target_when_always", l),
+                            },
+                            {
+                              value: "home_only",
+                              label: localize("notifications.target_when_home", l),
+                            },
                           ]}
                           fixedMenuPosition
                           @selected=${(e: Event) => {
@@ -92,8 +110,12 @@ export class RsSettingsNotifications extends LitElement {
                           }}
                           @closed=${(e: Event) => e.stopPropagation()}
                         >
-                          <ha-list-item value="always">${localize("notifications.target_when_always", l)}</ha-list-item>
-                          <ha-list-item value="home_only">${localize("notifications.target_when_home", l)}</ha-list-item>
+                          <ha-list-item value="always"
+                            >${localize("notifications.target_when_always", l)}</ha-list-item
+                          >
+                          <ha-list-item value="home_only"
+                            >${localize("notifications.target_when_home", l)}</ha-list-item
+                          >
                         </ha-select>
                       </div>
                     </div>
@@ -128,10 +150,14 @@ export class RsSettingsNotifications extends LitElement {
                     .value=${String(this.notificationCooldown)}
                     .label=${localize("notifications.cooldown", l)}
                     .suffix=${"min"}
-                    type="number" step="5" min="10" max="1440"
+                    type="number"
+                    step="5"
+                    min="10"
+                    max="1440"
                     @change=${(e: Event) => {
                       const v = parseInt((e.target as HTMLInputElement).value, 10);
-                      if (!isNaN(v) && v >= 10 && v <= 1440) this._fire("moldNotificationCooldown", v);
+                      if (!isNaN(v) && v >= 10 && v <= 1440)
+                        this._fire("moldNotificationCooldown", v);
                     }}
                   ></ha-textfield>
                   <span class="field-hint">${localize("notifications.cooldown_hint", l)}</span>
@@ -142,12 +168,20 @@ export class RsSettingsNotifications extends LitElement {
                 ? html`
                     <div class="toggle-row" style="margin-top: 12px">
                       <div class="toggle-text">
-                        <span class="toggle-label">${localize("notifications.mold_prevention_notify", l)}</span>
-                        <span class="toggle-hint">${localize("notifications.mold_prevention_notify_hint", l)}</span>
+                        <span class="toggle-label"
+                          >${localize("notifications.mold_prevention_notify", l)}</span
+                        >
+                        <span class="toggle-hint"
+                          >${localize("notifications.mold_prevention_notify_hint", l)}</span
+                        >
                       </div>
                       <ha-switch
                         .checked=${this.moldPreventionNotify}
-                        @change=${(e: Event) => this._fire("moldPreventionNotify", (e.target as HTMLInputElement).checked)}
+                        @change=${(e: Event) =>
+                          this._fire(
+                            "moldPreventionNotify",
+                            (e.target as HTMLInputElement).checked,
+                          )}
                       ></ha-switch>
                     </div>
                   `
@@ -159,35 +193,105 @@ export class RsSettingsNotifications extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; }
-
-    .toggle-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-    .toggle-text { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-    .toggle-label { font-size: 14px; font-weight: 500; color: var(--primary-text-color); }
-    .toggle-hint { font-size: 13px; color: var(--secondary-text-color); line-height: 1.4; }
-
-    .hint { color: var(--secondary-text-color); font-size: 13px; margin: 12px 0; line-height: 1.4; }
-    .detail-section { margin-top: 4px; }
-    .field-hint { color: var(--secondary-text-color); font-size: 12px; }
-
-    .target-list { display: flex; flex-direction: column; gap: 2px; }
-    .target-card {
-      display: flex; flex-direction: column; gap: 4px;
-      padding: 8px 8px 8px 12px; border-radius: 8px; background: rgba(0, 0, 0, 0.04);
+    :host {
+      display: block;
     }
-    .target-header { display: flex; align-items: center; gap: 8px; }
-    .target-header span { flex: 1; font-size: 14px; font-weight: 500; }
-    .target-detail { display: flex; gap: 8px; align-items: center; padding-left: 26px; }
-    .target-detail ha-entity-picker { flex: 1; }
-    .target-detail ha-select { min-width: 120px; }
 
-    .threshold-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .threshold-field { display: flex; flex-direction: column; gap: 4px; }
-    .threshold-field ha-textfield { width: 100%; }
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .toggle-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+    .toggle-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--primary-text-color);
+    }
+    .toggle-hint {
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      line-height: 1.4;
+    }
+
+    .hint {
+      color: var(--secondary-text-color);
+      font-size: 13px;
+      margin: 12px 0;
+      line-height: 1.4;
+    }
+    .detail-section {
+      margin-top: 4px;
+    }
+    .field-hint {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+    }
+
+    .target-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .target-card {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 8px 8px 12px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.04);
+    }
+    .target-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .target-header span {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .target-detail {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding-left: 26px;
+    }
+    .target-detail ha-entity-picker {
+      flex: 1;
+    }
+    .target-detail ha-select {
+      min-width: 120px;
+    }
+
+    .threshold-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .threshold-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .threshold-field ha-textfield {
+      width: 100%;
+    }
 
     @media (max-width: 600px) {
-      .threshold-grid { grid-template-columns: 1fr; }
-      .target-detail { flex-direction: column; padding-left: 0; }
+      .threshold-grid {
+        grid-template-columns: 1fr;
+      }
+      .target-detail {
+        flex-direction: column;
+        padding-left: 0;
+      }
     }
   `;
 }

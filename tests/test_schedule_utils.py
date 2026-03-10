@@ -14,10 +14,10 @@ from custom_components.roommind.utils.schedule_utils import (
     resolve_target_at_time,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_hass(entity_id: str | None = None, state_value: str | None = None):
     """Return a mock hass with optional entity state."""
@@ -496,7 +496,10 @@ class TestMakeTargetResolverOffActions:
         room = {"comfort_temp": 21.0, "eco_temp": 17.0}
         settings = {"presence_away_action": "off"}
         resolver = make_target_resolver(
-            None, room, settings, presence_away=True,
+            None,
+            room,
+            settings,
+            presence_away=True,
         )
         assert resolver(time.time()) == TargetTemps(heat=None, cool=None)
 
@@ -504,8 +507,10 @@ class TestMakeTargetResolverOffActions:
         """Resolver returns None when schedule_off_action is 'off' and outside blocks."""
         room = {"comfort_temp": 21.0, "eco_temp": 17.0}
         settings = {"schedule_off_action": "off"}
-        resolver = make_target_resolver(
-            None, room, settings,
+        make_target_resolver(
+            None,
+            room,
+            settings,
         )
         # No schedule blocks → falls through to eco/off logic
         # Actually with no schedule blocks, it returns comfort_temp (no blocks = comfort)
@@ -521,7 +526,11 @@ class TestMakeTargetResolverOffActions:
         room = {"comfort_temp": 21.0, "eco_temp": 17.0}
         settings = {"presence_away_action": "off"}
         resolver = make_target_resolver(
-            None, room, settings, presence_away=True, mold_prevention_delta=2.0,
+            None,
+            room,
+            settings,
+            presence_away=True,
+            mold_prevention_delta=2.0,
         )
         assert resolver(time.time()) == TargetTemps(heat=None, cool=None)
 
@@ -590,7 +599,10 @@ class TestMakeTargetResolverMoldDelta:
         room = {"comfort_temp": 21.0, "eco_temp": 17.0}
         settings: dict = {}
         resolver = make_target_resolver(
-            None, room, settings, mold_prevention_delta=2.0,
+            None,
+            room,
+            settings,
+            mold_prevention_delta=2.0,
         )
         # No schedule → comfort_temp 21 + delta 2 = 23 (mold delta only on .heat)
         assert resolver(time.time()).heat == 23.0
@@ -600,7 +612,10 @@ class TestMakeTargetResolverMoldDelta:
         room = {"comfort_temp": 21.0, "eco_temp": 17.0}
         settings: dict = {}
         resolver = make_target_resolver(
-            None, room, settings, mold_prevention_delta=0.0,
+            None,
+            room,
+            settings,
+            mold_prevention_delta=0.0,
         )
         assert resolver(time.time()).heat == 21.0
 
@@ -609,7 +624,10 @@ class TestMakeTargetResolverMoldDelta:
         room = {"comfort_temp": 21.0, "eco_temp": 17.0}
         settings: dict = {}
         resolver = make_target_resolver(
-            None, room, settings, mold_prevention_delta=3.0,
+            None,
+            room,
+            settings,
+            mold_prevention_delta=3.0,
         )
         now = time.time()
         # All timestamps should have the delta applied (mold delta only on .heat)
@@ -694,6 +712,7 @@ class TestFahrenheitBlockConversion:
     def test_make_target_resolver_fahrenheit_block_conversion(self):
         """make_target_resolver with Fahrenheit hass converts block temps to Celsius."""
         from datetime import datetime
+
         from homeassistant.const import UnitOfTemperature
 
         hass = _make_hass()
@@ -716,7 +735,10 @@ class TestFahrenheitBlockConversion:
         }
 
         resolver = make_target_resolver(
-            schedule_blocks, room, settings, hass=hass,
+            schedule_blocks,
+            room,
+            settings,
+            hass=hass,
         )
         import pytest as _pytest
 
@@ -725,6 +747,7 @@ class TestFahrenheitBlockConversion:
     def test_make_target_resolver_celsius_no_conversion(self):
         """make_target_resolver with Celsius hass does not alter block temps."""
         from datetime import datetime
+
         from homeassistant.const import UnitOfTemperature
 
         hass = _make_hass()
@@ -746,7 +769,10 @@ class TestFahrenheitBlockConversion:
         }
 
         resolver = make_target_resolver(
-            schedule_blocks, room, settings, hass=hass,
+            schedule_blocks,
+            room,
+            settings,
+            hass=hass,
         )
         assert resolver(ts).heat == 22.5
 

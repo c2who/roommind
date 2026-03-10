@@ -4,6 +4,7 @@
  *
  * Technique used by alarmo, scheduler-card, mushroom, and others.
  */
+/* eslint-disable @typescript-eslint/no-explicit-any -- HA runtime APIs are untyped */
 export const loadHaElements = async (): Promise<void> => {
   if (customElements.get("ha-entity-picker")) return;
 
@@ -47,14 +48,11 @@ export const loadHaElements = async (): Promise<void> => {
     try {
       await Promise.race([
         customElements.whenDefined("ha-selector"),
-        new Promise<void>((_, rej) =>
-          setTimeout(() => rej(new Error("timeout")), 10_000)
-        ),
+        new Promise<void>((_, rej) => setTimeout(() => rej(new Error("timeout")), 10_000)),
       ]);
       const hass = (document.querySelector("home-assistant") as any)?.hass;
       const offscreen = document.createElement("div");
-      offscreen.style.cssText =
-        "position:fixed;left:-9999px;opacity:0;pointer-events:none";
+      offscreen.style.cssText = "position:fixed;left:-9999px;opacity:0;pointer-events:none";
       document.body.appendChild(offscreen);
       try {
         const sel = document.createElement("ha-selector") as any;

@@ -1,11 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type {
-  HomeAssistant,
-  HassArea,
-  HassFloor,
-  RoomConfig,
-} from "./types";
+import type { HomeAssistant, HassArea, RoomConfig } from "./types";
 import { getEntitiesForArea } from "./utils/room-state";
 import { loadHaElements } from "./load-ha-elements";
 import { localize } from "./utils/localize";
@@ -14,8 +9,7 @@ import { mdiEyeOff } from "./utils/icons";
 import "./components/rs-settings";
 import "./components/rs-analytics";
 
-const BACK_PATH =
-  "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z";
+const BACK_PATH = "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z";
 
 const DELETE_PATH =
   "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z";
@@ -391,22 +385,19 @@ export class RoomMindPanel extends LitElement {
               .path=${BACK_PATH}
               @click=${this._onBackFromDetail}
             ></ha-icon-button>`
-          : html`<ha-menu-button
-              .hass=${this.hass}
-              .narrow=${this.narrow}
-            ></ha-menu-button>`}
+          : html`<ha-menu-button .hass=${this.hass} .narrow=${this.narrow}></ha-menu-button>`}
         <div class="title">
-          ${inDetail ? (this._rooms[this._selectedAreaId!]?.display_name || detailArea?.name || "") : localize("panel.title", l)}
+          ${inDetail
+            ? this._rooms[this._selectedAreaId!]?.display_name || detailArea?.name || ""
+            : localize("panel.title", l)}
         </div>
         ${this._renderSaveIndicator()}
         ${inDetail && this._rooms[this._selectedAreaId!]
           ? html`<ha-icon-button
-              .path=${CHART_PATH}
-              @click=${this._onGoToAnalytics}
-            ></ha-icon-button><ha-icon-button
-              .path=${DELETE_PATH}
-              @click=${this._onDeleteRoom}
-            ></ha-icon-button>`
+                .path=${CHART_PATH}
+                @click=${this._onGoToAnalytics}
+              ></ha-icon-button
+              ><ha-icon-button .path=${DELETE_PATH} @click=${this._onDeleteRoom}></ha-icon-button>`
           : nothing}
         ${!inDetail && this._activeTab === "analytics" && this._analyticsRoom
           ? html`<ha-icon-button
@@ -428,7 +419,7 @@ export class RoomMindPanel extends LitElement {
                   >
                     ${tabLabels[tab]}
                   </button>
-                `
+                `,
               )}
             </div>
           `
@@ -490,7 +481,12 @@ export class RoomMindPanel extends LitElement {
       return html`
         <div class="placeholder">
           <ha-icon icon="mdi:home" style="--mdc-icon-size: 56px; opacity: 0.4"></ha-icon>
-          <p>${localize("panel.no_areas", this.hass.language)}<br/>${localize("panel.no_areas_hint", this.hass.language)}</p>
+          <p>
+            ${localize("panel.no_areas", this.hass.language)}<br />${localize(
+              "panel.no_areas_hint",
+              this.hass.language,
+            )}
+          </p>
         </div>
       `;
     }
@@ -504,26 +500,34 @@ export class RoomMindPanel extends LitElement {
       ${configuredCount > 0 || hiddenAreaInfos.length > 0
         ? html`
             <ha-card class="stats-bar">
-              ${configuredCount > 0 ? html`
-                <div class="stat">
-                  <span class="stat-value">${configuredCount}</span>
-                  <span class="stat-label">${localize("panel.stat.rooms", l)}</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value" style="color: var(--warning-color, #ff9800)">${heatingCount}</span>
-                  <span class="stat-label">${localize("panel.stat.heating", l)}</span>
-                </div>
-                <div class="stat">
-                  <span class="stat-value" style="color: var(--info-color, #2196f3)">${coolingCount}</span>
-                  <span class="stat-label">${localize("panel.stat.cooling", l)}</span>
-                </div>
-              ` : nothing}
+              ${configuredCount > 0
+                ? html`
+                    <div class="stat">
+                      <span class="stat-value">${configuredCount}</span>
+                      <span class="stat-label">${localize("panel.stat.rooms", l)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-value" style="color: var(--warning-color, #ff9800)"
+                        >${heatingCount}</span
+                      >
+                      <span class="stat-label">${localize("panel.stat.heating", l)}</span>
+                    </div>
+                    <div class="stat">
+                      <span class="stat-value" style="color: var(--info-color, #2196f3)"
+                        >${coolingCount}</span
+                      >
+                      <span class="stat-label">${localize("panel.stat.cooling", l)}</span>
+                    </div>
+                  `
+                : nothing}
               <span class="stats-actions">
                 ${hiddenAreaInfos.length > 0
                   ? html`<ha-icon-button
                       class="hidden-rooms-toggle"
                       .path=${mdiEyeOff}
-                      @click=${() => { this._showHiddenRooms = !this._showHiddenRooms; }}
+                      @click=${() => {
+                        this._showHiddenRooms = !this._showHiddenRooms;
+                      }}
                     ></ha-icon-button>`
                   : nothing}
                 ${this._reorderMode
@@ -533,46 +537,55 @@ export class RoomMindPanel extends LitElement {
                   : html`<ha-icon-button
                       class="reorder-btn"
                       .path=${"M9,3L5,7H8V14H10V7H13M16,17V10H14V17H11L15,21L19,17H16Z"}
-                      @click=${() => { this._reorderMode = true; }}
+                      @click=${() => {
+                        this._reorderMode = true;
+                      }}
                       title=${localize("panel.reorder", l)}
                     ></ha-icon-button>`}
               </span>
             </ha-card>
           `
         : nothing}
-
       ${this._showHiddenRooms && hiddenAreaInfos.length > 0
         ? html`
             <ha-card class="hidden-rooms-panel">
               <div class="hidden-rooms-header">
                 <span>${localize("panel.hidden_rooms", l)} (${hiddenAreaInfos.length})</span>
               </div>
-              ${hiddenAreaInfos.map((info) => html`
-                <div class="hidden-room-row">
-                  <span class="hidden-room-name">${info.area.name}</span>
-                  <ha-button @click=${() => this._unhideRoom(info.area.area_id)}>
-                    ${localize("panel.unhide", l)}
-                  </ha-button>
-                </div>
-              `)}
+              ${hiddenAreaInfos.map(
+                (info) => html`
+                  <div class="hidden-room-row">
+                    <span class="hidden-room-name">${info.area.name}</span>
+                    <ha-button @click=${() => this._unhideRoom(info.area.area_id)}>
+                      ${localize("panel.unhide", l)}
+                    </ha-button>
+                  </div>
+                `,
+              )}
             </ha-card>
           `
         : nothing}
-
       ${this._vacationActive && this._vacationTemp !== null
         ? html`
             <ha-card class="vacation-banner">
               <div class="vacation-content">
                 <ha-icon icon="mdi:airplane"></ha-icon>
                 <div class="vacation-text">
-                  <span class="vacation-title">${localize("vacation.banner_title", this.hass.language)}</span>
-                  <span class="vacation-detail">${localize("vacation.banner_detail", this.hass.language, {
-                    temp: formatTemp(this._vacationTemp, this.hass),
-                    unit: tempUnit(this.hass),
-                    date: this._vacationUntil
-                      ? new Date(this._vacationUntil * 1000).toLocaleString(this.hass.language, { dateStyle: "medium", timeStyle: "short" })
-                      : "—",
-                  })}</span>
+                  <span class="vacation-title"
+                    >${localize("vacation.banner_title", this.hass.language)}</span
+                  >
+                  <span class="vacation-detail"
+                    >${localize("vacation.banner_detail", this.hass.language, {
+                      temp: formatTemp(this._vacationTemp, this.hass),
+                      unit: tempUnit(this.hass),
+                      date: this._vacationUntil
+                        ? new Date(this._vacationUntil * 1000).toLocaleString(this.hass.language, {
+                            dateStyle: "medium",
+                            timeStyle: "short",
+                          })
+                        : "—",
+                    })}</span
+                  >
                 </div>
                 <ha-button @click=${this._clearVacation}>
                   ${localize("vacation.deactivate", this.hass.language)}
@@ -581,45 +594,55 @@ export class RoomMindPanel extends LitElement {
             </ha-card>
           `
         : nothing}
-
-      ${this._presenceEnabled && !this._anyoneHome ? html`
+      ${this._presenceEnabled && !this._anyoneHome
+        ? html`
             <ha-card class="presence-banner">
               <div class="vacation-content">
                 <ha-icon icon="mdi:home-off-outline"></ha-icon>
                 <div class="vacation-text">
-                  <span class="vacation-title">${localize("presence.banner_title", this.hass.language)}</span>
-                  <span class="vacation-detail">${localize(this._presenceAwayAction === "off" ? "presence.banner_detail_off" : "presence.banner_detail", this.hass.language)}</span>
+                  <span class="vacation-title"
+                    >${localize("presence.banner_title", this.hass.language)}</span
+                  >
+                  <span class="vacation-detail"
+                    >${localize(
+                      this._presenceAwayAction === "off"
+                        ? "presence.banner_detail_off"
+                        : "presence.banner_detail",
+                      this.hass.language,
+                    )}</span
+                  >
                 </div>
               </div>
             </ha-card>
           `
         : nothing}
-
-      ${this._getFloorGroups(areaInfos).map((group) => html`
-        ${group.name ? html`<h4 class="floor-heading">${group.name}</h4>` : nothing}
-        <div class="area-grid">
-          ${group.items.map(
-            (info, idx) => html`
-              <rs-area-card
-                .area=${info.area}
-                .config=${info.config}
-                .climateEntityCount=${info.climateEntityCount}
-                .tempSensorCount=${info.tempSensorCount}
-                .hass=${this.hass}
-                .controlMode=${this._controlMode}
-                .climateControlActive=${this._climateControlActive}
-                .reordering=${this._reorderMode}
-                .canMoveUp=${idx > 0}
-                .canMoveDown=${idx < group.items.length - 1}
-                @area-selected=${this._onAreaSelected}
-                @hide-room=${this._onHideRoom}
-                @move-room-up=${this._onMoveRoomUp}
-                @move-room-down=${this._onMoveRoomDown}
-              ></rs-area-card>
-            `
-          )}
-        </div>
-      `)}
+      ${this._getFloorGroups(areaInfos).map(
+        (group) => html`
+          ${group.name ? html`<h4 class="floor-heading">${group.name}</h4>` : nothing}
+          <div class="area-grid">
+            ${group.items.map(
+              (info, idx) => html`
+                <rs-area-card
+                  .area=${info.area}
+                  .config=${info.config}
+                  .climateEntityCount=${info.climateEntityCount}
+                  .tempSensorCount=${info.tempSensorCount}
+                  .hass=${this.hass}
+                  .controlMode=${this._controlMode}
+                  .climateControlActive=${this._climateControlActive}
+                  .reordering=${this._reorderMode}
+                  .canMoveUp=${idx > 0}
+                  .canMoveDown=${idx < group.items.length - 1}
+                  @area-selected=${this._onAreaSelected}
+                  @hide-room=${this._onHideRoom}
+                  @move-room-up=${this._onMoveRoomUp}
+                  @move-room-down=${this._onMoveRoomDown}
+                ></rs-area-card>
+              `,
+            )}
+          </div>
+        `,
+      )}
     `;
   }
 
@@ -633,21 +656,16 @@ export class RoomMindPanel extends LitElement {
     const areas = Object.values(this.hass.areas);
 
     const infos: AreaInfo[] = areas.map((area) => {
-      const areaEntities = getEntitiesForArea(
-        area.area_id,
-        this.hass.entities,
-        this.hass.devices
-      );
+      const areaEntities = getEntitiesForArea(area.area_id, this.hass.entities, this.hass.devices);
 
       const climateEntityCount = areaEntities.filter((e) =>
-        e.entity_id.startsWith("climate.")
+        e.entity_id.startsWith("climate."),
       ).length;
 
       const tempSensorCount = areaEntities.filter(
         (e) =>
           e.entity_id.startsWith("sensor.") &&
-          this.hass.states[e.entity_id]?.attributes?.device_class ===
-            "temperature"
+          this.hass.states[e.entity_id]?.attributes?.device_class === "temperature",
       ).length;
 
       return {
@@ -708,7 +726,10 @@ export class RoomMindPanel extends LitElement {
     });
 
     return floorOrder.map((fid) => ({
-      name: fid === null ? localize("panel.floor_other", l) : (floors[fid]?.name ?? localize("panel.floor_other", l)),
+      name:
+        fid === null
+          ? localize("panel.floor_other", l)
+          : (floors[fid]?.name ?? localize("panel.floor_other", l)),
       items: groups.get(fid)!,
     }));
   }
@@ -747,6 +768,7 @@ export class RoomMindPanel extends LitElement {
       this._presencePersons = result.presence_persons ?? [];
       this._presenceAwayAction = result.presence_away_action ?? "eco";
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] loadRooms:", err);
     } finally {
       this._roomsLoaded = true;
@@ -776,6 +798,7 @@ export class RoomMindPanel extends LitElement {
       this._navigate("");
       this._loadRooms();
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] deleteRoom:", err);
     }
   }
@@ -801,6 +824,7 @@ export class RoomMindPanel extends LitElement {
     try {
       await this.hass.callWS({ type: "roommind/settings/save", hidden_rooms: newHidden });
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] hideRoom:", err);
     }
   }
@@ -812,6 +836,7 @@ export class RoomMindPanel extends LitElement {
     try {
       await this.hass.callWS({ type: "roommind/settings/save", hidden_rooms: newHidden });
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] unhideRoom:", err);
     }
   }
@@ -860,7 +885,7 @@ export class RoomMindPanel extends LitElement {
         [ids[idx], ids[targetIdx]] = [ids[targetIdx], ids[idx]];
         // Rebuild full order from all groups
         const newOrder = groups.flatMap((g) =>
-          g === group ? ids : g.items.map((i) => i.area.area_id)
+          g === group ? ids : g.items.map((i) => i.area.area_id),
         );
         await this._saveRoomOrder(newOrder);
         return;
@@ -882,6 +907,7 @@ export class RoomMindPanel extends LitElement {
     try {
       await this.hass.callWS({ type: "roommind/settings/save", room_order: order });
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] saveRoomOrder:", err);
     }
   }
@@ -900,6 +926,7 @@ export class RoomMindPanel extends LitElement {
       this._vacationTemp = null;
       this._vacationUntil = null;
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] clearVacation:", err);
     }
   }
@@ -922,16 +949,18 @@ export class RoomMindPanel extends LitElement {
   private _renderSaveIndicator() {
     if (this._saveStatus === "idle") return nothing;
     const l = this.hass.language;
-    const icon = this._saveStatus === "saving"
-      ? "mdi:content-save-outline"
-      : this._saveStatus === "saved"
-        ? "mdi:check"
-        : "mdi:alert-circle-outline";
-    const label = this._saveStatus === "saving"
-      ? localize("settings.saving", l)
-      : this._saveStatus === "saved"
-        ? localize("settings.saved", l)
-        : localize("settings.error", l);
+    const icon =
+      this._saveStatus === "saving"
+        ? "mdi:content-save-outline"
+        : this._saveStatus === "saved"
+          ? "mdi:check"
+          : "mdi:alert-circle-outline";
+    const label =
+      this._saveStatus === "saving"
+        ? localize("settings.saving", l)
+        : this._saveStatus === "saved"
+          ? localize("settings.saved", l)
+          : localize("settings.error", l);
     return html`
       <span class="save-indicator ${this._saveStatus}">
         <ha-icon .icon=${icon}></ha-icon>

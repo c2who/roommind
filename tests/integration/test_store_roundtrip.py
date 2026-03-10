@@ -8,7 +8,6 @@ from .conftest import ROOM_LIVING
 
 
 class TestStoreRoundTrip:
-
     @pytest.mark.asyncio
     async def test_save_and_load_room(self, real_store):
         await real_store.async_load()

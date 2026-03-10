@@ -12,7 +12,6 @@ from custom_components.roommind.control.thermal_model import (
     ThermalEKF,
 )
 
-
 # ---------------------------------------------------------------------------
 # RCModel tests
 # ---------------------------------------------------------------------------
@@ -212,12 +211,8 @@ def test_ekf_mode_awareness_idle_only():
         T = T_new
 
     # beta_h and beta_c should remain near defaults (within bounds, small drift allowed)
-    assert abs(ekf._x[2] - default_beta_h) < 10.0, (
-        f"beta_h={ekf._x[2]}, expected near default {default_beta_h}"
-    )
-    assert abs(ekf._x[3] - default_beta_c) < 10.0, (
-        f"beta_c={ekf._x[3]}, expected near default {default_beta_c}"
-    )
+    assert abs(ekf._x[2] - default_beta_h) < 10.0, f"beta_h={ekf._x[2]}, expected near default {default_beta_h}"
+    assert abs(ekf._x[3] - default_beta_c) < 10.0, f"beta_c={ekf._x[3]}, expected near default {default_beta_c}"
 
 
 def test_ekf_anomaly_soft_reject():
@@ -244,12 +239,8 @@ def test_ekf_anomaly_soft_reject():
     ekf.update(T_measured=T + 10.0, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
 
     # Parameters should remain stable (soft reject via R inflation)
-    assert abs(ekf._x[1] - alpha_before) < 1.0, (
-        f"alpha jumped from {alpha_before} to {ekf._x[1]}"
-    )
-    assert abs(ekf._x[2] - beta_h_before) < 5.0, (
-        f"beta_h jumped from {beta_h_before} to {ekf._x[2]}"
-    )
+    assert abs(ekf._x[1] - alpha_before) < 1.0, f"alpha jumped from {alpha_before} to {ekf._x[1]}"
+    assert abs(ekf._x[2] - beta_h_before) < 5.0, f"beta_h jumped from {beta_h_before} to {ekf._x[2]}"
 
 
 def test_ekf_prediction_std_decreases():
@@ -272,9 +263,7 @@ def test_ekf_prediction_std_decreases():
         T = T_new
 
     after_std = ekf.prediction_std(0.0, 20.0, 10.0, 5.0)
-    assert after_std < initial_std, (
-        f"std did not decrease: initial={initial_std}, after={after_std}"
-    )
+    assert after_std < initial_std, f"std did not decrease: initial={initial_std}, after={after_std}"
 
 
 def test_ekf_prediction_std_mode_aware():
@@ -301,9 +290,7 @@ def test_ekf_prediction_std_mode_aware():
     std_heating = ekf.prediction_std(model.Q_heat, 20.0, 10.0, 5.0)
 
     # Heating std should be notably larger than idle std
-    assert std_heating > std_idle * 1.5, (
-        f"heating std={std_heating} not much larger than idle std={std_idle}"
-    )
+    assert std_heating > std_idle * 1.5, f"heating std={std_heating} not much larger than idle std={std_idle}"
 
 
 def test_ekf_psd_preserved():
@@ -328,9 +315,7 @@ def test_ekf_psd_preserved():
         # Verify symmetry
         for i in range(5):
             for j in range(i + 1, 5):
-                assert abs(P[i][j] - P[j][i]) < 1e-8, (
-                    f"P not symmetric at [{i}][{j}] step {step}"
-                )
+                assert abs(P[i][j] - P[j][i]) < 1e-8, f"P not symmetric at [{i}][{j}] step {step}"
 
 
 def test_ekf_parameter_bounds():
@@ -437,9 +422,7 @@ def test_spike_regression_idle_to_heating():
     T_pred = model.predict(21.0, 10.0, model.Q_heat, 5.0)
 
     # Must stay reasonable — no spike above 40 degC
-    assert T_pred < 40.0, (
-        f"Spike regression failed: predicted {T_pred} degC after 5 min heating from 21 degC"
-    )
+    assert T_pred < 40.0, f"Spike regression failed: predicted {T_pred} degC after 5 min heating from 21 degC"
 
 
 def test_bias_regression_converges():
@@ -521,10 +504,7 @@ def test_mode_transition_smooth():
     # since Q_active changes, so we allow up to 6 degC for those transitions.
     for i in range(1, len(temps)):
         jump = abs(temps[i] - temps[i - 1])
-        assert jump < 6.0, (
-            f"Jump of {jump:.2f} degC between step {i - 1} and {i}: "
-            f"{temps[i - 1]:.2f} -> {temps[i]:.2f}"
-        )
+        assert jump < 6.0, f"Jump of {jump:.2f} degC between step {i - 1} and {i}: {temps[i - 1]:.2f} -> {temps[i]:.2f}"
 
 
 def test_cold_start_reasonable_predictions():
@@ -545,10 +525,7 @@ def test_cold_start_reasonable_predictions():
         # Test prediction in idle, heating, and cooling
         for Q in [0.0, model.Q_heat, -model.Q_cool]:
             T_pred = model.predict(T_measured, T_out, Q, 5.0)
-            assert 0.0 <= T_pred <= 50.0, (
-                f"Cold start prediction out of range at step {i}: "
-                f"Q={Q}, T_pred={T_pred}"
-            )
+            assert 0.0 <= T_pred <= 50.0, f"Cold start prediction out of range at step {i}: Q={Q}, T_pred={T_pred}"
 
 
 # ---------------------------------------------------------------------------
@@ -591,9 +568,7 @@ def test_manager_update_room():
 def test_manager_predict():
     """predict() returns a float."""
     mgr = RoomModelManager()
-    result = mgr.predict(
-        "living_room", T_room=20.0, T_outdoor=5.0, Q_active=1000.0, dt_minutes=10
-    )
+    result = mgr.predict("living_room", T_room=20.0, T_outdoor=5.0, Q_active=1000.0, dt_minutes=10)
     assert isinstance(result, float)
 
 
@@ -615,12 +590,8 @@ def test_manager_serialization():
     data = mgr.to_dict()
     restored = RoomModelManager.from_dict(data)
 
-    assert mgr.get_confidence("room_a") == pytest.approx(
-        restored.get_confidence("room_a"), abs=0.01
-    )
-    assert mgr.get_confidence("room_b") == pytest.approx(
-        restored.get_confidence("room_b"), abs=0.01
-    )
+    assert mgr.get_confidence("room_a") == pytest.approx(restored.get_confidence("room_a"), abs=0.01)
+    assert mgr.get_confidence("room_b") == pytest.approx(restored.get_confidence("room_b"), abs=0.01)
 
 
 def test_manager_remove_room():
@@ -777,7 +748,10 @@ def test_ekf_update_with_power_fraction():
     for _ in range(50):
         T_new = true_model.predict(T_full, T_out, true_model.Q_heat, dt_minutes=5.0)
         ekf_full.update(
-            T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0,
+            T_measured=T_new,
+            T_outdoor=T_out,
+            mode="heating",
+            dt_minutes=5.0,
             power_fraction=1.0,
         )
         T_full = T_new
@@ -790,7 +764,10 @@ def test_ekf_update_with_power_fraction():
         # Simulate half-power heating: Q_actual = 0.5 * Q_heat
         T_new = true_model.predict(T_half, T_out, true_model.Q_heat * 0.5, dt_minutes=5.0)
         ekf_half.update(
-            T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0,
+            T_measured=T_new,
+            T_outdoor=T_out,
+            mode="heating",
+            dt_minutes=5.0,
             power_fraction=0.5,
         )
         T_half = T_new
@@ -800,12 +777,8 @@ def test_ekf_update_with_power_fraction():
     # convergence, but both should at least move in the same direction (> default).
     beta_h_full = ekf_full._x[2]
     beta_h_half = ekf_half._x[2]
-    assert beta_h_full > ThermalEKF._DEFAULT_BETA_H, (
-        f"beta_h_full should exceed default: {beta_h_full:.1f}"
-    )
-    assert beta_h_half > ThermalEKF._DEFAULT_BETA_H, (
-        f"beta_h_half should exceed default: {beta_h_half:.1f}"
-    )
+    assert beta_h_full > ThermalEKF._DEFAULT_BETA_H, f"beta_h_full should exceed default: {beta_h_full:.1f}"
+    assert beta_h_half > ThermalEKF._DEFAULT_BETA_H, f"beta_h_half should exceed default: {beta_h_half:.1f}"
 
 
 def test_ekf_power_fraction_default_backward_compat():
@@ -820,7 +793,10 @@ def test_ekf_power_fraction_default_backward_compat():
 
     ekf_default.update(T_measured=T, T_outdoor=T_out, mode="heating", dt_minutes=5.0)
     ekf_explicit.update(
-        T_measured=T, T_outdoor=T_out, mode="heating", dt_minutes=5.0,
+        T_measured=T,
+        T_outdoor=T_out,
+        mode="heating",
+        dt_minutes=5.0,
         power_fraction=1.0,
     )
 
@@ -828,7 +804,10 @@ def test_ekf_power_fraction_default_backward_compat():
         T_new = true_model.predict(T, T_out, true_model.Q_heat, dt_minutes=5.0)
         ekf_default.update(T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0)
         ekf_explicit.update(
-            T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0,
+            T_measured=T_new,
+            T_outdoor=T_out,
+            mode="heating",
+            dt_minutes=5.0,
             power_fraction=1.0,
         )
         T = T_new
@@ -951,16 +930,20 @@ def test_rc_model_predict_trajectory_with_solar():
     """predict_trajectory uses per-block solar series."""
     model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0, Q_solar=100.0)
     T_no_solar = model.predict_trajectory(
-        T_room=20.0, T_outdoor_series=[5.0, 5.0, 5.0],
-        Q_active_series=[0.0, 0.0, 0.0], dt_minutes=5.0,
+        T_room=20.0,
+        T_outdoor_series=[5.0, 5.0, 5.0],
+        Q_active_series=[0.0, 0.0, 0.0],
+        dt_minutes=5.0,
     )
     T_solar = model.predict_trajectory(
-        T_room=20.0, T_outdoor_series=[5.0, 5.0, 5.0],
-        Q_active_series=[0.0, 0.0, 0.0], dt_minutes=5.0,
+        T_room=20.0,
+        T_outdoor_series=[5.0, 5.0, 5.0],
+        Q_active_series=[0.0, 0.0, 0.0],
+        dt_minutes=5.0,
         q_solar_series=[0.8, 0.8, 0.8],
     )
     # With solar, temps should be higher (skip index 0 which is the starting temp)
-    for t_ns, t_s in zip(T_no_solar[1:], T_solar[1:]):
+    for t_ns, t_s in zip(T_no_solar[1:], T_solar[1:], strict=False):
         assert t_s >= t_ns, "Solar should keep temps higher"
 
 
@@ -1022,15 +1005,19 @@ def test_rc_model_trajectory_with_residual():
     """predict_trajectory uses per-block residual series."""
     model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
     T_no_res = model.predict_trajectory(
-        T_room=20.0, T_outdoor_series=[5.0, 5.0, 5.0],
-        Q_active_series=[0.0, 0.0, 0.0], dt_minutes=5.0,
+        T_room=20.0,
+        T_outdoor_series=[5.0, 5.0, 5.0],
+        Q_active_series=[0.0, 0.0, 0.0],
+        dt_minutes=5.0,
     )
     T_res = model.predict_trajectory(
-        T_room=20.0, T_outdoor_series=[5.0, 5.0, 5.0],
-        Q_active_series=[0.0, 0.0, 0.0], dt_minutes=5.0,
+        T_room=20.0,
+        T_outdoor_series=[5.0, 5.0, 5.0],
+        Q_active_series=[0.0, 0.0, 0.0],
+        dt_minutes=5.0,
         q_residual_series=[0.5, 0.3, 0.1],
     )
-    for t_nr, t_r in zip(T_no_res[1:], T_res[1:]):
+    for t_nr, t_r in zip(T_no_res[1:], T_res[1:], strict=False):
         assert t_r >= t_nr, "Residual heat should keep trajectory temps higher"
 
 
@@ -1049,7 +1036,7 @@ def test_regression_residual_no_beta_s_inflation():
     ekf.update(T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
 
     # Run 20 heating cycles followed by idle with residual decay
-    for cycle in range(20):
+    for _cycle in range(20):
         # Heat for 5 blocks
         for _ in range(5):
             T = true_model.predict(T, T_out, 50.0, 5.0)
@@ -1060,8 +1047,12 @@ def test_regression_residual_no_beta_s_inflation():
             q_res = 0.85 * math.exp(-j * 5.0 / 90.0)  # underfloor-like decay
             T = true_model.predict(T, T_out, 50.0 * q_res, 5.0)
             ekf.update(
-                T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0,
-                q_solar=0.0, q_residual=q_res,
+                T_measured=T,
+                T_outdoor=T_out,
+                mode="idle",
+                dt_minutes=5.0,
+                q_solar=0.0,
+                q_residual=q_res,
             )
 
     # beta_s should NOT have inflated since q_solar was always 0
@@ -1238,8 +1229,13 @@ def test_ekf_jacobian_cooling_linearized():
     ekf = ThermalEKF()
     ekf._x[1] = 0.001  # alpha < _ALPHA_SMALL (0.01)
     F = ekf._compute_jacobian(
-        T=20.0, alpha=0.001, u=-4.0, T_out=10.0, dt_h=1.0,
-        mode="cooling", power_fraction=1.0,
+        T=20.0,
+        alpha=0.001,
+        u=-4.0,
+        T_out=10.0,
+        dt_h=1.0,
+        mode="cooling",
+        power_fraction=1.0,
     )
     # F[0][3] should be nonzero (cooling column) in linearized form
     assert F[0][3] != 0.0

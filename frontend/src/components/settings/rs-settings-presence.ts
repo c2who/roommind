@@ -15,11 +15,13 @@ export class RsSettingsPresence extends LitElement {
   @property({ type: String }) public presenceAwayAction: "eco" | "off" = "eco";
 
   private _fire(key: string, value: unknown) {
-    this.dispatchEvent(new CustomEvent("setting-changed", {
-      detail: { key, value },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("setting-changed", {
+        detail: { key, value },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   render() {
@@ -33,7 +35,8 @@ export class RsSettingsPresence extends LitElement {
         </div>
         <ha-switch
           .checked=${this.presenceEnabled}
-          @change=${(e: Event) => this._fire("presenceEnabled", (e.target as HTMLInputElement).checked)}
+          @change=${(e: Event) =>
+            this._fire("presenceEnabled", (e.target as HTMLInputElement).checked)}
         ></ha-switch>
       </div>
 
@@ -41,27 +44,39 @@ export class RsSettingsPresence extends LitElement {
         ? html`
             <div class="detail-section">
               <span class="field-hint">${localize("presence.hint_detail", l)}</span>
-              ${this.presencePersons.length > 0 ? html`
-                <div class="person-list">
-                  ${this.presencePersons.map((pid) => {
-                    const name = this.hass.states[pid]?.attributes?.friendly_name ?? pid.split(".").slice(1).join(".");
-                    return html`
-                      <div class="person-row">
-                        <ha-icon icon="mdi:account" style="--mdc-icon-size: 18px; color: var(--secondary-text-color)"></ha-icon>
-                        <span class="person-name">${name}</span>
-                        <ha-icon-button
-                          .path=${"M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"}
-                          @click=${() => this._fire("presencePersons", this.presencePersons.filter((p) => p !== pid))}
-                        ></ha-icon-button>
-                      </div>
-                    `;
-                  })}
-                </div>
-              ` : nothing}
+              ${this.presencePersons.length > 0
+                ? html`
+                    <div class="person-list">
+                      ${this.presencePersons.map((pid) => {
+                        const name =
+                          this.hass.states[pid]?.attributes?.friendly_name ??
+                          pid.split(".").slice(1).join(".");
+                        return html`
+                          <div class="person-row">
+                            <ha-icon
+                              icon="mdi:account"
+                              style="--mdc-icon-size: 18px; color: var(--secondary-text-color)"
+                            ></ha-icon>
+                            <span class="person-name">${name}</span>
+                            <ha-icon-button
+                              .path=${"M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z"}
+                              @click=${() =>
+                                this._fire(
+                                  "presencePersons",
+                                  this.presencePersons.filter((p) => p !== pid),
+                                )}
+                            ></ha-icon-button>
+                          </div>
+                        `;
+                      })}
+                    </div>
+                  `
+                : nothing}
               <ha-entity-picker
                 .hass=${this.hass}
                 .includeDomains=${["person", "device_tracker", "binary_sensor", "input_boolean"]}
-                .entityFilter=${(entity: { entity_id: string }) => !this.presencePersons.includes(entity.entity_id)}
+                .entityFilter=${(entity: { entity_id: string }) =>
+                  !this.presencePersons.includes(entity.entity_id)}
                 .label=${localize("presence.add_entity", l)}
                 @value-changed=${(e: CustomEvent) => {
                   const val = e.detail?.value;
@@ -97,22 +112,62 @@ export class RsSettingsPresence extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; }
-
-    .toggle-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-    .toggle-text { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-    .toggle-label { font-size: 14px; font-weight: 500; color: var(--primary-text-color); }
-    .toggle-hint { font-size: 13px; color: var(--secondary-text-color); line-height: 1.4; }
-
-    .detail-section { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-    .field-hint { color: var(--secondary-text-color); font-size: 12px; }
-
-    .person-list { display: flex; flex-direction: column; gap: 2px; }
-    .person-row {
-      display: flex; align-items: center; gap: 10px;
-      padding: 4px 8px 4px 12px; border-radius: 8px; background: rgba(0, 0, 0, 0.04);
+    :host {
+      display: block;
     }
-    .person-name { flex: 1; font-size: 14px; font-weight: 500; }
+
+    .toggle-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+    .toggle-text {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+    }
+    .toggle-label {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--primary-text-color);
+    }
+    .toggle-hint {
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      line-height: 1.4;
+    }
+
+    .detail-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .field-hint {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+    }
+
+    .person-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .person-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 8px 4px 12px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.04);
+    }
+    .person-name {
+      flex: 1;
+      font-size: 14px;
+      font-weight: 500;
+    }
   `;
 }
 

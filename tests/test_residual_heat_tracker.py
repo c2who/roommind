@@ -2,13 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
-import pytest
-
+from custom_components.roommind.const import MODE_IDLE
 from custom_components.roommind.managers.residual_heat_tracker import ResidualHeatTracker
-from custom_components.roommind.const import MODE_HEATING, MODE_IDLE, MODE_COOLING
-
 
 # ---------------------------------------------------------------------------
 # update – cleanup branch (lines 40-43)

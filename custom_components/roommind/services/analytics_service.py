@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from typing import Any, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -15,7 +16,6 @@ from ..const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
-    DOMAIN,
 )
 from ..control.mpc_controller import (
     DEFAULT_OUTDOOR_TEMP_FALLBACK,
@@ -37,6 +37,16 @@ def _safe_float(value: str) -> float | None:
         return None
 
 
+def _safe_int(value: str) -> int | None:
+    """Convert CSV string to int, or None for empty/invalid values."""
+    if not value:
+        return None
+    try:
+        return int(float(value))
+    except (ValueError, TypeError):
+        return None
+
+
 def _csv_to_points(rows: list[dict]) -> list[dict]:
     """Convert CSV rows (string values, 'timestamp' key) to typed points ('ts' key)."""
     result = []
@@ -44,16 +54,20 @@ def _csv_to_points(rows: list[dict]) -> list[dict]:
         ts = _safe_float(row.get("timestamp", ""))
         if ts is None:
             continue
-        result.append({
-            "ts": ts,
-            "room_temp": _safe_float(row.get("room_temp", "")),
-            "outdoor_temp": _safe_float(row.get("outdoor_temp", "")),
-            "target_temp": _safe_float(row.get("target_temp", "")),
-            "mode": row.get("mode", ""),
-            "predicted_temp": _safe_float(row.get("predicted_temp", "")),
-            "window_open": row.get("window_open", "") in ("True", "true", "1"),
-            "heating_power": _safe_float(row.get("heating_power", "")),
-        })
+        result.append(
+            {
+                "ts": ts,
+                "room_temp": _safe_float(row.get("room_temp", "")),
+                "outdoor_temp": _safe_float(row.get("outdoor_temp", "")),
+                "target_temp": _safe_float(row.get("target_temp", "")),
+                "mode": row.get("mode", ""),
+                "predicted_temp": _safe_float(row.get("predicted_temp", "")),
+                "window_open": row.get("window_open", "") in ("True", "true", "1"),
+                "heating_power": _safe_float(row.get("heating_power", "")),
+                "solar_irradiance": _safe_float(row.get("solar_irradiance", "")),
+                "blind_position": _safe_int(row.get("blind_position", "")),
+            }
+        )
     return result
 
 
@@ -103,11 +117,16 @@ async def _compute_target_forecast(
     ts = now
     while ts <= end_ts:
         targets = resolve_targets_at_time(
-            ts, schedule_blocks,
-            override_until, override_temp,
-            vacation_until, vacation_temp,
-            comfort_heat, comfort_cool,
-            eco_heat, eco_cool,
+            ts,
+            schedule_blocks,
+            override_until,
+            override_temp,
+            vacation_until,
+            vacation_temp,
+            comfort_heat,
+            comfort_cool,
+            eco_heat,
+            eco_cool,
             presence_away=presence_away,
             block_temp_converter=converter,
             presence_away_action=settings.get("presence_away_action", "eco"),
@@ -131,12 +150,14 @@ async def _compute_target_forecast(
             # Auto mode: show heat target (primary for chart line)
             target = heat_target
 
-        result.append({
-            "ts": round(ts, 1),
-            "target_temp": target,
-            "heat_target": heat_target,
-            "cool_target": cool_target,
-        })
+        result.append(
+            {
+                "ts": round(ts, 1),
+                "target_temp": target,
+                "heat_target": heat_target,
+                "cool_target": cool_target,
+            }
+        )
         ts += interval_minutes * 60
     return result
 
@@ -145,8 +166,8 @@ async def build_analytics_data(
     hass: HomeAssistant,
     area_id: str,
     range_key: str,
-    store,
-    coordinator,
+    store: Any,
+    coordinator: Any,
     custom_start: float | None = None,
     custom_end: float | None = None,
 ) -> dict:
@@ -163,14 +184,10 @@ async def build_analytics_data(
     if history_store:
         if custom_start is not None:
             detail = _csv_to_points(
-                await hass.async_add_executor_job(
-                    history_store.read_detail, area_id, None, custom_start, custom_end
-                )
+                await hass.async_add_executor_job(history_store.read_detail, area_id, None, custom_start, custom_end)
             )
             history = _csv_to_points(
-                await hass.async_add_executor_job(
-                    history_store.read_history, area_id, None, custom_start, custom_end
-                )
+                await hass.async_add_executor_job(history_store.read_history, area_id, None, custom_start, custom_end)
             )
         else:
             max_age_map = {
@@ -183,12 +200,8 @@ async def build_analytics_data(
                 "90d": 7776000,
             }
             max_age = max_age_map.get(range_key, 43200)
-            detail = _csv_to_points(
-                await hass.async_add_executor_job(history_store.read_detail, area_id, max_age)
-            )
-            history = _csv_to_points(
-                await hass.async_add_executor_job(history_store.read_history, area_id, max_age)
-            )
+            detail = _csv_to_points(await hass.async_add_executor_job(history_store.read_detail, area_id, max_age))
+            history = _csv_to_points(await hass.async_add_executor_job(history_store.read_history, area_id, max_age))
 
     # Model info (only if estimator exists -- avoid auto-creating for unknown rooms)
     model_info: dict = {}
@@ -203,8 +216,12 @@ async def build_analytics_data(
             room_config = store.get_room(area_id) or {}
             has_ext_sensor = bool(room_config.get("temperature_sensor"))
             if has_ext_sensor:
-                can_heat, can_cool = get_can_heat_cool(room_config, coordinator.outdoor_temp, acs_can_heat=check_acs_can_heat(hass, room_config))
-                T_out = coordinator.outdoor_temp if coordinator.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
+                can_heat, can_cool = get_can_heat_cool(
+                    room_config, coordinator.outdoor_temp, acs_can_heat=check_acs_can_heat(hass, room_config)
+                )
+                T_out = (
+                    coordinator.outdoor_temp if coordinator.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
+                )
                 mpc_active = is_mpc_active(mgr, area_id, can_heat, can_cool, 20.0, T_out)
             else:
                 mpc_active = False
@@ -232,14 +249,21 @@ async def build_analytics_data(
         mold_delta = live.get("mold_prevention_delta", 0.0)
     try:
         target_forecast = await _compute_target_forecast(
-            hass, room_config, settings, mold_prevention_delta=mold_delta,
+            hass,
+            room_config,
+            settings,
+            mold_prevention_delta=mold_delta,
         )
     except Exception:  # noqa: BLE001
         _LOGGER.debug("Target forecast computation failed for '%s'", area_id)
         target_forecast = []
 
     # Forward-simulate temperature prediction for the forecast period.
-    from ..control.analytics_simulator import build_forecast_outdoor_series, build_forecast_solar_series, simulate_prediction
+    from ..control.analytics_simulator import (
+        build_forecast_outdoor_series,
+        build_forecast_solar_series,
+        simulate_prediction,
+    )
 
     pred_temps: list[float | None] = []
     pred_modes: list[str] = []
@@ -256,13 +280,27 @@ async def build_analytics_data(
                     current_t = p["room_temp"]
                     break
             if current_t is not None:
-                T_out_now = coordinator.outdoor_temp if coordinator.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
-                outdoor_series = build_forecast_outdoor_series(
-                    coordinator._weather_manager._outdoor_forecast, T_out_now, len(target_forecast),
+                T_out_now = (
+                    coordinator.outdoor_temp if coordinator.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
                 )
+                outdoor_series = build_forecast_outdoor_series(
+                    coordinator._weather_manager._outdoor_forecast,
+                    T_out_now,
+                    len(target_forecast),
+                )
+                # Shading factor from current cover positions
+                live = coordinator.rooms.get(area_id, {})
+                _shading = 1.0
+                if live.get("blind_position") is not None:
+                    from ..managers.cover_manager import compute_shading_factor
+
+                    _shading = compute_shading_factor([live["blind_position"]])
                 solar_series = build_forecast_solar_series(
-                    hass.config.latitude, hass.config.longitude,
-                    coordinator._weather_manager._outdoor_forecast, len(target_forecast),
+                    hass.config.latitude,
+                    hass.config.longitude,
+                    coordinator._weather_manager._outdoor_forecast,
+                    len(target_forecast),
+                    shading_factor=_shading,
                 )
                 # Residual heat state for analytics simulation
                 system_type = room_config.get("heating_system_type", "")
@@ -271,11 +309,13 @@ async def build_analytics_data(
                 sim_last_pf = 1.0
                 if system_type and area_id in getattr(coordinator._residual_tracker, "_off_since", {}):
                     import time as _time
+
                     off_since = coordinator._residual_tracker._off_since[area_id]
                     elapsed = (_time.time() - off_since) / 60.0
                     sim_heat_dur = (off_since - coordinator._residual_tracker._on_since.get(area_id, off_since)) / 60.0
                     sim_last_pf = coordinator._residual_tracker._off_power.get(area_id, 1.0)
                     from ..control.residual_heat import compute_residual_heat
+
                     sim_q_residual = compute_residual_heat(elapsed, system_type, sim_last_pf, sim_heat_dur)
 
                 pred_temps, pred_modes = simulate_prediction(
@@ -302,16 +342,18 @@ async def build_analytics_data(
     grid = 300  # 5 minutes
     for i, tf in enumerate(target_forecast):
         snapped = round(tf["ts"] / grid) * grid
-        forecast.append({
-            "ts": snapped,
-            "room_temp": None,
-            "outdoor_temp": None,
-            "target_temp": tf["target_temp"],
-            "mode": "forecast",
-            "predicted_temp": pred_temps[i] if i < len(pred_temps) else None,
-            "planned_mode": pred_modes[i] if i < len(pred_modes) else "idle",
-            "window_open": False,
-        })
+        forecast.append(
+            {
+                "ts": snapped,
+                "room_temp": None,
+                "outdoor_temp": None,
+                "target_temp": tf["target_temp"],
+                "mode": "forecast",
+                "predicted_temp": pred_temps[i] if i < len(pred_temps) else None,
+                "planned_mode": pred_modes[i] if i < len(pred_modes) else "idle",
+                "window_open": False,
+            }
+        )
 
     return {
         "detail": detail,

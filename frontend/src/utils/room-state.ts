@@ -1,11 +1,7 @@
 /**
  * Shared utilities for reading and formatting RoomMind room state.
  */
-import type {
-  HassDeviceRegistryEntry,
-  HassEntityRegistryEntry,
-  RoomMode,
-} from "../types";
+import type { HassDeviceRegistryEntry, HassEntityRegistryEntry, RoomMode } from "../types";
 import { localize, type TranslationKey } from "./localize";
 
 /**
@@ -14,7 +10,7 @@ import { localize, type TranslationKey } from "./localize";
  */
 function getEntityAreaId(
   entity: HassEntityRegistryEntry,
-  devices: Record<string, HassDeviceRegistryEntry> | undefined
+  devices: Record<string, HassDeviceRegistryEntry> | undefined,
 ): string | null {
   if (entity.area_id) return entity.area_id;
   if (entity.device_id && devices) {
@@ -30,12 +26,10 @@ function getEntityAreaId(
 export function getEntitiesForArea(
   areaId: string,
   entities: Record<string, HassEntityRegistryEntry> | undefined,
-  devices: Record<string, HassDeviceRegistryEntry> | undefined
+  devices: Record<string, HassDeviceRegistryEntry> | undefined,
 ): HassEntityRegistryEntry[] {
   if (!entities) return [];
-  return Object.values(entities).filter(
-    (e) => getEntityAreaId(e, devices) === areaId
-  );
+  return Object.values(entities).filter((e) => getEntityAreaId(e, devices) === areaId);
 }
 
 /**

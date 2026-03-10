@@ -421,7 +421,7 @@ class TestPassiveDeviceEKFIntegration:
 
         # The EKF accumulator should have recorded a 'cooling' interval,
         # not 'idle' — passive device observation was used.
-        acc_mode = coordinator._ekf_accumulated_mode.get("room_a_abc12345")
+        acc_mode = coordinator._ekf_training._accumulated_mode.get("room_a_abc12345")
         assert acc_mode == MODE_COOLING
 
     @pytest.mark.asyncio
@@ -442,7 +442,7 @@ class TestPassiveDeviceEKFIntegration:
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        acc_mode = coordinator._ekf_accumulated_mode.get("room_a_abc12345")
+        acc_mode = coordinator._ekf_training._accumulated_mode.get("room_a_abc12345")
         assert acc_mode == MODE_IDLE
 
     @pytest.mark.asyncio
@@ -474,7 +474,7 @@ class TestPassiveDeviceEKFIntegration:
         await coordinator._async_update_data()
 
         # Coordinator chose heating (18°C < 21°C target) → passive cooling ignored
-        acc_mode = coordinator._ekf_accumulated_mode.get("room_a_abc12345")
+        acc_mode = coordinator._ekf_training._accumulated_mode.get("room_a_abc12345")
         assert acc_mode == MODE_HEATING
 
     @pytest.mark.asyncio
@@ -502,7 +502,7 @@ class TestPassiveDeviceEKFIntegration:
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        acc_pf = coordinator._ekf_accumulated_pf.get("room_a_abc12345")
+        acc_pf = coordinator._ekf_training._accumulated_pf.get("room_a_abc12345")
         assert acc_pf == pytest.approx(0.4)
 
     @pytest.mark.asyncio
@@ -538,5 +538,5 @@ class TestPassiveDeviceEKFIntegration:
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
 
-        assert coordinator._ekf_accumulated_mode.get("room_a_abc12345") == MODE_COOLING
-        assert coordinator._ekf_accumulated_pf.get("room_a_abc12345") == pytest.approx(1.2)
+        assert coordinator._ekf_training._accumulated_mode.get("room_a_abc12345") == MODE_COOLING
+        assert coordinator._ekf_training._accumulated_pf.get("room_a_abc12345") == pytest.approx(1.2)

@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import logging
-import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-from ..const import DEFAULT_COMFORT_COOL, DEFAULT_COMFORT_HEAT, DEFAULT_ECO_COOL, DEFAULT_ECO_HEAT, SCHEDULE_STATE_ON, TargetTemps
+from ..const import (
+    DEFAULT_COMFORT_COOL,
+    DEFAULT_COMFORT_HEAT,
+    DEFAULT_ECO_COOL,
+    DEFAULT_ECO_HEAT,
+    TargetTemps,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +31,7 @@ def resolve_target_at_time(
     comfort_temp: float,
     eco_temp: float,
     presence_away: bool = False,
-    block_temp_converter: "Callable[[float], float] | None" = None,
+    block_temp_converter: Callable[[float], float] | None = None,
     presence_away_action: str = "eco",
     schedule_off_action: str = "eco",
 ) -> float | None:
@@ -34,7 +40,7 @@ def resolve_target_at_time(
     Returns None when the action is "off" (devices should be turned off).
     """
     # 1. Override
-    if override_until is not None and ts < override_until and override_temp is not None:
+    if override_temp is not None and (override_until is None or ts < override_until):
         return float(override_temp)
     # 2. Vacation
     if vacation_until is not None and ts < vacation_until and vacation_temp is not None:
@@ -72,7 +78,6 @@ def resolve_target_at_time(
     return eco_temp
 
 
-
 def resolve_targets_at_time(
     ts: float,
     schedule_blocks: dict | None,
@@ -85,7 +90,7 @@ def resolve_targets_at_time(
     eco_heat: float,
     eco_cool: float,
     presence_away: bool = False,
-    block_temp_converter: "Callable[[float], float] | None" = None,
+    block_temp_converter: Callable[[float], float] | None = None,
     presence_away_action: str = "eco",
     schedule_off_action: str = "eco",
 ) -> TargetTemps:
@@ -94,7 +99,7 @@ def resolve_targets_at_time(
     Returns TargetTemps(heat, cool). None values mean "force off".
     """
     # 1. Override — single-point target
-    if override_until is not None and ts < override_until and override_temp is not None:
+    if override_temp is not None and (override_until is None or ts < override_until):
         t = float(override_temp)
         return TargetTemps(heat=t, cool=t)
     # 2. Vacation — heat setback, cooling stays at eco_cool
@@ -154,17 +159,26 @@ def resolve_targets_at_time(
     return TargetTemps(heat=eco_heat, cool=eco_cool)
 
 
-def resolve_schedule_index(hass: "HomeAssistant", room: dict) -> int:
+def resolve_schedule_index(
+    hass: HomeAssistant,
+    room: dict,
+    *,
+    schedules_key: str = "schedules",
+    selector_key: str = "schedule_selector_entity",
+) -> int:
     """Return the 0-based index of the active schedule, or -1 if none.
 
     This is the single source of truth for schedule selector resolution,
     used by both the coordinator and schedule_utils helpers.
+
+    Supports custom key names for reuse with different schedule types
+    (e.g. cover schedules).
     """
-    schedules = room.get("schedules", [])
+    schedules = room.get(schedules_key, [])
     if not schedules:
         return -1
 
-    selector_entity = room.get("schedule_selector_entity", "")
+    selector_entity = room.get(selector_key, "")
     if not selector_entity:
         return 0
 
@@ -209,13 +223,15 @@ async def read_schedule_blocks(
         return None
     try:
         response = await hass.services.async_call(
-            "schedule", "get_schedule",
+            "schedule",
+            "get_schedule",
             {"entity_id": schedule_entity_id},
             blocking=True,
             return_response=True,
         )
         if response:
-            return response.get(schedule_entity_id, {}) or None
+            result = response.get(schedule_entity_id, {})
+            return dict(result) if isinstance(result, dict) else None
     except Exception:  # noqa: BLE001
         _LOGGER.debug("schedule.get_schedule failed for %s", schedule_entity_id)
     return None
@@ -225,7 +241,7 @@ def make_target_resolver(
     schedule_blocks: dict | None,
     room: dict,
     settings: dict,
-    hass: "HomeAssistant | None" = None,
+    hass: HomeAssistant | None = None,
     presence_away: bool = False,
     mold_prevention_delta: float = 0.0,
 ) -> Callable[[float], TargetTemps]:
@@ -248,16 +264,22 @@ def make_target_resolver(
     converter: Callable[[float], float] | None = None
     if hass is not None:
         from .temp_utils import ha_temp_to_celsius
+
         _hass = hass
         converter = lambda v: ha_temp_to_celsius(_hass, v)  # noqa: E731
 
     def resolver(ts: float) -> TargetTemps:
         targets = resolve_targets_at_time(
-            ts, schedule_blocks,
-            override_until, override_temp,
-            vacation_until, vacation_temp,
-            comfort_heat, comfort_cool,
-            eco_heat, eco_cool,
+            ts,
+            schedule_blocks,
+            override_until,
+            override_temp,
+            vacation_until,
+            vacation_temp,
+            comfort_heat,
+            comfort_cool,
+            eco_heat,
+            eco_cool,
             presence_away=presence_away,
             block_temp_converter=converter,
             presence_away_action=presence_away_action,
@@ -269,4 +291,5 @@ def make_target_resolver(
             heat=targets.heat + mold_prevention_delta if targets.heat is not None else None,
             cool=targets.cool if targets.cool is not None else None,
         )
+
     return resolver

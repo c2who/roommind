@@ -62,12 +62,9 @@ export class RsChipGroup extends LitElement {
               class="chip ${chip.active ? "active" : ""}"
               @click=${() => this._onChipClick(chip.id)}
             >
-              ${chip.icon
-                ? html`<ha-icon icon=${chip.icon}></ha-icon>`
-                : nothing}
-              ${chip.label}
+              ${chip.icon ? html`<ha-icon icon=${chip.icon}></ha-icon>` : nothing} ${chip.label}
             </button>
-          `
+          `,
         )}
       </div>
     `;
@@ -79,7 +76,7 @@ export class RsChipGroup extends LitElement {
         detail: id,
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 }

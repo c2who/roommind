@@ -28,7 +28,10 @@ export class RsClimateModeSelector extends LitElement {
       border: 2px solid var(--divider-color, #e0e0e0);
       border-radius: 12px;
       cursor: pointer;
-      transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+      transition:
+        border-color 0.2s,
+        background 0.2s,
+        box-shadow 0.2s;
       background: transparent;
       font-family: inherit;
       color: var(--primary-text-color);
@@ -88,7 +91,7 @@ export class RsClimateModeSelector extends LitElement {
               <ha-icon class="mode-card-icon" icon=${m.icon}></ha-icon>
               <div class="mode-card-label">${localize(m.labelKey, l)}</div>
             </button>
-          `
+          `,
         )}
       </div>
     `;
@@ -100,7 +103,7 @@ export class RsClimateModeSelector extends LitElement {
         detail: { mode },
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 }

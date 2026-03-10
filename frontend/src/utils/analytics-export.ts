@@ -1,21 +1,25 @@
 /**
  * Analytics data export utilities (CSV and diagnostics).
  */
-import type { AnalyticsDataPoint, AnalyticsData } from "../types";
+import type { AnalyticsData } from "../types";
 import type { RoomConfig, HomeAssistant } from "../types";
 
 export function buildCsvString(data: AnalyticsData): string | null {
   const points = [...data.history, ...data.detail];
   if (points.length === 0) return null;
 
-  const header = "timestamp,datetime,room_temp,outdoor_temp,target_temp,mode,predicted_temp,window_open";
+  const header =
+    "timestamp,datetime,room_temp,outdoor_temp,target_temp,mode,predicted_temp,window_open,heating_power,solar_irradiance,blind_position";
   const rows = points.map((p) => {
     const dt = new Date(p.ts * 1000).toISOString();
     const rt = p.room_temp ?? "";
     const ot = p.outdoor_temp ?? "";
     const tt = p.target_temp ?? "";
     const pt = p.predicted_temp ?? "";
-    return `${p.ts},${dt},${rt},${ot},${tt},${p.mode},${pt},${p.window_open}`;
+    const hp = p.heating_power ?? "";
+    const si = p.solar_irradiance ?? "";
+    const bp = p.blind_position ?? "";
+    return `${p.ts},${dt},${rt},${ot},${tt},${p.mode},${pt},${p.window_open},${hp},${si},${bp}`;
   });
 
   return [header, ...rows].join("\n");
@@ -76,7 +80,9 @@ export function buildExportFilename(
 ): string {
   const area = hass?.areas?.[selectedRoom];
   const roomConfig = rooms[selectedRoom];
-  const name = (roomConfig?.display_name || area?.name || selectedRoom).replace(/\s+/g, "_").toLowerCase();
+  const name = (roomConfig?.display_name || area?.name || selectedRoom)
+    .replace(/\s+/g, "_")
+    .toLowerCase();
   if (suffix) {
     return `roommind_${suffix}_${name}.${ext}`;
   }

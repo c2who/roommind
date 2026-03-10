@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from homeassistant.core import HomeAssistant
 
@@ -55,8 +56,8 @@ class MoldManager:
         current_humidity: float | None,
         outdoor_temp: float | None,
         settings: dict,
-        celsius_delta_to_ha_fn=None,
-        ha_temp_unit_str_fn=None,
+        celsius_delta_to_ha_fn: Callable[[float], float] | None = None,
+        ha_temp_unit_str_fn: Callable[[], str] | None = None,
     ) -> MoldResult:
         """Evaluate mold risk and prevention for a room.
 
@@ -71,22 +72,23 @@ class MoldManager:
             return result
 
         risk_level, surface_rh = calculate_mold_risk(
-            current_temp, current_humidity, outdoor_temp,
+            current_temp,
+            current_humidity,
+            outdoor_temp,
         )
         result.risk_level = risk_level
         result.surface_rh = surface_rh
 
         threshold = settings.get(
-            "mold_humidity_threshold", DEFAULT_MOLD_HUMIDITY_THRESHOLD,
+            "mold_humidity_threshold",
+            DEFAULT_MOLD_HUMIDITY_THRESHOLD,
         )
 
         now = time.time()
-        is_risky = (
-            current_humidity >= threshold
-            or risk_level in (MOLD_RISK_WARNING, MOLD_RISK_CRITICAL)
-        )
+        is_risky = current_humidity >= threshold or risk_level in (MOLD_RISK_WARNING, MOLD_RISK_CRITICAL)
         sustained_minutes = settings.get(
-            "mold_sustained_minutes", DEFAULT_MOLD_SUSTAINED_MINUTES,
+            "mold_sustained_minutes",
+            DEFAULT_MOLD_SUSTAINED_MINUTES,
         )
 
         if is_risky:
@@ -109,11 +111,15 @@ class MoldManager:
                     * 60
                 )
                 if self._throttler.should_send(
-                    f"detect_{area_id}", cooldown,
+                    f"detect_{area_id}",
+                    cooldown,
                 ):
                     targets = settings.get("mold_notification_targets", [])
                     await async_send_mold_notification(
-                        self.hass, area_id, area_name, targets,
+                        self.hass,
+                        area_id,
+                        area_name,
+                        targets,
                         message=(
                             f"Mold risk in {area_name}: "
                             f"{current_humidity:.0f}% humidity, "
@@ -125,10 +131,7 @@ class MoldManager:
                     self._throttler.record_sent(f"detect_{area_id}")
 
             # Activate prevention
-            if (
-                settings.get("mold_prevention_enabled")
-                and risk_level in (MOLD_RISK_WARNING, MOLD_RISK_CRITICAL)
-            ):
+            if settings.get("mold_prevention_enabled") and risk_level in (MOLD_RISK_WARNING, MOLD_RISK_CRITICAL):
                 intensity = settings.get("mold_prevention_intensity", "medium")
                 result.prevention_delta = mold_prevention_delta(intensity)
 
@@ -141,10 +144,14 @@ class MoldManager:
                         and ha_temp_unit_str_fn is not None
                     ):
                         prev_targets = settings.get(
-                            "mold_prevention_notify_targets", [],
+                            "mold_prevention_notify_targets",
+                            [],
                         )
                         await async_send_mold_notification(
-                            self.hass, area_id, area_name, prev_targets,
+                            self.hass,
+                            area_id,
+                            area_name,
+                            prev_targets,
                             message=(
                                 f"Mold prevention active in {area_name}: "
                                 f"temperature raised by "
@@ -159,18 +166,19 @@ class MoldManager:
                 result.prevention_active = True
         else:
             # Risk cleared -- use hysteresis for deactivation
-            if (
-                surface_rh is not None
-                and surface_rh < (MOLD_SURFACE_RH_WARNING - MOLD_HYSTERESIS)
-            ):
+            if surface_rh is not None and surface_rh < (MOLD_SURFACE_RH_WARNING - MOLD_HYSTERESIS):
                 self._risk_since.pop(area_id, None)
                 if self._prevention_active.get(area_id):
                     self._prevention_active[area_id] = False
                     dismiss_mold_notification(
-                        self.hass, area_id, "risk",
+                        self.hass,
+                        area_id,
+                        "risk",
                     )
                     dismiss_mold_notification(
-                        self.hass, area_id, "prevention",
+                        self.hass,
+                        area_id,
+                        "prevention",
                     )
                 self._throttler.clear(f"detect_{area_id}")
                 self._throttler.clear(f"prevent_{area_id}")

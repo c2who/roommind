@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from custom_components.roommind.const import DOMAIN
 from custom_components.roommind.sensor import (
+    RoomMindModeSensor,
+    RoomMindTargetTemperatureSensor,
     _create_room_entities,
     async_setup_entry,
-    RoomMindTargetTemperatureSensor,
-    RoomMindModeSensor,
 )
 
 

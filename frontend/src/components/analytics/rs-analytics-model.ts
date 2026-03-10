@@ -18,7 +18,7 @@ export class RsAnalyticsModel extends LitElement {
 
   render() {
     const l = this.language;
-    const hasModel = !!(this.data?.model?.model);
+    const hasModel = !!this.data?.model?.model;
     const m = this.data?.model;
     const model = m?.model;
     const confidence = m?.confidence ?? 0;
@@ -36,7 +36,7 @@ export class RsAnalyticsModel extends LitElement {
     const canCool = modes.has("cooling");
     const hasHeated = n_heating >= 10;
     const hasCooled = n_cooling >= 10;
-    const hasIdleData = (n_samples - n_heating - n_cooling) >= 10;
+    const hasIdleData = n_samples - n_heating - n_cooling >= 10;
     const n_observations = m?.n_observations ?? n_samples;
     const ph = "\u2014";
 
@@ -119,20 +119,82 @@ export class RsAnalyticsModel extends LitElement {
           </div>
 
           <div class="model-grid">
-            ${stat("time_constant", hasIdleData && model && model.U > 0 ? (1 / model.U).toFixed(1) + "h" : ph, "analytics.time_constant", "", "analytics.info.time_constant")}
-            ${canHeat ? stat("heating_rate", hasHeated && model ? toDisplayDelta(model.Q_heat, this.hass).toFixed(1) + tempUnit(this.hass) + "/h" : ph, "analytics.heating_rate", "", "analytics.info.heating_rate") : nothing}
-            ${canCool ? stat("cooling_rate", hasCooled && model ? toDisplayDelta(model.Q_cool, this.hass).toFixed(1) + tempUnit(this.hass) + "/h" : ph, "analytics.cooling_rate", "", "analytics.info.cooling_rate") : nothing}
-            ${model && model.Q_solar > 0.1 ? stat("solar_gain", toDisplayDelta(model.Q_solar, this.hass).toFixed(1) + tempUnit(this.hass) + "/h", "analytics.solar_gain", "", "analytics.info.solar_gain") : nothing}
-            ${stat("accuracy_idle", hasIdleData && predStdIdle != null ? "\u00B1" + toDisplayDelta(predStdIdle, this.hass).toFixed(2) + tempUnit(this.hass) : ph, "analytics.accuracy_idle", "", "analytics.info.accuracy_idle")}
-            ${canHeat ? stat("accuracy_heating", hasHeated && predStdHeat != null ? "\u00B1" + toDisplayDelta(predStdHeat, this.hass).toFixed(2) + tempUnit(this.hass) : ph, "analytics.accuracy_heating", "", "analytics.info.accuracy_heating") : nothing}
+            ${stat(
+              "time_constant",
+              hasIdleData && model && model.U > 0 ? (1 / model.U).toFixed(1) + "h" : ph,
+              "analytics.time_constant",
+              "",
+              "analytics.info.time_constant",
+            )}
+            ${canHeat
+              ? stat(
+                  "heating_rate",
+                  hasHeated && model
+                    ? toDisplayDelta(model.Q_heat, this.hass).toFixed(1) +
+                        tempUnit(this.hass) +
+                        "/h"
+                    : ph,
+                  "analytics.heating_rate",
+                  "",
+                  "analytics.info.heating_rate",
+                )
+              : nothing}
+            ${canCool
+              ? stat(
+                  "cooling_rate",
+                  hasCooled && model
+                    ? toDisplayDelta(model.Q_cool, this.hass).toFixed(1) +
+                        tempUnit(this.hass) +
+                        "/h"
+                    : ph,
+                  "analytics.cooling_rate",
+                  "",
+                  "analytics.info.cooling_rate",
+                )
+              : nothing}
+            ${model && model.Q_solar > 0.1
+              ? stat(
+                  "solar_gain",
+                  toDisplayDelta(model.Q_solar, this.hass).toFixed(1) + tempUnit(this.hass) + "/h",
+                  "analytics.solar_gain",
+                  "",
+                  "analytics.info.solar_gain",
+                )
+              : nothing}
+            ${stat(
+              "accuracy_idle",
+              hasIdleData && predStdIdle != null
+                ? "\u00B1" + toDisplayDelta(predStdIdle, this.hass).toFixed(2) + tempUnit(this.hass)
+                : ph,
+              "analytics.accuracy_idle",
+              "",
+              "analytics.info.accuracy_idle",
+            )}
+            ${canHeat
+              ? stat(
+                  "accuracy_heating",
+                  hasHeated && predStdHeat != null
+                    ? "\u00B1" +
+                        toDisplayDelta(predStdHeat, this.hass).toFixed(2) +
+                        tempUnit(this.hass)
+                    : ph,
+                  "analytics.accuracy_heating",
+                  "",
+                  "analytics.info.accuracy_heating",
+                )
+              : nothing}
           </div>
           ${this._expandedStat && statItems.find((s) => s.id === this._expandedStat)
             ? html`<div class="info-panel stat-info-panel">
-                <strong>${localize(statItems.find((s) => s.id === this._expandedStat)!.labelKey, l)}</strong>
+                <strong
+                  >${localize(
+                    statItems.find((s) => s.id === this._expandedStat)!.labelKey,
+                    l,
+                  )}</strong
+                >
                 ${localize(statItems.find((s) => s.id === this._expandedStat)!.infoKey, l)}
               </div>`
             : nothing}
-
         </div>
       </ha-card>
     `;

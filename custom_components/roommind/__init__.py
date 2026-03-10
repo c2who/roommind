@@ -13,7 +13,8 @@ from homeassistant.components.frontend import (
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, PLATFORMS, VERSION
@@ -50,6 +51,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN]["coordinator"] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Clean up orphaned entities (e.g. cover entities for rooms without covers)
+    coordinator.cleanup_orphaned_entities()
 
     await _async_register_panel(hass)
     await _async_check_version_mismatch(hass)
@@ -109,7 +113,7 @@ def _migrate_storage_sync(storage_dir: Path) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a RoomMind config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok: bool = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
         hass.data[DOMAIN].pop("coordinator", None)
@@ -125,11 +129,7 @@ async def _async_check_version_mismatch(hass: HomeAssistant) -> None:
     """Compare in-memory VERSION (from boot) with manifest.json on disk."""
     manifest_path = Path(__file__).parent / "manifest.json"
     try:
-        disk_version: str = (
-            await hass.async_add_executor_job(
-                lambda: json.loads(manifest_path.read_text())["version"]
-            )
-        )
+        disk_version: str = await hass.async_add_executor_job(lambda: json.loads(manifest_path.read_text())["version"])
     except Exception:  # noqa: BLE001
         return
 

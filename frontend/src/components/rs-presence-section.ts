@@ -36,7 +36,10 @@ export class RsPresenceSection extends LitElement {
       font-family: inherit;
       background: transparent;
       color: var(--secondary-text-color);
-      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      transition:
+        background 0.15s,
+        border-color 0.15s,
+        color 0.15s;
     }
 
     .presence-chip:hover {
@@ -156,19 +159,27 @@ export class RsPresenceSection extends LitElement {
         <div class="presence-chips">
           ${this.presencePersons.map((pid) => {
             const active = this.selectedPresencePersons.includes(pid);
-            const name = this.hass.states[pid]?.attributes?.friendly_name ?? pid.split(".").slice(1).join(".");
+            const name =
+              this.hass.states[pid]?.attributes?.friendly_name ?? pid.split(".").slice(1).join(".");
             return html`
               <button
                 class="presence-chip ${active ? "active" : ""}"
                 @click=${() => this._onTogglePerson(pid, active)}
               >
-                <ha-icon icon=${active ? "mdi:account-check" : "mdi:account-outline"} style="--mdc-icon-size: 16px"></ha-icon>
+                <ha-icon
+                  icon=${active ? "mdi:account-check" : "mdi:account-outline"}
+                  style="--mdc-icon-size: 16px"
+                ></ha-icon>
                 ${name}
               </button>
             `;
           })}
         </div>
-        <ha-expansion-panel outlined .header=${localize("presence.room_help_header", this.language)} style="margin-top: 12px">
+        <ha-expansion-panel
+          outlined
+          .header=${localize("presence.room_help_header", this.language)}
+          style="margin-top: 12px"
+        >
           <div class="help-content">
             <p>${localize("presence.room_help_body", this.language)}</p>
           </div>
@@ -180,60 +191,77 @@ export class RsPresenceSection extends LitElement {
   private _renderViewMode() {
     return html`
       <div style="padding: 0 16px 16px">
-        ${this.selectedPresencePersons.length > 0 ? html`
-          <div class="presence-list">
-            ${this.selectedPresencePersons.map((pid) => {
-              const name = this.hass.states[pid]?.attributes?.friendly_name ?? pid.split(".").slice(1).join(".");
-              const st = this.hass.states[pid]?.state;
-              const isHome = pid.startsWith("person.") || pid.startsWith("device_tracker.") ? st === "home" : st === "on";
-              return html`
-                <div class="presence-row ${isHome ? "home" : "away"}">
-                  <span class="presence-dot"></span>
-                  <span class="presence-name">${name}</span>
-                  <span class="presence-state">${isHome
-                    ? localize("presence.state_home", this.language)
-                    : localize("presence.state_away", this.language)}</span>
-                </div>
-              `;
-            })}
-          </div>
-        ` : html`
-          <span class="field-hint">${localize("presence.room_none_assigned", this.language)}</span>
-        `}
+        ${this.selectedPresencePersons.length > 0
+          ? html`
+              <div class="presence-list">
+                ${this.selectedPresencePersons.map((pid) => {
+                  const name =
+                    this.hass.states[pid]?.attributes?.friendly_name ??
+                    pid.split(".").slice(1).join(".");
+                  const st = this.hass.states[pid]?.state;
+                  const isHome =
+                    pid.startsWith("person.") || pid.startsWith("device_tracker.")
+                      ? st === "home"
+                      : st === "on";
+                  return html`
+                    <div class="presence-row ${isHome ? "home" : "away"}">
+                      <span class="presence-dot"></span>
+                      <span class="presence-name">${name}</span>
+                      <span class="presence-state"
+                        >${isHome
+                          ? localize("presence.state_home", this.language)
+                          : localize("presence.state_away", this.language)}</span
+                      >
+                    </div>
+                  `;
+                })}
+              </div>
+            `
+          : html`
+              <span class="field-hint"
+                >${localize("presence.room_none_assigned", this.language)}</span
+              >
+            `}
       </div>
     `;
   }
 
   private _onEditClick() {
     this.editing = true;
-    this.dispatchEvent(new CustomEvent("editing-changed", {
-      detail: { editing: true },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("editing-changed", {
+        detail: { editing: true },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _onDoneClick() {
     this.editing = false;
-    this.dispatchEvent(new CustomEvent("editing-changed", {
-      detail: { editing: false },
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("editing-changed", {
+        detail: { editing: false },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   private _onTogglePerson(pid: string, currentlyActive: boolean) {
     let next: string[];
     if (currentlyActive) {
-      next = this.selectedPresencePersons.filter(p => p !== pid);
+      next = this.selectedPresencePersons.filter((p) => p !== pid);
     } else {
       next = [...this.selectedPresencePersons, pid];
     }
-    this.dispatchEvent(new CustomEvent("presence-persons-changed", {
-      detail: next,
-      bubbles: true,
-      composed: true,
-    }));
+    this.dispatchEvent(
+      new CustomEvent("presence-persons-changed", {
+        detail: next,
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 }
 

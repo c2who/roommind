@@ -7,11 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from .conftest import ROOM_LIVING, make_hass_states, setup_room
+from .conftest import make_hass_states, setup_room
 
 
 class TestMultiCycle:
-
     @pytest.mark.asyncio
     async def test_ekf_accumulates_across_cycles(self, coordinator, real_store):
         """EKF should accumulate observations over multiple update cycles."""
@@ -60,16 +59,12 @@ class TestMultiCycle:
         await setup_room(real_store)
 
         # Schedule on -> comfort
-        coordinator.hass.states.get = MagicMock(
-            side_effect=make_hass_states(schedule_state="on")
-        )
+        coordinator.hass.states.get = MagicMock(side_effect=make_hass_states(schedule_state="on"))
         data1 = await coordinator._async_update_data()
         assert data1["rooms"]["living_room"]["target_temp"] == 21.0
 
         # Schedule off -> eco
-        coordinator.hass.states.get = MagicMock(
-            side_effect=make_hass_states(schedule_state="off")
-        )
+        coordinator.hass.states.get = MagicMock(side_effect=make_hass_states(schedule_state="off"))
         data2 = await coordinator._async_update_data()
         assert data2["rooms"]["living_room"]["target_temp"] == 17.0
 
@@ -77,11 +72,14 @@ class TestMultiCycle:
     async def test_override_expires_falls_back_to_schedule(self, coordinator, real_store):
         """When override timer expires, target should revert to schedule-based temp."""
         await setup_room(real_store)
-        await real_store.async_update_room("living_room", {
-            "override_temp": 25.0,
-            "override_until": time.time() - 1,
-            "override_type": "custom",
-        })
+        await real_store.async_update_room(
+            "living_room",
+            {
+                "override_temp": 25.0,
+                "override_until": time.time() - 1,
+                "override_type": "custom",
+            },
+        )
 
         data = await coordinator._async_update_data()
 
@@ -90,14 +88,19 @@ class TestMultiCycle:
     @pytest.mark.asyncio
     async def test_climate_control_disabled_shows_idle(self, coordinator, real_store):
         """With climate_control_active=false, no climate service calls should be made."""
-        await setup_room(real_store, settings={
-            "outdoor_temp_sensor": "sensor.outdoor_temp",
-            "climate_control_active": False,
-        })
+        await setup_room(
+            real_store,
+            settings={
+                "outdoor_temp_sensor": "sensor.outdoor_temp",
+                "climate_control_active": False,
+            },
+        )
         # Mock climate entity as "off" so _observe_device_action and _infer both return idle
-        coordinator.hass.states.get = MagicMock(side_effect=make_hass_states(
-            climate_state="off",
-        ))
+        coordinator.hass.states.get = MagicMock(
+            side_effect=make_hass_states(
+                climate_state="off",
+            )
+        )
 
         coordinator.hass.services.async_call.reset_mock()
         data = await coordinator._async_update_data()

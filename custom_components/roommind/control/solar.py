@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import time
+from datetime import UTC
 
 # Solar constant (W/m²) — TSI at 1 AU
 _SOLAR_CONSTANT: float = 1361.0
@@ -23,9 +24,9 @@ def _solar_elevation(latitude: float, longitude: float, timestamp: float) -> flo
     Uses the NOAA simplified solar position equations.
     Negative values mean the sun is below the horizon (night).
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    dt = datetime.fromtimestamp(timestamp, tz=UTC)
     day_of_year = dt.timetuple().tm_yday
     hour_utc = dt.hour + dt.minute / 60.0 + dt.second / 3600.0
 
@@ -59,11 +60,14 @@ def _solar_elevation(latitude: float, longitude: float, timestamp: float) -> flo
 
     # Solar elevation
     lat_rad = math.radians(latitude)
-    sin_elev = math.sin(lat_rad) * math.sin(decl) + math.cos(lat_rad) * math.cos(
-        decl
-    ) * math.cos(ha)
+    sin_elev = math.sin(lat_rad) * math.sin(decl) + math.cos(lat_rad) * math.cos(decl) * math.cos(ha)
     sin_elev = max(-1.0, min(1.0, sin_elev))
     return math.degrees(math.asin(sin_elev))
+
+
+def solar_elevation(latitude: float, longitude: float, timestamp: float) -> float:
+    """Public API: solar elevation angle in degrees (negative = below horizon)."""
+    return _solar_elevation(latitude, longitude, timestamp)
 
 
 def _clear_sky_ghi(elevation_deg: float) -> float:
@@ -83,7 +87,7 @@ def _clear_sky_ghi(elevation_deg: float) -> float:
     dni = _SOLAR_CONSTANT * 0.7 ** (am**0.678)
 
     # GHI = DNI × sin(elevation)
-    return max(0.0, dni * sin_elev)
+    return float(max(0.0, dni * sin_elev))
 
 
 def _cloud_attenuation(cloud_coverage: float) -> float:
@@ -96,7 +100,7 @@ def _cloud_attenuation(cloud_coverage: float) -> float:
         Multiplicative factor in (0, 1].
     """
     n = max(0.0, min(1.0, cloud_coverage / 100.0))
-    return 1.0 - 0.75 * (n**3.4)
+    return float(1.0 - 0.75 * (n**3.4))
 
 
 # -- Public API --

@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from .const import DOMAIN, VERSION
 
 
-def _build_model_info(estimator) -> dict:
+def _build_model_info(estimator: Any) -> dict[str, Any]:
     """Build model diagnostics from a ThermalEKF estimator."""
     rc = estimator.get_model()
     return {
@@ -30,9 +30,7 @@ def _build_model_info(estimator) -> dict:
     }
 
 
-async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, config_entry: ConfigEntry
-) -> dict[str, Any]:
+async def async_get_config_entry_diagnostics(hass: HomeAssistant, config_entry: ConfigEntry) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     data = hass.data.get(DOMAIN, {})
     store = data.get("store")
@@ -86,9 +84,7 @@ async def async_get_config_entry_diagnostics(
     if coordinator and coordinator._history_store:
         for area_id in rooms_config:
             try:
-                rows = await hass.async_add_executor_job(
-                    coordinator._history_store.read_detail, area_id, 7200
-                )
+                rows = await hass.async_add_executor_job(coordinator._history_store.read_detail, area_id, 7200)
                 recent_history[area_id] = [
                     {
                         "ts": row.get("timestamp", ""),
@@ -116,7 +112,7 @@ async def async_get_config_entry_diagnostics(
             "enabled": settings.get("presence_enabled", False),
             "persons": settings.get("presence_persons", []),
             "person_states": {
-                pid: (hass.states.get(pid).state if hass.states.get(pid) else "unavailable")
+                pid: (s.state if (s := hass.states.get(pid)) else "unavailable")
                 for pid in settings.get("presence_persons", [])
             },
         },

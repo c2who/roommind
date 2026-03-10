@@ -6,7 +6,12 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, RoomConfig, AnalyticsData } from "../../types";
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
-import { buildCsvString, buildDiagnosticsString, downloadString, buildExportFilename } from "../../utils/analytics-export";
+import {
+  buildCsvString,
+  buildDiagnosticsString,
+  downloadString,
+  buildExportFilename,
+} from "../../utils/analytics-export";
 import { copyToClipboard } from "../../utils/clipboard";
 
 @customElement("rs-analytics-toolbar")
@@ -38,7 +43,9 @@ export class RsAnalyticsToolbar extends LitElement {
   protected updated(changedProps: Map<string, unknown>) {
     if ((changedProps.has("rooms") || changedProps.has("selectedRoom")) && this.selectedRoom) {
       this.updateComplete.then(() => {
-        const select = this.renderRoot?.querySelector("ha-select") as HTMLElement & { value?: string };
+        const select = this.renderRoot?.querySelector("ha-select") as HTMLElement & {
+          value?: string;
+        };
         if (select && select.value !== this.selectedRoom) {
           select.value = this.selectedRoom;
         }
@@ -63,10 +70,7 @@ export class RsAnalyticsToolbar extends LitElement {
     });
   }
 
-  private _renderRoomSelector(
-    rooms: Array<{ area_id: string; name: string }>,
-    l: string,
-  ) {
+  private _renderRoomSelector(rooms: Array<{ area_id: string; name: string }>, l: string) {
     return html`
       <div class="selector-row">
         <ha-select
@@ -78,11 +82,7 @@ export class RsAnalyticsToolbar extends LitElement {
           @selected=${this._onRoomSelected}
           @closed=${(e: Event) => e.stopPropagation()}
         >
-          ${rooms.map(
-            (r) => html`
-              <ha-list-item .value=${r.area_id}>${r.name}</ha-list-item>
-            `,
-          )}
+          ${rooms.map((r) => html` <ha-list-item .value=${r.area_id}>${r.name}</ha-list-item> `)}
         </ha-select>
       </div>
     `;
@@ -134,14 +134,19 @@ export class RsAnalyticsToolbar extends LitElement {
               ></ha-date-range-picker>
             </div>
           </div>
-          <span class="date-label ${this.activeQuick === null ? "custom-active" : ""}">${fmt(this.rangeStart)} – ${fmt(this.rangeEnd)}</span>
+          <span class="date-label ${this.activeQuick === null ? "custom-active" : ""}"
+            >${fmt(this.rangeStart)} – ${fmt(this.rangeEnd)}</span
+          >
         </div>
         <div class="action-buttons">
           <div class="export-split">
             <button
               class="export-btn"
               ?disabled=${!hasData}
-              @click=${(e: Event) => { e.stopPropagation(); this._toggleDropdown("csv"); }}
+              @click=${(e: Event) => {
+                e.stopPropagation();
+                this._toggleDropdown("csv");
+              }}
             >
               <ha-icon icon="mdi:download"></ha-icon>
               ${localize("analytics.export", l)}
@@ -164,7 +169,10 @@ export class RsAnalyticsToolbar extends LitElement {
             <button
               class="export-btn"
               ?disabled=${!this.selectedRoom || !this.data}
-              @click=${(e: Event) => { e.stopPropagation(); this._toggleDropdown("diag"); }}
+              @click=${(e: Event) => {
+                e.stopPropagation();
+                this._toggleDropdown("diag");
+              }}
             >
               <ha-icon icon="mdi:bug-outline"></ha-icon>
               ${localize("analytics.copy_diagnostics", l)}
@@ -241,16 +249,37 @@ export class RsAnalyticsToolbar extends LitElement {
     if (!this.data) return;
     const csv = buildCsvString(this.data);
     if (!csv) return;
-    const filename = buildExportFilename(this.hass, this.rooms, this.selectedRoom, this.rangeStart, this.rangeEnd, "", "csv");
+    const filename = buildExportFilename(
+      this.hass,
+      this.rooms,
+      this.selectedRoom,
+      this.rangeStart,
+      this.rangeEnd,
+      "",
+      "csv",
+    );
     downloadString(csv, filename, "text/csv");
     this._openDropdown = null;
   }
 
   private _exportDiagnostics() {
     if (!this.data) return;
-    const json = buildDiagnosticsString(this.selectedRoom, this.data, this.rooms[this.selectedRoom], this.controlMode);
+    const json = buildDiagnosticsString(
+      this.selectedRoom,
+      this.data,
+      this.rooms[this.selectedRoom],
+      this.controlMode,
+    );
     if (!json) return;
-    const filename = buildExportFilename(this.hass, this.rooms, this.selectedRoom, this.rangeStart, this.rangeEnd, "diagnostics", "json");
+    const filename = buildExportFilename(
+      this.hass,
+      this.rooms,
+      this.selectedRoom,
+      this.rangeStart,
+      this.rangeEnd,
+      "diagnostics",
+      "json",
+    );
     downloadString(json, filename, "application/json");
     this._openDropdown = null;
   }
@@ -265,7 +294,12 @@ export class RsAnalyticsToolbar extends LitElement {
 
   private _copyDiagnosticsToClipboard() {
     if (!this.data) return;
-    const json = buildDiagnosticsString(this.selectedRoom, this.data, this.rooms[this.selectedRoom], this.controlMode);
+    const json = buildDiagnosticsString(
+      this.selectedRoom,
+      this.data,
+      this.rooms[this.selectedRoom],
+      this.controlMode,
+    );
     if (!json) return;
     copyToClipboard(json);
     this._openDropdown = null;
@@ -333,7 +367,9 @@ export class RsAnalyticsToolbar extends LitElement {
       font-size: 12px;
       font-weight: 500;
       cursor: pointer;
-      transition: background 0.15s ease, color 0.15s ease;
+      transition:
+        background 0.15s ease,
+        color 0.15s ease;
       font-family: inherit;
       white-space: nowrap;
     }

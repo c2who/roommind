@@ -61,10 +61,7 @@ class ValveManager:
         if not self._cycling:
             return
         now = time.time()
-        finished = [
-            eid for eid, start in self._cycling.items()
-            if now - start >= VALVE_PROTECTION_CYCLE_DURATION
-        ]
+        finished = [eid for eid, start in self._cycling.items() if now - start >= VALVE_PROTECTION_CYCLE_DURATION]
         for eid in finished:
             try:
                 await async_turn_off_climate(self.hass, eid, area_id="valve_protection")
@@ -88,7 +85,8 @@ class ValveManager:
             return
 
         interval_days = settings.get(
-            "valve_protection_interval_days", DEFAULT_VALVE_PROTECTION_INTERVAL,
+            "valve_protection_interval_days",
+            DEFAULT_VALVE_PROTECTION_INTERVAL,
         )
         threshold = interval_days * 86400
         now = time.time()
@@ -116,23 +114,42 @@ class ValveManager:
                         )
                         continue
                     await self.hass.services.async_call(
-                        "climate", "set_hvac_mode",
-                        {"entity_id": eid, "hvac_mode": vp_resolved}, blocking=True,
+                        "climate",
+                        "set_hvac_mode",
+                        {"entity_id": eid, "hvac_mode": vp_resolved},
+                        blocking=True,
                     )
                     boost_temp = celsius_to_ha_temp(self.hass, HEATING_BOOST_TARGET)
                     if eid_state:
                         dev_max = eid_state.attributes.get("max_temp")
                         if dev_max is not None and boost_temp > dev_max:
                             boost_temp = dev_max
-                    await self.hass.services.async_call(
-                        "climate", "set_temperature",
-                        {"entity_id": eid, "temperature": boost_temp},
-                        blocking=True,
-                    )
+                    is_range = eid_state and eid_state.attributes.get("target_temp_low") is not None
+                    if is_range:
+                        cur_high = eid_state.attributes.get("target_temp_high", boost_temp)
+                        await self.hass.services.async_call(
+                            "climate",
+                            "set_temperature",
+                            {
+                                "entity_id": eid,
+                                "target_temp_low": boost_temp,
+                                "target_temp_high": max(boost_temp, cur_high),
+                            },
+                            blocking=True,
+                        )
+                    else:
+                        await self.hass.services.async_call(
+                            "climate",
+                            "set_temperature",
+                            {"entity_id": eid, "temperature": boost_temp},
+                            blocking=True,
+                        )
                     self._cycling[eid] = now
                     idle_days = int((now - last) / 86400) if last else 0
                     _LOGGER.info(
-                        "Valve protection: cycling '%s' (idle for %d days)", eid, idle_days,
+                        "Valve protection: cycling '%s' (idle for %d days)",
+                        eid,
+                        idle_days,
                     )
                 except Exception:  # noqa: BLE001
                     _LOGGER.warning("Valve protection: failed to start cycle for '%s'", eid)

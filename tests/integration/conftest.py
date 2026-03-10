@@ -9,7 +9,6 @@ import pytest
 from custom_components.roommind.coordinator import RoomMindCoordinator
 from custom_components.roommind.store import RoomMindStore
 
-
 ROOM_LIVING = {
     "area_id": "living_room",
     "thermostats": ["climate.living_room"],
@@ -30,8 +29,13 @@ ROOM_LIVING = {
 
 
 def make_hass_states(
-    temp="18.0", humidity="55.0", schedule_state="on", outdoor_temp="5.0",
-    climate_hvac_modes=None, climate_state="idle", extra=None,
+    temp="18.0",
+    humidity="55.0",
+    schedule_state="on",
+    outdoor_temp="5.0",
+    climate_hvac_modes=None,
+    climate_state="idle",
+    extra=None,
 ):
     if climate_hvac_modes is None:
         climate_hvac_modes = ["off", "heat"]
@@ -45,7 +49,8 @@ def make_hass_states(
             "schedule.living_room": ("state", schedule_state, {}),
             "sensor.outdoor_temp": ("state", outdoor_temp, {}),
             "climate.living_room": (
-                "state", climate_state,
+                "state",
+                climate_state,
                 {"hvac_modes": climate_hvac_modes, "hvac_action": "idle"},
             ),
         }

@@ -59,7 +59,9 @@ def surface_rh(t_dew: float, t_surface: float) -> float:
 
 
 def estimate_surface_temp(
-    t_room: float, t_outdoor: float, f_rsi: float = 0.80,
+    t_room: float,
+    t_outdoor: float,
+    f_rsi: float = 0.80,
 ) -> float:
     """Estimate coldest wall surface temperature using temperature factor.
 

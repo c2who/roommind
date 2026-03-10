@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -48,7 +48,7 @@ async def test_confirm_restart_shows_form_without_input():
     flow.hass = MagicMock()
     flow.async_show_form = MagicMock(return_value={"type": "form", "step_id": "confirm_restart"})
 
-    result = await flow.async_step_confirm_restart(user_input=None)
+    await flow.async_step_confirm_restart(user_input=None)
     flow.async_show_form.assert_called_once()
     call_kwargs = flow.async_show_form.call_args
     assert call_kwargs[1]["step_id"] == "confirm_restart"

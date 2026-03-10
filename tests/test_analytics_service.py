@@ -9,11 +9,8 @@ import pytest
 
 from custom_components.roommind.services.analytics_service import (
     _compute_target_forecast,
-    _csv_to_points,
-    _safe_float,
     build_analytics_data,
 )
-
 
 # ---------------------------------------------------------------------------
 # _compute_target_forecast -- mold delta with heat_target=None
@@ -54,7 +51,12 @@ class TestComputeTargetForecast:
             ),
         ):
             result = await _compute_target_forecast(
-                hass, room, settings, mold_prevention_delta=2.0, hours=0.0, interval_minutes=5,
+                hass,
+                room,
+                settings,
+                mold_prevention_delta=2.0,
+                hours=0.0,
+                interval_minutes=5,
             )
             assert len(result) == 1
             assert result[0]["heat_target"] == round(17.0 + 2.0, 1)
@@ -90,7 +92,11 @@ class TestComputeTargetForecast:
             ),
         ):
             result = await _compute_target_forecast(
-                hass, room, settings, hours=0.0, interval_minutes=5,
+                hass,
+                room,
+                settings,
+                hours=0.0,
+                interval_minutes=5,
             )
             assert len(result) == 1
             assert result[0]["target_temp"] == 24.0
@@ -126,7 +132,11 @@ class TestComputeTargetForecast:
             ),
         ):
             result = await _compute_target_forecast(
-                hass, room, settings, hours=0.0, interval_minutes=5,
+                hass,
+                room,
+                settings,
+                hours=0.0,
+                interval_minutes=5,
             )
             assert len(result) == 1
             assert result[0]["target_temp"] == 21.0
@@ -185,10 +195,26 @@ class TestBuildAnalyticsData:
         coordinator._window_manager._paused = {}
 
         detail_rows = [
-            {"timestamp": "1000", "room_temp": "", "outdoor_temp": "10", "target_temp": "21",
-             "mode": "idle", "predicted_temp": "", "window_open": "", "heating_power": ""},
-            {"timestamp": "2000", "room_temp": "20.5", "outdoor_temp": "10", "target_temp": "21",
-             "mode": "idle", "predicted_temp": "", "window_open": "", "heating_power": ""},
+            {
+                "timestamp": "1000",
+                "room_temp": "",
+                "outdoor_temp": "10",
+                "target_temp": "21",
+                "mode": "idle",
+                "predicted_temp": "",
+                "window_open": "",
+                "heating_power": "",
+            },
+            {
+                "timestamp": "2000",
+                "room_temp": "20.5",
+                "outdoor_temp": "10",
+                "target_temp": "21",
+                "mode": "idle",
+                "predicted_temp": "",
+                "window_open": "",
+                "heating_power": "",
+            },
         ]
 
         async def mock_executor(fn, *args, **kwargs):
@@ -225,7 +251,7 @@ class TestBuildAnalyticsData:
                 return_value=([21.0], ["idle"]),
             ) as mock_sim,
         ):
-            result = await build_analytics_data(hass, "living_room", "12h", store, coordinator)
+            await build_analytics_data(hass, "living_room", "12h", store, coordinator)
             mock_sim.assert_called_once()
             assert mock_sim.call_args.kwargs["current_temp"] == 20.5
 
@@ -263,8 +289,16 @@ class TestBuildAnalyticsData:
         coordinator._window_manager._paused = {}
 
         detail_rows = [
-            {"timestamp": "1000", "room_temp": "", "outdoor_temp": "10", "target_temp": "21",
-             "mode": "idle", "predicted_temp": "", "window_open": "", "heating_power": ""},
+            {
+                "timestamp": "1000",
+                "room_temp": "",
+                "outdoor_temp": "10",
+                "target_temp": "21",
+                "mode": "idle",
+                "predicted_temp": "",
+                "window_open": "",
+                "heating_power": "",
+            },
         ]
 
         async def mock_executor(fn, *args, **kwargs):
@@ -338,8 +372,16 @@ class TestBuildAnalyticsData:
         coordinator._residual_tracker._off_power = {"room1": 0.8}
 
         detail_rows = [
-            {"timestamp": str(now - 60), "room_temp": "20.0", "outdoor_temp": "10",
-             "target_temp": "21", "mode": "idle", "predicted_temp": "", "window_open": "", "heating_power": ""},
+            {
+                "timestamp": str(now - 60),
+                "room_temp": "20.0",
+                "outdoor_temp": "10",
+                "target_temp": "21",
+                "mode": "idle",
+                "predicted_temp": "",
+                "window_open": "",
+                "heating_power": "",
+            },
         ]
 
         async def mock_executor(fn, *args, **kwargs):
@@ -375,7 +417,7 @@ class TestBuildAnalyticsData:
                 return_value=([21.0], ["idle"]),
             ) as mock_sim,
         ):
-            result = await build_analytics_data(hass, "room1", "12h", store, coordinator)
+            await build_analytics_data(hass, "room1", "12h", store, coordinator)
             mock_sim.assert_called_once()
             kwargs = mock_sim.call_args.kwargs
             assert kwargs["heating_system_type"] == "underfloor"

@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
-from custom_components.roommind.control.thermal_model import RCModel
 from custom_components.roommind.control.mpc_optimizer import MPCOptimizer, MPCPlan
+from custom_components.roommind.control.thermal_model import RCModel
 
 
 def test_optimizer_idle_at_target():
@@ -142,12 +140,16 @@ def test_plan_empty():
 # Proportional control tests
 # ---------------------------------------------------------------------------
 
+
 def test_compute_optimal_power_cold_room():
     """Cold room needs high power fraction."""
     model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
     opt = MPCOptimizer(model)
     pf, mode = opt.compute_optimal_power(
-        T_room=15.0, T_outdoor=5.0, target=21.0, dt_minutes=5.0,
+        T_room=15.0,
+        T_outdoor=5.0,
+        target=21.0,
+        dt_minutes=5.0,
     )
     assert mode == "heating"
     assert pf >= 0.5  # large error → high power
@@ -158,7 +160,10 @@ def test_compute_optimal_power_at_target():
     model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
     opt = MPCOptimizer(model)
     pf, mode = opt.compute_optimal_power(
-        T_room=21.0, T_outdoor=21.0, target=21.0, dt_minutes=5.0,
+        T_room=21.0,
+        T_outdoor=21.0,
+        target=21.0,
+        dt_minutes=5.0,
     )
     assert mode == "idle"
     assert pf == 0.0
@@ -198,6 +203,7 @@ def test_get_current_power_fraction_fallback():
 def test_power_fraction_clamped():
     """Power fraction should always be in [MIN_POWER_FRACTION, 1.0] when active."""
     from custom_components.roommind.const import MIN_POWER_FRACTION
+
     model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
     opt = MPCOptimizer(model)
     plan = opt.optimize(
@@ -250,10 +256,18 @@ def test_compute_optimal_power_with_residual():
     model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
     opt = MPCOptimizer(model)
     pf_no_res, mode_no_res = opt.compute_optimal_power(
-        19.5, 10.0, 21.0, 5.0, q_residual=0.0,
+        19.5,
+        10.0,
+        21.0,
+        5.0,
+        q_residual=0.0,
     )
     pf_res, mode_res = opt.compute_optimal_power(
-        19.5, 10.0, 21.0, 5.0, q_residual=0.5,
+        19.5,
+        10.0,
+        21.0,
+        5.0,
+        q_residual=0.5,
     )
     # With residual, either lower power or idle
     if mode_res == "heating":

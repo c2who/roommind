@@ -45,7 +45,7 @@ export class RsRadioGroup extends LitElement {
               ></ha-radio>
               ${opt.label}
             </label>
-          `
+          `,
         )}
       </div>
     `;
@@ -59,7 +59,7 @@ export class RsRadioGroup extends LitElement {
           detail: target.value,
           bubbles: true,
           composed: true,
-        })
+        }),
       );
     }
   }

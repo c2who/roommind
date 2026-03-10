@@ -2,7 +2,14 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, RoomConfig, ClimateMode, OverrideType } from "../types";
 import { localize } from "../utils/localize";
-import { formatTemp, tempUnit, toDisplay, toCelsius, tempStep, tempRange } from "../utils/temperature";
+import {
+  formatTemp,
+  tempUnit,
+  toDisplay,
+  toCelsius,
+  tempStep,
+  tempRange,
+} from "../utils/temperature";
 
 @customElement("rs-override-section")
 export class RsOverrideSection extends LitElement {
@@ -21,7 +28,7 @@ export class RsOverrideSection extends LitElement {
   @state() private _optimisticOverride: {
     type: OverrideType;
     temp: number;
-    until: number;
+    until: number | null;
   } | null = null;
   @state() private _optimisticClear = false;
 
@@ -60,7 +67,9 @@ export class RsOverrideSection extends LitElement {
       display: flex;
       align-items: center;
       gap: 6px;
-      transition: background 0.15s, border-color 0.15s;
+      transition:
+        background 0.15s,
+        border-color 0.15s;
     }
 
     .override-preset:hover {
@@ -237,12 +246,16 @@ export class RsOverrideSection extends LitElement {
             <button
               class="override-preset ${t} ${isActive ? "active" : ""} ${isPending ? "pending" : ""}"
               ?disabled=${isDisabled}
-              @click=${() => isActive ? this._onClearOverride() : this._onOverridePreset(t)}
+              @click=${() => (isActive ? this._onClearOverride() : this._onOverridePreset(t))}
             >
-              <ha-icon icon=${t === "boost" ? "mdi:fire" : t === "eco" ? "mdi:leaf" : "mdi:thermometer"}></ha-icon>
-              ${t === "boost" ? `${localize("override.comfort", this.language)} ${formatTemp(this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat, this.hass)}${tempUnit(this.hass)}`
-                : t === "eco" ? `${localize("override.eco", this.language)} ${formatTemp(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass)}${tempUnit(this.hass)}`
-                : localize("override.custom", this.language)}
+              <ha-icon
+                icon=${t === "boost" ? "mdi:fire" : t === "eco" ? "mdi:leaf" : "mdi:thermometer"}
+              ></ha-icon>
+              ${t === "boost"
+                ? `${localize("override.comfort", this.language)} ${formatTemp(this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat, this.hass)}${tempUnit(this.hass)}`
+                : t === "eco"
+                  ? `${localize("override.eco", this.language)} ${formatTemp(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass)}${tempUnit(this.hass)}`
+                  : localize("override.custom", this.language)}
             </button>
           `;
         })}
@@ -266,7 +279,9 @@ export class RsOverrideSection extends LitElement {
                 `
               : nothing}
             <div class="override-duration">
-              <span class="override-duration-label">${localize("override.activate_for", this.language)}</span>
+              <span class="override-duration-label"
+                >${localize("override.activate_for", this.language)}</span
+              >
               ${[
                 { label: "1h", hours: 1 },
                 { label: "2h", hours: 2 },
@@ -279,7 +294,7 @@ export class RsOverrideSection extends LitElement {
                   >
                     ${opt.label}
                   </button>
-                `
+                `,
               )}
             </div>
           `
@@ -293,14 +308,18 @@ export class RsOverrideSection extends LitElement {
     } else {
       this._overridePending = type;
       if (type === "custom") {
-        this._overrideCustomTemp = this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat;
+        this._overrideCustomTemp =
+          this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat;
       }
     }
     this._overrideError = "";
   }
 
   private _onOverrideCustomTempInput(e: Event): void {
-    this._overrideCustomTemp = toCelsius(Number((e.target as HTMLInputElement).value) || toDisplay(21, this.hass), this.hass);
+    this._overrideCustomTemp = toCelsius(
+      Number((e.target as HTMLInputElement).value) || toDisplay(21, this.hass),
+      this.hass,
+    );
   }
 
   private async _onOverrideActivate(hours: number): Promise<void> {
@@ -342,6 +361,7 @@ export class RsOverrideSection extends LitElement {
       this._optimisticOverride = null;
       this._overrideError =
         err instanceof Error ? err.message : localize("override.error_set", this.language);
+      // eslint-disable-next-line no-console
       console.error("Override set failed:", err);
     }
   }
@@ -363,14 +383,13 @@ export class RsOverrideSection extends LitElement {
       this._optimisticClear = false;
       this._overrideError =
         err instanceof Error ? err.message : localize("override.error_clear", this.language);
+      // eslint-disable-next-line no-console
       console.error("Override clear failed:", err);
     }
   }
 
   private _fireRoomUpdated(): void {
-    this.dispatchEvent(
-      new CustomEvent("room-updated", { bubbles: true, composed: true })
-    );
+    this.dispatchEvent(new CustomEvent("room-updated", { bubbles: true, composed: true }));
   }
 }
 

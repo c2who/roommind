@@ -74,9 +74,7 @@ class MPCOptimizer:
             cool_target_series = list(heat_target_series)
 
         # Clamp inverted targets: cool must be >= heat
-        cool_target_series = [
-            max(h, c) for h, c in zip(heat_target_series, cool_target_series)
-        ]
+        cool_target_series = [max(h, c) for h, c in zip(heat_target_series, cool_target_series, strict=False)]
 
         n_blocks = min(len(T_outdoor_series), len(heat_target_series), len(cool_target_series))
         if n_blocks == 0 or not math.isfinite(T_room):
@@ -120,9 +118,15 @@ class MPCOptimizer:
                 future_residual = q_residual[i:] if q_residual else None
                 for action in available:
                     cost = self._evaluate_action(
-                        action, current_temp, T_out, heat_tgt, cool_tgt,
-                        T_outdoor_series[i:], heat_target_series[i:],
-                        cool_target_series[i:], dt_minutes,
+                        action,
+                        current_temp,
+                        T_out,
+                        heat_tgt,
+                        cool_tgt,
+                        T_outdoor_series[i:],
+                        heat_target_series[i:],
+                        cool_target_series[i:],
+                        dt_minutes,
                         future_solar=future_solar,
                         future_residual=future_residual,
                     )
@@ -134,7 +138,12 @@ class MPCOptimizer:
             # Use heat target for heating power, cool target for cooling power
             pf_target = heat_tgt if best_action == MODE_HEATING else cool_tgt
             pf, _ = self.compute_optimal_power(
-                current_temp, T_out, pf_target, dt_minutes, q_solar=qs, q_residual=qr,
+                current_temp,
+                T_out,
+                pf_target,
+                dt_minutes,
+                q_solar=qs,
+                q_residual=qr,
             )
             if best_action == MODE_IDLE:
                 pf = 0.0
@@ -149,7 +158,11 @@ class MPCOptimizer:
             else:
                 Q = 0.0
             next_temp = self.model.predict(
-                current_temp, T_out, Q, dt_minutes, q_solar=qs,
+                current_temp,
+                T_out,
+                Q,
+                dt_minutes,
+                q_solar=qs,
                 q_residual=qr if Q == 0.0 else 0.0,
             )
             next_temp = max(self.temp_min, min(next_temp, self.temp_max))
@@ -206,7 +219,8 @@ class MPCOptimizer:
             # value sustained heating/cooling over the lookahead horizon.
             block_Q = Q if j < self.min_run_blocks else 0.0
             T = self.model.predict(
-                T, future_T_outdoor[j],
+                T,
+                future_T_outdoor[j],
                 block_Q,
                 dt_minutes,
                 q_solar=qs,

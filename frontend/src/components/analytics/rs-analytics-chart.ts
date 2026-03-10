@@ -3,10 +3,14 @@
  */
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, AnalyticsData, AnalyticsDataPoint } from "../../types";
+import type { HomeAssistant, AnalyticsData } from "../../types";
 import { localize } from "../../utils/localize";
 import { infoIconStyles } from "../../styles/info-icon-styles";
-import { buildChartSeries, buildChartOptions, type ChartBuildContext } from "../../utils/chart-builder";
+import {
+  buildChartSeries,
+  buildChartOptions,
+  type ChartBuildContext,
+} from "../../utils/chart-builder";
 
 @customElement("rs-analytics-chart")
 export class RsAnalyticsChart extends LitElement {
@@ -22,9 +26,7 @@ export class RsAnalyticsChart extends LitElement {
 
   render() {
     const l = this.language;
-    const points = this.data
-      ? [...this.data.history, ...this.data.detail]
-      : [];
+    const points = this.data ? [...this.data.history, ...this.data.detail] : [];
     const allPoints = [...points, ...(this.data?.forecast ?? [])];
 
     const chartCtx: ChartBuildContext = {
@@ -35,9 +37,7 @@ export class RsAnalyticsChart extends LitElement {
       rangeEnd: this.rangeEnd,
       forecast: this.data?.forecast,
     };
-    const allSeries = points.length > 0
-      ? buildChartSeries(points, chartCtx)
-      : [];
+    const allSeries = points.length > 0 ? buildChartSeries(points, chartCtx) : [];
 
     const visibleY: number[] = [];
     const displaySeries = allSeries.map((s) => {
@@ -45,7 +45,10 @@ export class RsAnalyticsChart extends LitElement {
       const ls = (s.lineStyle as Record<string, unknown>) || {};
       const isEvent = id.endsWith("_events");
       if (this._hiddenSeries.has(id)) {
-        const hidden: Record<string, unknown> = { ...s, lineStyle: { ...ls, width: 0, opacity: 0 } };
+        const hidden: Record<string, unknown> = {
+          ...s,
+          lineStyle: { ...ls, width: 0, opacity: 0 },
+        };
         if (s.areaStyle) {
           hidden.areaStyle = { ...(s.areaStyle as Record<string, unknown>), opacity: 0 };
         }
@@ -74,7 +77,9 @@ export class RsAnalyticsChart extends LitElement {
           <ha-icon
             class="info-icon chart-info-toggle ${this._chartInfoExpanded ? "info-active" : ""}"
             icon="mdi:information-outline"
-            @click=${() => { this._chartInfoExpanded = !this._chartInfoExpanded; }}
+            @click=${() => {
+              this._chartInfoExpanded = !this._chartInfoExpanded;
+            }}
           ></ha-icon>
         </div>
         ${this._chartInfoExpanded
@@ -130,11 +135,13 @@ export class RsAnalyticsChart extends LitElement {
     return paragraphs.map(
       (p) =>
         html`<p>
-          ${p.split(/(\*\*.*?\*\*)/).map((part) =>
-            part.startsWith("**") && part.endsWith("**")
-              ? html`<strong>${part.slice(2, -2)}</strong>`
-              : part,
-          )}
+          ${p
+            .split(/(\*\*.*?\*\*)/)
+            .map((part) =>
+              part.startsWith("**") && part.endsWith("**")
+                ? html`<strong>${part.slice(2, -2)}</strong>`
+                : part,
+            )}
         </p>`,
     );
   }

@@ -17,6 +17,7 @@ def vm(hass):
 
 # --- property: cycling_eids ---
 
+
 def test_cycling_eids_empty(vm):
     assert vm.cycling_eids == set()
 
@@ -29,6 +30,7 @@ def test_cycling_eids_returns_set(vm):
 
 # --- property: actuation_dirty setter ---
 
+
 def test_actuation_dirty_setter(vm):
     assert vm.actuation_dirty is False
     vm.actuation_dirty = True
@@ -38,6 +40,7 @@ def test_actuation_dirty_setter(vm):
 
 
 # --- get_actuation_data ---
+
 
 def test_get_actuation_data_empty(vm):
     assert vm.get_actuation_data() == {}
@@ -52,6 +55,7 @@ def test_get_actuation_data_returns_copy(vm):
 
 
 # --- async_finish_cycles: exception handling ---
+
 
 @pytest.mark.asyncio
 async def test_finish_cycles_exception_on_turn_off(vm):
@@ -73,6 +77,7 @@ async def test_finish_cycles_exception_on_turn_off(vm):
 
 # --- async_check_and_cycle: exception on disable close ---
 
+
 @pytest.mark.asyncio
 async def test_check_and_cycle_exception_on_disable_close(vm):
     """Exception closing active cycle on disable is caught."""
@@ -84,13 +89,15 @@ async def test_check_and_cycle_exception_on_disable_close(vm):
         side_effect=Exception("turn off failed"),
     ):
         await vm.async_check_and_cycle(
-            rooms={}, settings={"valve_protection_enabled": False},
+            rooms={},
+            settings={"valve_protection_enabled": False},
         )
 
     assert vm._cycling == {}
 
 
 # --- async_check_and_cycle: exception starting cycle ---
+
 
 @pytest.mark.asyncio
 async def test_check_and_cycle_exception_starting_cycle(vm):
@@ -113,3 +120,73 @@ async def test_check_and_cycle_exception_starting_cycle(vm):
         await vm.async_check_and_cycle(rooms, settings)
 
     assert "climate.trv1" not in vm._cycling
+
+
+# --- dual-setpoint support (#78) ---
+
+
+@pytest.mark.asyncio
+async def test_cycle_dual_setpoint_trv(vm):
+    """TRV with target_temp_low uses dual-setpoint set_temperature call."""
+    rooms = {"living": {"thermostats": ["climate.trv1"]}}
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 0,
+    }
+
+    state = MagicMock()
+    state.attributes = {
+        "hvac_modes": ["heat", "off"],
+        "target_temp_low": 18.0,
+        "target_temp_high": 22.0,
+        "max_temp": 30.0,
+    }
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.celsius_to_ha_temp",
+        return_value=30.0,
+    ):
+        await vm.async_check_and_cycle(rooms, settings)
+
+    calls = vm.hass.services.async_call.call_args_list
+    set_temp_call = next(c for c in calls if c[0][1] == "set_temperature")
+    data = set_temp_call[0][2]
+    assert "target_temp_low" in data
+    assert "target_temp_high" in data
+    assert "temperature" not in data
+    assert data["target_temp_low"] == 30.0
+    assert data["target_temp_high"] == 30.0
+
+
+@pytest.mark.asyncio
+async def test_cycle_single_setpoint_trv_unchanged(vm):
+    """Standard TRV without target_temp_low uses single-setpoint call."""
+    rooms = {"living": {"thermostats": ["climate.trv1"]}}
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 0,
+    }
+
+    state = MagicMock()
+    state.attributes = {
+        "hvac_modes": ["heat", "off"],
+        "temperature": 20.0,
+        "max_temp": 30.0,
+    }
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.celsius_to_ha_temp",
+        return_value=30.0,
+    ):
+        await vm.async_check_and_cycle(rooms, settings)
+
+    calls = vm.hass.services.async_call.call_args_list
+    set_temp_call = next(c for c in calls if c[0][1] == "set_temperature")
+    data = set_temp_call[0][2]
+    assert "temperature" in data
+    assert "target_temp_low" not in data
+    assert "target_temp_high" not in data

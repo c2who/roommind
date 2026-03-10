@@ -4,6 +4,7 @@
  */
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import "../shared/rs-badge";
 
 @customElement("rs-settings-panel")
 export class RsSettingsPanel extends LitElement {
@@ -20,13 +21,11 @@ export class RsSettingsPanel extends LitElement {
           <ha-icon .icon=${this.icon}></ha-icon>
           <span>${this.heading}</span>
           ${this.badge
-            ? html`<span class="badge" title=${this.badgeHint}>${this.badge}</span>`
+            ? html`<rs-badge .label=${this.badge} .hint=${this.badgeHint}></rs-badge>`
             : nothing}
         </div>
         <div class="panel-content">
-          ${this.intro
-            ? html`<p class="section-intro">${this.intro}</p>`
-            : nothing}
+          ${this.intro ? html`<p class="section-intro">${this.intro}</p>` : nothing}
           <slot></slot>
         </div>
       </ha-expansion-panel>
@@ -34,7 +33,9 @@ export class RsSettingsPanel extends LitElement {
   }
 
   static styles = css`
-    :host { display: block; }
+    :host {
+      display: block;
+    }
 
     .panel-header {
       display: flex;
@@ -49,25 +50,14 @@ export class RsSettingsPanel extends LitElement {
       font-weight: 500;
     }
 
-    .badge {
-      font-size: 10px;
-      font-weight: 600;
-      color: var(--primary-color);
-      background: color-mix(in srgb, var(--primary-color) 12%, transparent);
-      padding: 2px 6px;
-      border-radius: 4px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      cursor: default;
-    }
-
     .panel-content {
       padding: 16px 16px 16px;
     }
 
     .section-intro {
       color: var(--secondary-text-color);
-      font-size: 13px; line-height: 1.5;
+      font-size: 13px;
+      line-height: 1.5;
       margin: 0 0 16px;
       padding: 2px 0 2px 12px;
       border-left: 3px solid var(--divider-color);

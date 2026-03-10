@@ -60,7 +60,7 @@ export class RsConfirmButton extends LitElement {
       new CustomEvent("confirmed", {
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 }

@@ -9,15 +9,15 @@ export function tempUnit(hass: HomeAssistant): string {
 }
 
 export function toDisplay(celsius: number, hass: HomeAssistant): number {
-  return usesFahrenheit(hass) ? celsius * 9 / 5 + 32 : celsius;
+  return usesFahrenheit(hass) ? (celsius * 9) / 5 + 32 : celsius;
 }
 
 export function toCelsius(display: number, hass: HomeAssistant): number {
-  return usesFahrenheit(hass) ? (display - 32) * 5 / 9 : display;
+  return usesFahrenheit(hass) ? ((display - 32) * 5) / 9 : display;
 }
 
 export function toDisplayDelta(celsiusDelta: number, hass: HomeAssistant): number {
-  return usesFahrenheit(hass) ? celsiusDelta * 9 / 5 : celsiusDelta;
+  return usesFahrenheit(hass) ? (celsiusDelta * 9) / 5 : celsiusDelta;
 }
 
 export function formatTemp(celsius: number, hass: HomeAssistant, decimals = 1): string {

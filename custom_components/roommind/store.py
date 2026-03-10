@@ -10,10 +10,8 @@ from homeassistant.helpers.storage import Store
 from .const import (
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
-    DEFAULT_COMFORT_TEMP,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
-    DEFAULT_ECO_TEMP,
     DOMAIN,
 )
 
@@ -39,7 +37,7 @@ class RoomMindStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialise the store."""
-        self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._store: Store[dict] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._data: dict[str, dict] = {}
         self._settings: dict = {}
         self._thermal_data: dict = {}
@@ -57,7 +55,9 @@ class RoomMindStore:
 
     async def _async_save(self) -> None:
         """Persist current room data to the HA store."""
-        await self._store.async_save({"rooms": self._data, "settings": self._settings, "thermal_data": self._thermal_data})
+        await self._store.async_save(
+            {"rooms": self._data, "settings": self._settings, "thermal_data": self._thermal_data}
+        )
 
     def get_rooms(self) -> dict[str, dict]:
         """Return a deep copy of all rooms (with migration applied)."""
@@ -149,6 +149,17 @@ class RoomMindStore:
                 "presence_persons": config.get("presence_persons", []),
                 "display_name": config.get("display_name", ""),
                 "heating_system_type": config.get("heating_system_type", ""),
+                "covers": config.get("covers", []),
+                "covers_auto_enabled": config.get("covers_auto_enabled", False),
+                "covers_deploy_threshold": config.get("covers_deploy_threshold", 1.5),
+                "covers_min_position": config.get("covers_min_position", 0),
+                "covers_outdoor_min_temp": config.get("covers_outdoor_min_temp", 10.0),
+                "covers_override_minutes": config.get("covers_override_minutes", 60),
+                "cover_schedules": config.get("cover_schedules", []),
+                "cover_schedule_selector_entity": config.get("cover_schedule_selector_entity", ""),
+                "covers_night_close": config.get("covers_night_close", False),
+                "covers_night_position": config.get("covers_night_position", 0),
+                "is_outdoor": config.get("is_outdoor", False),
             }
             self._data[area_id] = room
             await self._async_save()

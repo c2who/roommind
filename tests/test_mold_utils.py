@@ -1,7 +1,5 @@
 """Tests for mold_utils.py — mold risk calculation utilities."""
 
-import math
-
 import pytest
 
 from custom_components.roommind.utils.mold_utils import (
@@ -12,8 +10,8 @@ from custom_components.roommind.utils.mold_utils import (
     surface_rh,
 )
 
-
 # --- dew_point ---
+
 
 def test_dew_point_standard_conditions():
     """21°C / 60% RH → dew point ≈ 12.9°C."""
@@ -40,6 +38,7 @@ def test_dew_point_cold_conditions():
 
 
 # --- surface_rh ---
+
 
 def test_surface_rh_at_dew_point():
     """Surface at dew point → ~100% RH."""
@@ -71,6 +70,7 @@ def test_surface_rh_clamped_to_100():
 
 # --- estimate_surface_temp ---
 
+
 def test_estimate_surface_temp_standard():
     """20°C inside, -5°C outside, f_Rsi=0.70 → 12.5°C surface."""
     t_surface = estimate_surface_temp(20.0, -5.0, f_rsi=0.70)
@@ -96,6 +96,7 @@ def test_estimate_surface_temp_warm_outside():
 
 
 # --- calculate_mold_risk ---
+
 
 def test_calculate_mold_risk_ok():
     """Normal conditions: 20°C, 45% RH, 10°C outside → ok."""
@@ -150,6 +151,7 @@ def test_calculate_mold_risk_warm_conditions_ok():
 
 # --- mold_prevention_delta ---
 
+
 def test_mold_prevention_delta_light():
     assert mold_prevention_delta("light") == 1.0
 
@@ -169,12 +171,16 @@ def test_mold_prevention_delta_unknown_falls_back():
 
 # --- boundary value tests ---
 
-@pytest.mark.parametrize("rh_room, t_outdoor, expected_level", [
-    # Just below warning threshold (surface RH < 70%) → ok
-    (50.0, 10.0, "ok"),
-    # Just at/above critical (surface RH >= 80%) → critical
-    (75.0, -5.0, "critical"),
-])
+
+@pytest.mark.parametrize(
+    "rh_room, t_outdoor, expected_level",
+    [
+        # Just below warning threshold (surface RH < 70%) → ok
+        (50.0, 10.0, "ok"),
+        # Just at/above critical (surface RH >= 80%) → critical
+        (75.0, -5.0, "critical"),
+    ],
+)
 def test_calculate_mold_risk_boundary_levels(rh_room, t_outdoor, expected_level):
     """Verify risk level at critical boundary values."""
     level, _srh = calculate_mold_risk(20.0, rh_room, t_outdoor)

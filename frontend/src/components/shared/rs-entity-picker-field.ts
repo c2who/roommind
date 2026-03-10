@@ -39,9 +39,8 @@ export class RsEntityPickerField extends LitElement {
       ></ha-entity-picker>
       ${this.currentValue
         ? html`<div class="current-value">
-            ${this.currentValueLabel
-              ? html`${this.currentValueLabel}: `
-              : nothing}${this.currentValue}
+            ${this.currentValueLabel ? html`${this.currentValueLabel}: ` : nothing}${this
+              .currentValue}
           </div>`
         : nothing}
     `;
@@ -54,7 +53,7 @@ export class RsEntityPickerField extends LitElement {
         detail: e.detail.value ?? "",
         bubbles: true,
         composed: true,
-      })
+      }),
     );
   }
 }

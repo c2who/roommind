@@ -8,17 +8,21 @@ export function getSelectValue(e: Event): string {
 }
 
 export function fireSaveStatus(element: HTMLElement, status: "saving" | "saved" | "error") {
-  element.dispatchEvent(new CustomEvent("save-status", {
-    detail: { status },
-    bubbles: true,
-    composed: true,
-  }));
+  element.dispatchEvent(
+    new CustomEvent("save-status", {
+      detail: { status },
+      bubbles: true,
+      composed: true,
+    }),
+  );
 }
 
 export function openEntityInfo(element: HTMLElement, entityId: string) {
-  element.dispatchEvent(new CustomEvent("hass-more-info", {
-    bubbles: true,
-    composed: true,
-    detail: { entityId },
-  }));
+  element.dispatchEvent(
+    new CustomEvent("hass-more-info", {
+      bubbles: true,
+      composed: true,
+      detail: { entityId },
+    }),
+  );
 }

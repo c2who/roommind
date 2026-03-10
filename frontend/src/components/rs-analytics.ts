@@ -59,7 +59,12 @@ export class RsAnalytics extends LitElement {
         );
       }
     }
-    if (autoSelected || changedProps.has("_selectedRoom") || changedProps.has("_rangeStart") || changedProps.has("_rangeEnd")) {
+    if (
+      autoSelected ||
+      changedProps.has("_selectedRoom") ||
+      changedProps.has("_rangeStart") ||
+      changedProps.has("_rangeEnd")
+    ) {
       if (this._selectedRoom) {
         this._fetchData();
       }
@@ -151,6 +156,7 @@ export class RsAnalytics extends LitElement {
       const result = await this.hass.callWS<AnalyticsData>(this._buildWsParams());
       this._data = result;
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] fetchData:", err);
       this._data = null;
     } finally {
@@ -165,6 +171,7 @@ export class RsAnalytics extends LitElement {
       this._data = result;
       this._chartAnchor = Date.now();
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.debug("[RoomMind] silentRefresh:", err);
     }
   }
