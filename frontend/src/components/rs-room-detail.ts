@@ -68,6 +68,9 @@ export class RsRoomDetail extends LitElement {
   @state() private _coversNightPosition = 0;
   @state() private _editingCovers = false;
   @state() private _isOutdoor = false;
+  @state() private _anomalySuppressHeating = true;
+  @state() private _anomalySuppressCooling = true;
+  @state() private _anomalySuppressionMinutes = 10;
 
   private _prevAreaId: string | null = null;
   private _saveDebounce?: ReturnType<typeof setTimeout>;
@@ -322,6 +325,9 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = this.config.covers_night_close ?? false;
       this._coversNightPosition = this.config.covers_night_position ?? 0;
       this._isOutdoor = this.config.is_outdoor ?? false;
+      this._anomalySuppressHeating = this.config.anomaly_suppress_heating ?? true;
+      this._anomalySuppressCooling = this.config.anomaly_suppress_cooling ?? true;
+      this._anomalySuppressionMinutes = this.config.anomaly_suppression_minutes ?? 10;
     } else {
       this._selectedThermostats = new Set();
       this._selectedAcs = new Set();
@@ -352,6 +358,9 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = false;
       this._coversNightPosition = 0;
       this._isOutdoor = false;
+      this._anomalySuppressHeating = true;
+      this._anomalySuppressCooling = true;
+      this._anomalySuppressionMinutes = 10;
     }
     this._dirty = false;
 
@@ -531,6 +540,52 @@ export class RsRoomDetail extends LitElement {
                   @presence-persons-changed=${this._onPresencePersonsChanged}
                   @editing-changed=${this._onPresenceEditingChanged}
                 ></rs-presence-section>
+
+                <rs-section-card
+                  icon="mdi:thermometer-alert"
+                  .heading=${localize("anomaly.section_title", this.hass.language)}
+                >
+                  <div style="padding: 0 16px 16px;">
+                    <div style="font-size: 13px; color: var(--secondary-text-color); margin-bottom: 12px; line-height: 1.5;">
+                      ${localize("anomaly.section_hint", this.hass.language)}
+                    </div>
+                    <rs-toggle-row
+                      .label=${localize("anomaly.suppress_heating", this.hass.language)}
+                      .description=${localize("anomaly.suppress_heating_hint", this.hass.language)}
+                      .checked=${this._anomalySuppressHeating}
+                      @change=${(e: CustomEvent) => {
+                        this._anomalySuppressHeating = (e.target as HTMLElement & { checked: boolean }).checked;
+                        this._autoSave();
+                      }}
+                    ></rs-toggle-row>
+                    <rs-toggle-row
+                      .label=${localize("anomaly.suppress_cooling", this.hass.language)}
+                      .description=${localize("anomaly.suppress_cooling_hint", this.hass.language)}
+                      .checked=${this._anomalySuppressCooling}
+                      @change=${(e: CustomEvent) => {
+                        this._anomalySuppressCooling = (e.target as HTMLElement & { checked: boolean }).checked;
+                        this._autoSave();
+                      }}
+                    ></rs-toggle-row>
+                    ${this._anomalySuppressHeating || this._anomalySuppressCooling
+                      ? html`
+                          <ha-textfield
+                            type="number"
+                            min="1"
+                            max="60"
+                            suffix="min"
+                            .label=${localize("anomaly.suppression_duration", this.hass.language)}
+                            .value=${String(this._anomalySuppressionMinutes)}
+                            @change=${(e: Event) => {
+                              this._anomalySuppressionMinutes = Math.max(1, Math.min(60, parseInt((e.target as HTMLInputElement).value) || 10));
+                              this._autoSave();
+                            }}
+                            style="width: 100%; margin-top: 8px;"
+                          ></ha-textfield>
+                        `
+                      : nothing}
+                  </div>
+                </rs-section-card>
               `
             : nothing}
           ${!this._isOutdoor
@@ -879,6 +934,9 @@ export class RsRoomDetail extends LitElement {
         covers_night_close: this._coversNightClose,
         covers_night_position: this._coversNightPosition,
         is_outdoor: this._isOutdoor,
+        anomaly_suppress_heating: this._anomalySuppressHeating,
+        anomaly_suppress_cooling: this._anomalySuppressCooling,
+        anomaly_suppression_minutes: this._anomalySuppressionMinutes,
       });
 
       this._dirty = false;

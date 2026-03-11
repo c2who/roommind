@@ -67,13 +67,29 @@ class EkfTrainingManager:
         can_heat: bool,
         can_cool: bool,
         dt_minutes: float,
+        anomaly_suppressed: bool = False,
     ) -> None:
         """Process an EKF training step for a room.
 
         Contains the full training decision tree: window open, raw open
-        (within delay), unobservable mode, or normal accumulation.
+        (within delay), anomaly suppressed, unobservable mode, or normal
+        accumulation.
         """
-        if window_open:
+        if anomaly_suppressed:
+            self.flush(
+                area_id,
+                current_temp,
+                T_outdoor,
+                can_heat,
+                can_cool,
+                q_solar,
+                q_residual=q_residual,
+                shading_factor=shading_factor,
+            )
+            self._accumulated_dt.pop(area_id, None)
+            self._accumulated_mode.pop(area_id, None)
+            self._accumulated_pf.pop(area_id, None)
+        elif window_open:
             self.flush(
                 area_id,
                 current_temp,

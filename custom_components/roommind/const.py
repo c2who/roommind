@@ -112,6 +112,11 @@ HEATING_SYSTEM_PROFILES: dict[str, dict[str, float]] = {
 }
 RESIDUAL_HEAT_CUTOFF = 0.02  # below this q_residual is treated as zero
 
+# Anomaly detection: suppress heating/cooling when temperature moves faster than predicted
+DEFAULT_ANOMALY_SUPPRESSION_MINUTES = 10  # how long to hold suppression
+ANOMALY_MIN_CONSECUTIVE = 2  # consecutive cycles needed to trigger (60s at 30s cycle)
+ANOMALY_INNOVATION_FLOOR = 0.3  # minimum innovation threshold in °C
+
 # Blind/cover control
 COVER_SOLAR_MIN: float = 0.15
 COVER_HYSTERESIS: float = 1.0

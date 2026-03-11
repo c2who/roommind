@@ -75,6 +75,9 @@ _ROOM_SAVE_FIELDS = (
     "covers_night_close",
     "covers_night_position",
     "is_outdoor",
+    "anomaly_suppress_heating",
+    "anomaly_suppress_cooling",
+    "anomaly_suppression_minutes",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -174,6 +177,7 @@ async def websocket_list_rooms(
             "mold_surface_rh": live.get("mold_surface_rh"),
             "mold_prevention_active": live.get("mold_prevention_active", False),
             "mold_prevention_delta": live.get("mold_prevention_delta", 0),
+            "anomaly_suppressed": live.get("anomaly_suppressed"),
             "n_observations": live.get("n_observations", 0),
             "blind_position": live.get("blind_position"),
             "cover_auto_paused": live.get("cover_auto_paused", False),
@@ -263,6 +267,11 @@ async def websocket_list_rooms(
         vol.Optional("covers_night_close"): bool,
         vol.Optional("covers_night_position"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
         vol.Optional("is_outdoor"): bool,
+        vol.Optional("anomaly_suppress_heating"): bool,
+        vol.Optional("anomaly_suppress_cooling"): bool,
+        vol.Optional("anomaly_suppression_minutes"): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=60)
+        ),
     }
 )
 @websocket_api.async_response

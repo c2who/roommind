@@ -50,6 +50,7 @@ export interface RoomLiveData {
   mold_surface_rh: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
+  anomaly_suppressed: "heating" | "cooling" | null;
   blind_position: number | null;
   cover_auto_paused: boolean;
   cover_forced_reason: string;
@@ -92,6 +93,9 @@ export interface RoomConfig {
   covers_night_close?: boolean;
   covers_night_position?: number;
   is_outdoor?: boolean;
+  anomaly_suppress_heating?: boolean;
+  anomaly_suppress_cooling?: boolean;
+  anomaly_suppression_minutes?: number;
   live?: RoomLiveData;
 }
 

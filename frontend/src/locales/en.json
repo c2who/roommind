@@ -158,7 +158,9 @@
   "devices.heating_system_type_boost_hint": "Tip: If the heating system has changed, you can accelerate re-learning under Settings.",
 
   "hero.window_open": "Window open - paused",
+  "hero.anomaly_suppressed": "Anomaly detected — paused",
   "card.window_open": "Window open",
+  "card.anomaly_suppressed": "Anomaly — paused",
 
   "room.section.covers": "Covers & Blinds",
   "covers.section_title": "Covers & Blinds",
@@ -379,6 +381,14 @@
   "card.mold_critical": "Mold danger!",
   "card.mold_prevention": "Mold prevention +{delta}{unit}",
   "room.mold_surface_rh": "Est. surface humidity: {value}%",
+
+  "anomaly.section_title": "Anomaly Detection",
+  "anomaly.section_hint": "Detects when the room temperature changes faster than the model predicts (e.g. passive cooling from adjacent rooms being aired) and temporarily suppresses the inappropriate heating or cooling action.",
+  "anomaly.suppress_heating": "Suppress heating on anomalous cooling",
+  "anomaly.suppress_heating_hint": "Prevent heating when the room cools faster than expected (e.g. cold air from adjacent rooms).",
+  "anomaly.suppress_cooling": "Suppress cooling on anomalous warming",
+  "anomaly.suppress_cooling_hint": "Prevent cooling when the room warms faster than expected.",
+  "anomaly.suppression_duration": "Suppression duration",
 
   "passive_devices.section_title": "Passive Observations",
   "passive_devices.section_hint": "External devices that affect this room's temperature but are not controlled by RoomMind. Used to improve model training accuracy.",
