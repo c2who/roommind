@@ -49,6 +49,7 @@ export class RoomMindPanel extends LitElement {
   @state() private _controlMode: "mpc" | "bangbang" = "bangbang";
   @state() private _climateControlActive = true;
   @state() private _presenceEnabled = false;
+  @state() private _valveProtectionEnabled = false;
   @state() private _anyoneHome = true;
   @state() private _presencePersons: string[] = [];
   @state() private _presenceAwayAction: "eco" | "off" = "eco";
@@ -461,6 +462,7 @@ export class RoomMindPanel extends LitElement {
             .presenceEnabled=${this._presenceEnabled}
             .presencePersons=${this._presencePersons}
             .climateControlActive=${this._climateControlActive}
+            .valveProtectionEnabled=${this._valveProtectionEnabled}
             @back-clicked=${this._onBackFromDetail}
             @room-updated=${this._onRoomUpdated}
           ></rs-room-detail>
@@ -751,6 +753,7 @@ export class RoomMindPanel extends LitElement {
         presence_persons: string[];
         presence_away_action: "eco" | "off";
         schedule_off_action: "eco" | "off";
+        valve_protection_enabled: boolean;
       }>({
         type: "roommind/rooms/list",
       });
@@ -764,6 +767,7 @@ export class RoomMindPanel extends LitElement {
       this._controlMode = result.control_mode ?? "bangbang";
       this._climateControlActive = result.climate_control_active ?? true;
       this._presenceEnabled = result.presence_enabled ?? false;
+      this._valveProtectionEnabled = result.valve_protection_enabled ?? false;
       this._anyoneHome = result.anyone_home ?? true;
       this._presencePersons = result.presence_persons ?? [];
       this._presenceAwayAction = result.presence_away_action ?? "eco";

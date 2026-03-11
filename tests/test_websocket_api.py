@@ -81,6 +81,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
             "presence_away_action": "eco",
             "schedule_off_action": "eco",
             "anyone_home": True,
+            "valve_protection_enabled": False,
         },
     )
 

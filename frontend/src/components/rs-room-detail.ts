@@ -30,6 +30,7 @@ export class RsRoomDetail extends LitElement {
   @property({ type: Boolean }) public presenceEnabled = false;
   @property({ attribute: false }) public presencePersons: string[] = [];
   @property({ type: Boolean }) public climateControlActive = true;
+  @property({ type: Boolean }) public valveProtectionEnabled = false;
 
   @state() private _selectedThermostats: Set<string> = new Set();
   @state() private _selectedAcs: Set<string> = new Set();
@@ -64,6 +65,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _coversNightPosition = 0;
   @state() private _editingCovers = false;
   @state() private _isOutdoor = false;
+  @state() private _valveProtectionExclude: Set<string> = new Set();
 
   private _prevAreaId: string | null = null;
   private _saveDebounce?: ReturnType<typeof setTimeout>;
@@ -216,6 +218,7 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = this.config.covers_night_close ?? false;
       this._coversNightPosition = this.config.covers_night_position ?? 0;
       this._isOutdoor = this.config.is_outdoor ?? false;
+      this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
     } else {
       this._selectedThermostats = new Set();
       this._selectedAcs = new Set();
@@ -244,6 +247,7 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = false;
       this._coversNightPosition = 0;
       this._isOutdoor = false;
+      this._valveProtectionExclude = new Set();
     }
     this._dirty = false;
 
@@ -400,6 +404,8 @@ export class RsRoomDetail extends LitElement {
                     .windowOpenDelay=${this._windowOpenDelay}
                     .windowCloseDelay=${this._windowCloseDelay}
                     .heatingSystemType=${this._heatingSystemType}
+                    .valveProtectionExclude=${this._valveProtectionExclude}
+                    .valveProtectionEnabled=${this.valveProtectionEnabled}
                     @climate-toggle=${this._onClimateToggle}
                     @device-type-change=${this._onDeviceTypeChange}
                     @sensor-selected=${this._onSensorSelected}
@@ -408,6 +414,7 @@ export class RsRoomDetail extends LitElement {
                     @window-close-delay-changed=${this._onWindowCloseDelayChanged}
                     @external-entity-added=${this._onExternalEntityAdded}
                     @heating-system-type-changed=${this._onHeatingSystemTypeChanged}
+                    @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
                   ></rs-device-section>
                 </rs-section-card>
 
@@ -567,6 +574,12 @@ export class RsRoomDetail extends LitElement {
       newAcs.delete(entityId);
       this._selectedThermostats = newThermostats;
       this._selectedAcs = newAcs;
+      // Also remove from valve protection exclude list
+      if (this._valveProtectionExclude.has(entityId)) {
+        const nextExclude = new Set(this._valveProtectionExclude);
+        nextExclude.delete(entityId);
+        this._valveProtectionExclude = nextExclude;
+      }
     }
     this._autoSave();
   }
@@ -582,6 +595,12 @@ export class RsRoomDetail extends LitElement {
     } else {
       newThermostats.delete(entityId);
       newAcs.add(entityId);
+      // Moving to AC: remove from valve protection exclude list
+      if (this._valveProtectionExclude.has(entityId)) {
+        const nextExclude = new Set(this._valveProtectionExclude);
+        nextExclude.delete(entityId);
+        this._valveProtectionExclude = nextExclude;
+      }
     }
 
     this._selectedThermostats = newThermostats;
@@ -622,6 +641,18 @@ export class RsRoomDetail extends LitElement {
 
   private _onHeatingSystemTypeChanged(e: CustomEvent<{ value: string }>) {
     this._heatingSystemType = e.detail.value;
+    this._autoSave();
+  }
+
+  private _onValveProtectionExcludeToggle(e: CustomEvent<{ entityId: string; excluded: boolean }>) {
+    const { entityId, excluded } = e.detail;
+    const next = new Set(this._valveProtectionExclude);
+    if (excluded) {
+      next.add(entityId);
+    } else {
+      next.delete(entityId);
+    }
+    this._valveProtectionExclude = next;
     this._autoSave();
   }
 
@@ -748,6 +779,7 @@ export class RsRoomDetail extends LitElement {
         covers_night_close: this._coversNightClose,
         covers_night_position: this._coversNightPosition,
         is_outdoor: this._isOutdoor,
+        valve_protection_exclude: [...this._valveProtectionExclude],
       });
 
       this._dirty = false;

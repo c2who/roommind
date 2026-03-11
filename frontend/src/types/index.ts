@@ -84,6 +84,7 @@ export interface RoomConfig {
   covers_night_close?: boolean;
   covers_night_position?: number;
   is_outdoor?: boolean;
+  valve_protection_exclude?: string[];
   live?: RoomLiveData;
 }
 

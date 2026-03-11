@@ -395,3 +395,13 @@ async def test_is_outdoor_default(store):
 
     outdoor = await store.async_save_room("balkon", {"is_outdoor": True})
     assert outdoor["is_outdoor"] is True
+
+
+@pytest.mark.asyncio
+async def test_save_room_defaults_valve_protection_exclude(store):
+    """Saving a room without valve_protection_exclude defaults to empty list."""
+    await store.async_load()
+
+    room = await store.async_save_room("wohnzimmer", {"thermostats": ["climate.wz_trv"]})
+
+    assert room["valve_protection_exclude"] == []

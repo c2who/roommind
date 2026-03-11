@@ -204,6 +204,7 @@ async def websocket_list_rooms(
             "presence_away_action": settings.get("presence_away_action", "eco"),
             "schedule_off_action": settings.get("schedule_off_action", "eco"),
             "anyone_home": _compute_anyone_home(hass, settings),
+            "valve_protection_enabled": settings.get("valve_protection_enabled", False),
         },
     )
 
@@ -251,6 +252,7 @@ async def websocket_list_rooms(
         vol.Optional("covers_night_close"): bool,
         vol.Optional("covers_night_position"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
         vol.Optional("is_outdoor"): bool,
+        vol.Optional("valve_protection_exclude"): [str],
     }
 )
 @websocket_api.async_response

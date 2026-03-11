@@ -563,9 +563,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             has_override=has_override,
         )
 
-        # Track valve actuation during normal heating
+        # Track valve actuation during normal heating (skip excluded entities)
         if mode == MODE_HEATING:
-            self._valve_manager.record_heating(room.get("thermostats", []))
+            excluded = set(room.get("valve_protection_exclude", []))
+            heating_eids = [eid for eid in room.get("thermostats", []) if eid not in excluded]
+            self._valve_manager.record_heating(heating_eids)
 
         # Determine mode for EKF training: when control is disabled, use
         # observed device state so self-regulating thermostats don't corrupt

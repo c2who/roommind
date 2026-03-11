@@ -91,11 +91,16 @@ class ValveManager:
         threshold = interval_days * 86400
         now = time.time()
 
-        # Collect all configured TRV entity IDs
+        # Collect all configured TRV entity IDs, excluding entities marked
+        # in *any* room (a boiler excluded in one room must not be cycled
+        # even if it also appears in another room).
         all_trvs: set[str] = set()
+        all_excluded: set[str] = set()
         for room in rooms.values():
+            all_excluded.update(room.get("valve_protection_exclude", []))
             for eid in room.get("thermostats", []):
                 all_trvs.add(eid)
+        all_trvs -= all_excluded
 
         # Start cycling stale valves
         for eid in all_trvs:

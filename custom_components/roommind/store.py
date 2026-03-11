@@ -160,6 +160,7 @@ class RoomMindStore:
                 "covers_night_close": config.get("covers_night_close", False),
                 "covers_night_position": config.get("covers_night_position", 0),
                 "is_outdoor": config.get("is_outdoor", False),
+                "valve_protection_exclude": config.get("valve_protection_exclude", []),
             }
             self._data[area_id] = room
             await self._async_save()
