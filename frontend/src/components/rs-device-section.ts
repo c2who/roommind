@@ -936,6 +936,9 @@ export class RsDeviceSection extends LitElement {
 
   private _entityFilter = (entity: { entity_id: string }): boolean => {
     const id = entity.entity_id;
+    // Exclude RoomMind's own entities to prevent self-assignment
+    const idAfterDot = id.substring(id.indexOf(".") + 1);
+    if (idAfterDot.startsWith("roommind_")) return false;
     // Exclude already-selected entities
     if (this.selectedThermostats.has(id) || this.selectedAcs.has(id)) return false;
     if (this.selectedTempSensor === id) return false;

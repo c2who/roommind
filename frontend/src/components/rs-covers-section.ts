@@ -234,7 +234,9 @@ export class RsCoverSection extends LitElement {
   }
 
   private _entityFilter = (entity: { entity_id: string }): boolean => {
-    return entity.entity_id.startsWith("cover.") && !this.selectedCovers.has(entity.entity_id);
+    const id = entity.entity_id;
+    if (id.startsWith("cover.roommind_")) return false;
+    return id.startsWith("cover.") && !this.selectedCovers.has(id);
   };
 
   private _renderCoverRow(entityId: string, external: boolean) {

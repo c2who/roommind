@@ -280,6 +280,27 @@ async def websocket_save_room(
         if key in msg:
             config[key] = msg[key]
 
+    # Reject RoomMind's own entities to prevent self-assignment (#86)
+    own_prefix = f"{DOMAIN}_"
+    for field in ("thermostats", "acs", "window_sensors", "covers"):
+        for eid in config.get(field, []):
+            if eid.split(".", 1)[-1].startswith(own_prefix):
+                connection.send_error(
+                    msg["id"],
+                    "invalid_entity",
+                    f"Cannot assign RoomMind's own entity '{eid}' to a room",
+                )
+                return
+    for field in ("temperature_sensor", "humidity_sensor"):
+        eid = config.get(field, "")
+        if eid and eid.split(".", 1)[-1].startswith(own_prefix):
+            connection.send_error(
+                msg["id"],
+                "invalid_entity",
+                f"Cannot assign RoomMind's own entity '{eid}' to a room",
+            )
+            return
+
     room = await store.async_save_room(area_id, config)
 
     # Notify coordinator to create/update sensor entities for the room
