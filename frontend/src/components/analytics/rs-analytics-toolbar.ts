@@ -82,7 +82,7 @@ export class RsAnalyticsToolbar extends LitElement {
           @selected=${this._onRoomSelected}
           @closed=${(e: Event) => e.stopPropagation()}
         >
-          ${rooms.map((r) => html` <ha-list-item .value=${r.area_id}>${r.name}</ha-list-item> `)}
+          ${rooms.map((r) => html` <ha-list-item value=${r.area_id}>${r.name}</ha-list-item> `)}
         </ha-select>
       </div>
     `;
