@@ -415,6 +415,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Read current cover positions for shading factor
         cover_eids: list[str] = room.get("covers", [])
+        covers_sensor_only = room.get("covers_sensor_only", False)
         cover_pos_result = self._cover_orchestrator.read_positions(area_id, room)
         shading_factor = cover_pos_result.shading_factor
 
@@ -605,6 +606,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             q_solar=self._current_q_solar,
             predicted_peak_temp=controller.predicted_peak_temp,
             has_override=has_override,
+            sensor_only=covers_sensor_only,
         )
 
         # Track valve actuation during normal heating
@@ -719,10 +721,23 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "anomaly_suppressed": anomaly_suppressed,
             "shading_factor": shading_factor,
             "n_observations": self._model_manager.get_n_observations(area_id),
-            "blind_position": (self._cover_orchestrator.get_current_position(area_id) if cover_eids else None),
+            "blind_position": (
+                self._cover_orchestrator.get_current_position(area_id)
+                if cover_eids
+                else (cover_result.decision.target_position if covers_sensor_only and room.get("covers_auto_enabled", False) else None)
+            ),
             "cover_auto_paused": (self._cover_orchestrator.is_user_override_active(area_id) if cover_eids else False),
-            "cover_forced_reason": (cover_result.forced_reason if cover_eids else ""),
-            "active_cover_schedule_index": (cover_result.active_cover_schedule_index if cover_eids else -1),
+            "cover_forced_reason": (cover_result.forced_reason if (cover_eids or covers_sensor_only) else ""),
+            "active_cover_schedule_index": (cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1),
+            "cover_shading_active": (
+                room.get("covers_auto_enabled", False)
+                and cover_result.decision.target_position < 100
+            ),
+            "cover_shading_position": (
+                cover_result.decision.target_position
+                if room.get("covers_auto_enabled", False)
+                else None
+            ),
         }
 
     @staticmethod
@@ -1080,6 +1095,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
                 self.async_add_switch_entities(_create_room_switches(self, area_id))
                 self._switch_entity_areas.add(area_id)
+        if has_covers:
             if (
                 area_id not in self._binary_sensor_entity_areas
                 and hasattr(self, "async_add_binary_sensor_entities")
@@ -1087,7 +1103,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ):
                 from .binary_sensor import _create_room_binary_sensors
 
-                self.async_add_binary_sensor_entities(_create_room_binary_sensors(self, area_id))
+                self.async_add_binary_sensor_entities(
+                    _create_room_binary_sensors(self, area_id, room)
+                )
                 self._binary_sensor_entity_areas.add(area_id)
 
         await self.async_request_refresh()
@@ -1168,6 +1186,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if suffix in always_valid:
                 continue
             if suffix in cover_only and room.get("covers"):
+                continue
+            # Per-cover shading sensors: _shading_{sanitized_eid}
+            if suffix.startswith("_shading_") and room.get("covers"):
                 continue
 
             # Entity doesn't match any valid type — orphaned

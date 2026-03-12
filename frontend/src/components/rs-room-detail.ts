@@ -66,6 +66,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _coverScheduleSelectorEntity = "";
   @state() private _coversNightClose = false;
   @state() private _coversNightPosition = 0;
+  @state() private _coversSensorOnly = false;
   @state() private _editingCovers = false;
   @state() private _isOutdoor = false;
   @state() private _anomalySuppressHeating = true;
@@ -324,6 +325,7 @@ export class RsRoomDetail extends LitElement {
       this._coverScheduleSelectorEntity = this.config.cover_schedule_selector_entity ?? "";
       this._coversNightClose = this.config.covers_night_close ?? false;
       this._coversNightPosition = this.config.covers_night_position ?? 0;
+      this._coversSensorOnly = this.config.covers_sensor_only ?? false;
       this._isOutdoor = this.config.is_outdoor ?? false;
       this._anomalySuppressHeating = this.config.anomaly_suppress_heating ?? true;
       this._anomalySuppressCooling = this.config.anomaly_suppress_cooling ?? true;
@@ -357,6 +359,7 @@ export class RsRoomDetail extends LitElement {
       this._coverScheduleSelectorEntity = "";
       this._coversNightClose = false;
       this._coversNightPosition = 0;
+      this._coversSensorOnly = false;
       this._isOutdoor = false;
       this._anomalySuppressHeating = true;
       this._anomalySuppressCooling = true;
@@ -649,6 +652,7 @@ export class RsRoomDetail extends LitElement {
                   .activeCoverScheduleIndex=${this.config?.live?.active_cover_schedule_index ?? -1}
                   .nightClose=${this._coversNightClose}
                   .nightPosition=${this._coversNightPosition}
+                  .sensorOnly=${this._coversSensorOnly}
                   .forcedReason=${this.config?.live?.cover_forced_reason ?? ""}
                   .autoPaused=${this.config?.live?.cover_auto_paused ?? false}
                   @covers-toggle=${this._onCoversToggle}
@@ -874,6 +878,7 @@ export class RsRoomDetail extends LitElement {
       this._coverScheduleSelectorEntity = value as string;
     else if (key === "covers_night_close") this._coversNightClose = value as boolean;
     else if (key === "covers_night_position") this._coversNightPosition = value as number;
+    else if (key === "covers_sensor_only") this._coversSensorOnly = value as boolean;
     this._autoSave();
   }
 
@@ -933,6 +938,7 @@ export class RsRoomDetail extends LitElement {
         cover_schedule_selector_entity: this._coverScheduleSelectorEntity,
         covers_night_close: this._coversNightClose,
         covers_night_position: this._coversNightPosition,
+        covers_sensor_only: this._coversSensorOnly,
         is_outdoor: this._isOutdoor,
         anomaly_suppress_heating: this._anomalySuppressHeating,
         anomaly_suppress_cooling: this._anomalySuppressCooling,

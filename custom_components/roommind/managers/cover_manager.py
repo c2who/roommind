@@ -116,6 +116,7 @@ class CoverManager:
         has_active_override: bool,
         forced_position: int | None = None,
         forced_reason: str = "",
+        sensor_only: bool = False,
     ) -> CoverDecision:
         """Evaluate whether to change cover positions this cycle.
 
@@ -134,7 +135,8 @@ class CoverManager:
             return CoverDecision(target_position=current, changed=False, reason="manual_override_active")
 
         # Gate 2b: User manually moved cover (e.g. opened for balcony)
-        if state.user_override_until > time.time():
+        # Skip in sensor-only mode — no physical covers to track
+        if not sensor_only and state.user_override_until > time.time():
             return CoverDecision(target_position=current, changed=False, reason="user_override_active")
 
         # Gate 2c: Forced position (schedule or night close) — immediate, no rate limit

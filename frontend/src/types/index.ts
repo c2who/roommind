@@ -55,6 +55,8 @@ export interface RoomLiveData {
   cover_auto_paused: boolean;
   cover_forced_reason: string;
   active_cover_schedule_index: number;
+  cover_shading_active: boolean;
+  cover_shading_position: number | null;
 }
 
 export interface RoomConfig {
@@ -92,6 +94,7 @@ export interface RoomConfig {
   cover_schedule_selector_entity?: string;
   covers_night_close?: boolean;
   covers_night_position?: number;
+  covers_sensor_only?: boolean;
   is_outdoor?: boolean;
   anomaly_suppress_heating?: boolean;
   anomaly_suppress_cooling?: boolean;

@@ -24,6 +24,7 @@ export class RsCoverSection extends LitElement {
   @property({ type: Boolean }) public nightClose = false;
   @property({ type: Number }) public nightPosition = 0;
   @property({ type: String }) public forcedReason = "";
+  @property({ type: Boolean }) public sensorOnly = false;
 
   static styles = css`
     :host {
@@ -182,7 +183,7 @@ export class RsCoverSection extends LitElement {
 
   private _renderView(l: string) {
     const covers = [...this.selectedCovers];
-    if (covers.length === 0) {
+    if (covers.length === 0 && !this.sensorOnly) {
       return html`<p class="no-items">${localize("covers.no_covers", l)}</p>`;
     }
     return html`
@@ -199,6 +200,14 @@ export class RsCoverSection extends LitElement {
             </div>
           `;
         })}
+        ${this.sensorOnly && this.autoEnabled
+          ? html`
+              <div class="status-hint">
+                <ha-icon icon="mdi:eye-outline"></ha-icon>
+                <span>${localize("covers.sensor_only_active", l)}</span>
+              </div>
+            `
+          : nothing}
         ${this.autoPaused
           ? html`
               <div class="status-hint paused">
@@ -280,8 +289,6 @@ export class RsCoverSection extends LitElement {
     // Find selected covers not in this area (externally added)
     const externalCoverIds = [...this.selectedCovers].filter((id) => !areaCoverIds.has(id));
 
-    const hasAnySelected = this.selectedCovers.size > 0;
-
     return html`
       <div class="device-list-scroll">
         ${areaCoverEntities.length > 0
@@ -301,87 +308,95 @@ export class RsCoverSection extends LitElement {
         ></ha-entity-picker>
       </div>
 
-      ${hasAnySelected
-        ? html`
-            <div class="settings-group">
+      ${this.selectedCovers.size > 0
+        ? html`<div class="settings-group">
+        <rs-toggle-row
+          .label=${localize("covers.auto_control", l)}
+          .hint=${localize("covers.auto_control_hint", l)}
+          .checked=${this.autoEnabled}
+          @toggle-changed=${(e: CustomEvent) => this._emit("covers_auto_enabled", e.detail)}
+        ></rs-toggle-row>
+
+        ${this.autoEnabled
+          ? html`
               <rs-toggle-row
-                .label=${localize("covers.auto_control", l)}
-                .hint=${localize("covers.auto_control_hint", l)}
-                .checked=${this.autoEnabled}
-                @toggle-changed=${(e: CustomEvent) => this._emit("covers_auto_enabled", e.detail)}
+                .label=${localize("covers.sensor_only", l)}
+                .hint=${localize("covers.sensor_only_hint", l)}
+                .checked=${this.sensorOnly}
+                @toggle-changed=${(e: CustomEvent) => this._emit("covers_sensor_only", e.detail)}
               ></rs-toggle-row>
 
-              ${this.autoEnabled
-                ? html`
-                    <div class="sub-section">
-                      <div class="sub-section-header">
-                        <ha-icon icon="mdi:calendar-clock"></ha-icon>
-                        ${localize("covers.schedule_group_title", l)}
-                      </div>
-                      <rs-cover-schedule
-                        .hass=${this.hass}
-                        .schedules=${this.coverSchedules}
-                        .selectorEntity=${this.coverScheduleSelectorEntity}
-                        .activeIndex=${this.activeCoverScheduleIndex}
-                        .editing=${true}
-                        @cover-schedules-changed=${(e: CustomEvent) =>
-                          this._emit("cover_schedules", e.detail.value)}
-                        @cover-schedule-selector-changed=${(e: CustomEvent) =>
-                          this._emit("cover_schedule_selector_entity", e.detail.value)}
-                      ></rs-cover-schedule>
-                      <rs-toggle-row
-                        .label=${localize("covers.night_close", l)}
-                        .hint=${localize("covers.night_close_hint", l)}
-                        .checked=${this.nightClose}
-                        @toggle-changed=${(e: CustomEvent) =>
-                          this._emit("covers_night_close", e.detail)}
-                      ></rs-toggle-row>
-                      ${this.nightClose
-                        ? html`
-                            <rs-threshold-field
-                              .label=${localize("covers.night_position", l)}
-                              .hint=${localize("covers.night_position_hint", l)}
-                              .value=${this.nightPosition}
-                              .min=${0}
-                              .max=${100}
-                              .step=${5}
-                              suffix="%"
-                              @value-changed=${(e: CustomEvent) =>
-                                this._emit("covers_night_position", e.detail)}
-                            ></rs-threshold-field>
-                          `
-                        : nothing}
-                    </div>
+              <div class="sub-section">
+                <div class="sub-section-header">
+                  <ha-icon icon="mdi:calendar-clock"></ha-icon>
+                  ${localize("covers.schedule_group_title", l)}
+                </div>
+                <rs-cover-schedule
+                  .hass=${this.hass}
+                  .schedules=${this.coverSchedules}
+                  .selectorEntity=${this.coverScheduleSelectorEntity}
+                  .activeIndex=${this.activeCoverScheduleIndex}
+                  .editing=${true}
+                  @cover-schedules-changed=${(e: CustomEvent) =>
+                    this._emit("cover_schedules", e.detail.value)}
+                  @cover-schedule-selector-changed=${(e: CustomEvent) =>
+                    this._emit("cover_schedule_selector_entity", e.detail.value)}
+                ></rs-cover-schedule>
+                <rs-toggle-row
+                  .label=${localize("covers.night_close", l)}
+                  .hint=${localize("covers.night_close_hint", l)}
+                  .checked=${this.nightClose}
+                  @toggle-changed=${(e: CustomEvent) =>
+                    this._emit("covers_night_close", e.detail)}
+                ></rs-toggle-row>
+                ${this.nightClose
+                  ? html`
+                      <rs-threshold-field
+                        .label=${localize("covers.night_position", l)}
+                        .hint=${localize("covers.night_position_hint", l)}
+                        .value=${this.nightPosition}
+                        .min=${0}
+                        .max=${100}
+                        .step=${5}
+                        suffix="%"
+                        @value-changed=${(e: CustomEvent) =>
+                          this._emit("covers_night_position", e.detail)}
+                      ></rs-threshold-field>
+                    `
+                  : nothing}
+              </div>
 
-                    <div class="sub-section">
-                      <div class="sub-section-header">
-                        <ha-icon icon="mdi:white-balance-sunny"></ha-icon>
-                        ${localize("covers.solar_group_title", l)}
-                      </div>
-                      <div class="field-row">
-                        <rs-threshold-field
-                          .label=${localize("covers.deploy_threshold", l)}
-                          .hint=${localize("covers.deploy_threshold_hint", l)}
-                          .value=${this.deployThreshold}
-                          .min=${0.5}
-                          .max=${5.0}
-                          .step=${0.5}
-                          suffix="°C"
-                          @value-changed=${(e: CustomEvent) =>
-                            this._emit("covers_deploy_threshold", e.detail)}
-                        ></rs-threshold-field>
-                        <rs-threshold-field
-                          .label=${localize("covers.min_position", l)}
-                          .hint=${localize("covers.min_position_hint", l)}
-                          .value=${this.minPosition}
-                          .min=${0}
-                          .max=${80}
-                          .step=${5}
-                          suffix="%"
-                          @value-changed=${(e: CustomEvent) =>
-                            this._emit("covers_min_position", e.detail)}
-                        ></rs-threshold-field>
-                      </div>
+              <div class="sub-section">
+                <div class="sub-section-header">
+                  <ha-icon icon="mdi:white-balance-sunny"></ha-icon>
+                  ${localize("covers.solar_group_title", l)}
+                </div>
+                <div class="field-row">
+                  <rs-threshold-field
+                    .label=${localize("covers.deploy_threshold", l)}
+                    .hint=${localize("covers.deploy_threshold_hint", l)}
+                    .value=${this.deployThreshold}
+                    .min=${0.5}
+                    .max=${5.0}
+                    .step=${0.5}
+                    suffix="°C"
+                    @value-changed=${(e: CustomEvent) =>
+                      this._emit("covers_deploy_threshold", e.detail)}
+                  ></rs-threshold-field>
+                  <rs-threshold-field
+                    .label=${localize("covers.min_position", l)}
+                    .hint=${localize("covers.min_position_hint", l)}
+                    .value=${this.minPosition}
+                    .min=${0}
+                    .max=${80}
+                    .step=${5}
+                    suffix="%"
+                    @value-changed=${(e: CustomEvent) =>
+                      this._emit("covers_min_position", e.detail)}
+                  ></rs-threshold-field>
+                </div>
+                ${!this.sensorOnly
+                  ? html`
                       <div class="field-row">
                         <rs-threshold-field
                           .label=${localize("covers.override_minutes", l)}
@@ -395,11 +410,12 @@ export class RsCoverSection extends LitElement {
                             this._emit("covers_override_minutes", e.detail)}
                         ></rs-threshold-field>
                       </div>
-                    </div>
-                  `
-                : nothing}
-            </div>
-          `
+                    `
+                  : nothing}
+              </div>
+            `
+          : nothing}
+      </div>`
         : nothing}
     `;
   }

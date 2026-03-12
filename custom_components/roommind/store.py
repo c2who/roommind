@@ -159,6 +159,7 @@ class RoomMindStore:
                 "cover_schedule_selector_entity": config.get("cover_schedule_selector_entity", ""),
                 "covers_night_close": config.get("covers_night_close", False),
                 "covers_night_position": config.get("covers_night_position", 0),
+                "covers_sensor_only": config.get("covers_sensor_only", False),
                 "is_outdoor": config.get("is_outdoor", False),
                 "anomaly_suppress_heating": config.get("anomaly_suppress_heating", True),
                 "anomaly_suppress_cooling": config.get("anomaly_suppress_cooling", True),

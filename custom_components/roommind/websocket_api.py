@@ -74,6 +74,7 @@ _ROOM_SAVE_FIELDS = (
     "cover_schedule_selector_entity",
     "covers_night_close",
     "covers_night_position",
+    "covers_sensor_only",
     "is_outdoor",
     "anomaly_suppress_heating",
     "anomaly_suppress_cooling",
@@ -183,6 +184,8 @@ async def websocket_list_rooms(
             "cover_auto_paused": live.get("cover_auto_paused", False),
             "cover_forced_reason": live.get("cover_forced_reason", ""),
             "active_cover_schedule_index": live.get("active_cover_schedule_index", -1),
+            "cover_shading_active": live.get("cover_shading_active", False),
+            "cover_shading_position": live.get("cover_shading_position"),
         }
         result[area_id] = room_data
 
@@ -266,6 +269,7 @@ async def websocket_list_rooms(
         vol.Optional("cover_schedule_selector_entity"): str,
         vol.Optional("covers_night_close"): bool,
         vol.Optional("covers_night_position"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+        vol.Optional("covers_sensor_only"): bool,
         vol.Optional("is_outdoor"): bool,
         vol.Optional("anomaly_suppress_heating"): bool,
         vol.Optional("anomaly_suppress_cooling"): bool,

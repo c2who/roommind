@@ -109,6 +109,7 @@ class CoverOrchestrator:
         q_solar: float,
         predicted_peak_temp: float | None,
         has_override: bool,
+        sensor_only: bool = False,
     ) -> CoverResult:
         """Process cover control for a room: MPC check, schedule, prediction, evaluate, apply."""
         has_external_sensor = bool(room.get("temperature_sensor"))
@@ -200,9 +201,10 @@ class CoverOrchestrator:
             has_active_override=has_override,
             forced_position=_forced_position,
             forced_reason=_forced_reason,
+            sensor_only=sensor_only,
         )
 
-        if cover_decision.changed:
+        if cover_decision.changed and not sensor_only:
             _LOGGER.debug(
                 "Cover control [%s]: %s → position %d%%",
                 area_id,
@@ -210,6 +212,13 @@ class CoverOrchestrator:
                 cover_decision.target_position,
             )
             await CoverManager.async_apply(self.hass, cover_eids, cover_decision.target_position)
+        elif cover_decision.changed:
+            _LOGGER.debug(
+                "Cover sensor-only [%s]: %s → position %d%%",
+                area_id,
+                cover_decision.reason,
+                cover_decision.target_position,
+            )
 
         return CoverResult(
             mpc_active=_cover_mpc_active,
