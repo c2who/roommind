@@ -48,6 +48,7 @@ from .control.thermal_model import RoomModelManager
 from .managers.anomaly_manager import AnomalyManager
 from .managers.cover_orchestrator import CoverOrchestrator
 from .managers.ekf_training_manager import EkfTrainingManager
+from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
 from .managers.mold_manager import MoldManager
 from .managers.residual_heat_tracker import ResidualHeatTracker
 from .managers.valve_manager import ValveManager
@@ -113,6 +114,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         self._cover_manager = CoverManager()
         self._cover_orchestrator = CoverOrchestrator(hass, self._cover_manager, self._model_manager)
+        # Heat source orchestration state (per room)
+        self._heat_source_states: dict[str, str] = {}
         # Track which rooms already have entity platform entities registered
         self._entity_areas: set[str] = set()
         # Min-run enforcement: timestamp when current non-idle mode started
@@ -561,6 +564,33 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Exclude TRVs currently being valve-protection-cycled from normal control
         cycling_eids = {eid for eid in room.get("thermostats", []) if eid in self._valve_manager._cycling}
+
+        # Heat source orchestration: smart routing for rooms with both TRVs and ACs
+        heat_source_plan = None
+        if (
+            room.get("heat_source_orchestration", False)
+            and mode == MODE_HEATING
+            and has_external_sensor
+            and room.get("thermostats")
+            and room.get("acs")
+        ):
+            heat_source_plan = evaluate_heat_sources(
+                room_config=room,
+                mode=mode,
+                power_fraction=power_fraction,
+                current_temp=current_temp,
+                target_temp=targets.heat,
+                outdoor_temp=self.outdoor_temp,
+                previous_active_sources=self._heat_source_states.get(area_id, "none"),
+                hass=self.hass,
+            )
+            if heat_source_plan is not None:
+                self._heat_source_states[area_id] = heat_source_plan.active_sources
+        else:
+            # Orchestration not active for this room — remove stale state
+            # so re-enabling starts fresh.
+            self._heat_source_states.pop(area_id, None)
+
         if climate_active:
             try:
                 await controller.async_apply(
@@ -572,6 +602,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     heating_boost_target=device_max_temp,
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
+                    heat_source_plan=heat_source_plan,
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning(
@@ -583,6 +614,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Climate control disabled (learn-only) — do NOT send commands,
             # do NOT touch mode/power_fraction (used for internal tracking).
             observed_mode, observed_pf = self._observe_device_action(room)
+            if observed_mode is None and self._devices_lack_hvac_action(room):
+                # No hvac_action on any device — fall back to temp-vs-setpoint
+                # inference for approximate training (better than skipping).
+                # Don't infer for other None reasons (conflicts, unavailable).
+                inferred = self._infer_device_mode(room)
+                observed_mode = inferred
+                observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
             if observed_mode is not None and observed_mode != MODE_IDLE:
                 _LOGGER.debug(
                     "Room '%s': device self-regulating (%s), using for training",
@@ -591,6 +629,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 )
             mode = MODE_IDLE
             power_fraction = 0.0
+
+        # For Managed Mode rooms, observe actual device state for display + training.
+        # The controller's mode is "intent" (device told to heat), but the device
+        # self-regulates and may be idle at setpoint.  See #69.
+        managed_display_mode: str | None = None
+        managed_display_pf = 0.0
+        if climate_active and not has_external_sensor:
+            obs_mode, obs_pf = self._observe_device_action(room)
+            if obs_mode is not None:
+                managed_display_mode = obs_mode
+                managed_display_pf = obs_pf
+            else:
+                managed_display_mode = self._infer_device_mode(room)
+                managed_display_pf = 1.0 if managed_display_mode != MODE_IDLE else 0.0
 
         # --- Cover/blind automatic control ---
         has_override = room.get("override_temp") is not None and (
@@ -609,16 +661,30 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             sensor_only=covers_sensor_only,
         )
 
-        # Track valve actuation during normal heating
+        # Track valve actuation during normal heating (skip excluded entities)
         if mode == MODE_HEATING:
-            self._valve_manager.record_heating(room.get("thermostats", []))
+            excluded = set(room.get("valve_protection_exclude", []))
+            heating_eids = [eid for eid in room.get("thermostats", []) if eid not in excluded]
+            self._valve_manager.record_heating(heating_eids)
 
-        # Determine mode for EKF training: when control is disabled, use
-        # observed device state so self-regulating thermostats don't corrupt
-        # the model (see #36).
+        # Determine mode for EKF training: use observed device state when
+        # RoomMind doesn't directly control the device (see #36, #69).
         if climate_active:
-            ekf_mode: str | None = mode
-            ekf_pf = power_fraction
+            if has_external_sensor:
+                # Full Control: controller's commanded mode is truth
+                ekf_mode: str | None = mode
+                ekf_pf = power_fraction
+                # When heat source orchestration is active, adjust ekf_pf to
+                # reflect the actual power delivered (not all devices may be
+                # heating).  Use the mean of per-device power_fractions so the
+                # EKF learns an accurate aggregated beta_h.
+                if heat_source_plan is not None and heat_source_plan.commands:
+                    ekf_pf = sum(c.power_fraction for c in heat_source_plan.commands) / len(heat_source_plan.commands)
+            else:
+                # Managed Mode: device self-regulates, use observed/inferred
+                # state to avoid training "always heating" (#69).
+                ekf_mode = managed_display_mode
+                ekf_pf = managed_display_pf
         else:
             ekf_mode = observed_mode  # may be None → skip training
             ekf_pf = observed_pf
@@ -669,12 +735,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Reuse MPC active status computed by cover orchestrator
         mpc_active = cover_result.mpc_active
 
-        # Compute display mode: when control is off, show actual device state
-        # without affecting internal tracking (residual heat, valve actuation,
-        # _previous_modes).  See #36.
+        # Compute display mode: show actual device state when RoomMind doesn't
+        # directly control the device, without affecting internal tracking
+        # (residual heat, valve actuation, _previous_modes).  See #36, #69.
         if climate_active:
-            display_mode = mode
-            display_pf = power_fraction
+            if has_external_sensor:
+                # Full Control: controller's mode is authoritative
+                display_mode = mode
+                display_pf = power_fraction
+            else:
+                # Managed Mode: show observed/inferred device state (#69)
+                display_mode = managed_display_mode if managed_display_mode is not None else mode
+                display_pf = managed_display_pf if managed_display_mode is not None else power_fraction
         else:
             if observed_mode is not None and observed_mode != MODE_IDLE:
                 display_mode = observed_mode
@@ -695,7 +767,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "cool_target": targets.cool,
             "mode": display_mode,
             "heating_power": round(display_pf * 100) if display_mode != MODE_IDLE else 0,
-            "device_setpoint": self._compute_device_setpoint(
+            "device_setpoint": self._compute_device_setpoint_orchestrated(
+                heat_source_plan,
+                current_temp,
+                target_temp,
+                device_max_temp,
+                ac_device_max_temp,
+            )
+            if heat_source_plan is not None
+            else self._compute_device_setpoint(
                 mode,
                 power_fraction,
                 current_temp,
@@ -729,6 +809,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "cover_auto_paused": (self._cover_orchestrator.is_user_override_active(area_id) if cover_eids else False),
             "cover_forced_reason": (cover_result.forced_reason if (cover_eids or covers_sensor_only) else ""),
             "active_cover_schedule_index": (cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1),
+            "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
                 room.get("covers_auto_enabled", False)
                 and cover_result.decision.target_position < 100
@@ -739,6 +820,32 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 else None
             ),
         }
+
+    @staticmethod
+    def _compute_device_setpoint_orchestrated(
+        heat_source_plan: HeatSourcePlan,
+        current_temp: float | None,
+        target_temp: float | None,
+        device_max_temp: float | None,
+        ac_device_max_temp: float | None,
+    ) -> float | None:
+        """Compute device setpoint from the orchestrated heat source plan."""
+        if current_temp is None or target_temp is None:
+            return None
+        # Find the most representative active command
+        active_cmds = [c for c in heat_source_plan.commands if c.active]
+        if not active_cmds:
+            return None
+        # Pick the first active command (primary preferred, then secondary)
+        cmd = active_cmds[0]
+        if cmd.device_type == "thermostat":
+            boost = device_max_temp if device_max_temp is not None else HEATING_BOOST_TARGET
+        else:
+            boost = ac_device_max_temp if ac_device_max_temp is not None else AC_HEATING_BOOST_TARGET
+        sp = round(current_temp + cmd.power_fraction * (boost - current_temp), 1)
+        sp = max(target_temp, sp)
+        sp = min(boost, sp)
+        return sp
 
     @staticmethod
     def _compute_device_setpoint(
@@ -907,12 +1014,27 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             return MODE_HEATING, heating_pf
         return None, 0.0
 
+    def _devices_lack_hvac_action(self, room: dict) -> bool:
+        """Return True if at least one active device lacks hvac_action.
+
+        Used to distinguish 'missing attribute' from other reasons
+        _observe_device_action returns None (conflicts, unavailable, etc.).
+        """
+        for eid in room.get("thermostats", []) + room.get("acs", []):
+            state = self.hass.states.get(eid)
+            if state is None or state.state in ("unavailable", "unknown", "off"):
+                continue
+            if state.attributes.get("hvac_action") is None:
+                return True
+        return False
+
     def _infer_device_mode(self, room: dict) -> str:
         """Infer heating/cooling from hvac_mode when hvac_action is unavailable.
 
         Compares current_temperature to the device setpoint to avoid showing
         'Heating' when the thermostat is in heat mode but already at target.
-        Used only for dashboard display — EKF training uses _observe_device_action.
+        Used for display and as a fallback for EKF training when hvac_action
+        is missing (Managed Mode and learn-only mode).  See #69.
         """
         for eid in room.get("thermostats", []) + room.get("acs", []):
             state = self.hass.states.get(eid)
@@ -1140,6 +1262,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._binary_sensor_entity_areas.discard(area_id)
         self._climate_entity_areas.discard(area_id)
         self._model_manager.remove_room(area_id)
+        self._heat_source_states.pop(area_id, None)
         if self._history_store:
             await self.hass.async_add_executor_job(self._history_store.remove_room, area_id)
 
@@ -1159,11 +1282,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Known valid suffixes for each condition
         always_valid = ("_target_temp", "_mode", "_override")
         cover_only = ("_cover_auto", "_cover_paused")
+        # Global entities (not per-room) that should never be cleaned up
+        global_uids = {f"{DOMAIN}_vacation"}
 
         to_remove: list[str] = []
         for entity_entry in registry.entities.values():
             uid = entity_entry.unique_id
             if not isinstance(uid, str) or not uid.startswith(f"{DOMAIN}_"):
+                continue
+            if uid in global_uids:
                 continue
 
             # Extract area_id: roommind_{area_id}_{suffix}

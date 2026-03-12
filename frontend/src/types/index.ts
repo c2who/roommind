@@ -57,6 +57,7 @@ export interface RoomLiveData {
   active_cover_schedule_index: number;
   cover_shading_active: boolean;
   cover_shading_position: number | null;
+  active_heat_sources: string | null;
 }
 
 export interface RoomConfig {
@@ -99,6 +100,11 @@ export interface RoomConfig {
   anomaly_suppress_heating?: boolean;
   anomaly_suppress_cooling?: boolean;
   anomaly_suppression_minutes?: number;
+  valve_protection_exclude?: string[];
+  heat_source_orchestration?: boolean;
+  heat_source_primary_delta?: number;
+  heat_source_outdoor_threshold?: number;
+  heat_source_ac_min_outdoor?: number;
   live?: RoomLiveData;
 }
 

@@ -129,7 +129,7 @@ export class RsSettingsLearning extends LitElement {
                   @closed=${(e: Event) => e.stopPropagation()}
                 >
                   ${configuredRooms.map(
-                    (room) => html`<ha-list-item .value=${room.areaId}>${room.name}</ha-list-item>`,
+                    (room) => html`<ha-list-item value=${room.areaId}>${room.name}</ha-list-item>`,
                   )}
                 </ha-select>
                 ${this._boostSelectedRoom

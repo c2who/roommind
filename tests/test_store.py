@@ -395,3 +395,58 @@ async def test_is_outdoor_default(store):
 
     outdoor = await store.async_save_room("balkon", {"is_outdoor": True})
     assert outdoor["is_outdoor"] is True
+
+
+@pytest.mark.asyncio
+async def test_save_room_defaults_valve_protection_exclude(store):
+    """Saving a room without valve_protection_exclude defaults to empty list."""
+    await store.async_load()
+
+    room = await store.async_save_room("wohnzimmer", {"thermostats": ["climate.wz_trv"]})
+
+    assert room["valve_protection_exclude"] == []
+
+
+@pytest.mark.asyncio
+async def test_save_room_defaults_heat_source_orchestration(store):
+    """Saving a room without heat source fields defaults correctly."""
+    await store.async_load()
+
+    room = await store.async_save_room("wohnzimmer", {})
+
+    assert room["heat_source_orchestration"] is False
+    assert room["heat_source_primary_delta"] == 1.5
+    assert room["heat_source_outdoor_threshold"] == 5.0
+    assert room["heat_source_ac_min_outdoor"] == -15.0
+
+
+@pytest.mark.asyncio
+async def test_save_room_heat_source_explicit_values(store):
+    """Saving with explicit heat source config stores them correctly."""
+    await store.async_load()
+
+    room = await store.async_save_room(
+        "wohnzimmer",
+        {
+            "heat_source_orchestration": True,
+            "heat_source_primary_delta": 2.0,
+            "heat_source_outdoor_threshold": 8.0,
+            "heat_source_ac_min_outdoor": -10.0,
+        },
+    )
+
+    assert room["heat_source_orchestration"] is True
+    assert room["heat_source_primary_delta"] == 2.0
+    assert room["heat_source_outdoor_threshold"] == 8.0
+    assert room["heat_source_ac_min_outdoor"] == -10.0
+
+
+@pytest.mark.asyncio
+async def test_save_room_heat_source_update_merges(store):
+    """Updating an existing room with heat source fields merges them."""
+    await store.async_load()
+    await store.async_save_room("wohnzimmer", {})
+    updated = await store.async_save_room("wohnzimmer", {"heat_source_orchestration": True})
+    assert updated["heat_source_orchestration"] is True
+    # Other heat source defaults should remain from creation
+    assert updated["heat_source_primary_delta"] == 1.5

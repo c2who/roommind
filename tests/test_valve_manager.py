@@ -190,3 +190,126 @@ async def test_cycle_single_setpoint_trv_unchanged(vm):
     assert "temperature" in data
     assert "target_temp_low" not in data
     assert "target_temp_high" not in data
+
+
+# --- valve_protection_exclude ---
+
+
+@pytest.mark.asyncio
+async def test_excluded_entity_not_cycled(vm):
+    """Entities in valve_protection_exclude are skipped during cycling."""
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1", "climate.boiler"],
+            "valve_protection_exclude": ["climate.boiler"],
+        }
+    }
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 0,
+    }
+
+    state = MagicMock()
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.celsius_to_ha_temp",
+        return_value=30.0,
+    ):
+        await vm.async_check_and_cycle(rooms, settings)
+
+    assert "climate.trv1" in vm._cycling
+    assert "climate.boiler" not in vm._cycling
+
+
+@pytest.mark.asyncio
+async def test_empty_exclude_cycles_all(vm):
+    """Empty valve_protection_exclude list means all thermostats are cycled."""
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1", "climate.trv2"],
+            "valve_protection_exclude": [],
+        }
+    }
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 0,
+    }
+
+    state = MagicMock()
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.celsius_to_ha_temp",
+        return_value=30.0,
+    ):
+        await vm.async_check_and_cycle(rooms, settings)
+
+    assert "climate.trv1" in vm._cycling
+    assert "climate.trv2" in vm._cycling
+
+
+@pytest.mark.asyncio
+async def test_exclude_nonexistent_entity_harmless(vm):
+    """Excluding an entity not in thermostats list causes no error."""
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1"],
+            "valve_protection_exclude": ["climate.doesnt_exist"],
+        }
+    }
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 0,
+    }
+
+    state = MagicMock()
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.celsius_to_ha_temp",
+        return_value=30.0,
+    ):
+        await vm.async_check_and_cycle(rooms, settings)
+
+    assert "climate.trv1" in vm._cycling
+
+
+@pytest.mark.asyncio
+async def test_exclude_in_one_room_prevents_cycling_from_other(vm):
+    """Entity excluded in one room must not be cycled even if present in another room."""
+    rooms = {
+        "living": {
+            "thermostats": ["climate.boiler", "climate.trv1"],
+            "valve_protection_exclude": ["climate.boiler"],
+        },
+        "bedroom": {
+            "thermostats": ["climate.boiler", "climate.trv2"],
+            "valve_protection_exclude": [],
+        },
+    }
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 0,
+    }
+
+    state = MagicMock()
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.celsius_to_ha_temp",
+        return_value=30.0,
+    ):
+        await vm.async_check_and_cycle(rooms, settings)
+
+    assert "climate.trv1" in vm._cycling
+    assert "climate.trv2" in vm._cycling
+    assert "climate.boiler" not in vm._cycling

@@ -81,6 +81,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
             "presence_away_action": "eco",
             "schedule_off_action": "eco",
             "anyone_home": True,
+            "valve_protection_enabled": False,
         },
     )
 
@@ -1675,3 +1676,45 @@ def test_save_room_cover_deploy_threshold_rejects_negative():
         validator(-1.0)
     with pytest.raises(vol.Invalid):
         validator(-0.1)
+
+
+# ---------------------------------------------------------------------------
+# Self-assignment guard (#86)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("thermostats", ["climate.roommind_living_room_override"]),
+        ("acs", ["climate.roommind_living_room_override"]),
+        ("temperature_sensor", "sensor.roommind_living_room_target_temp"),
+        ("humidity_sensor", "sensor.roommind_living_room_mode"),
+        ("window_sensors", ["binary_sensor.roommind_test"]),
+        ("covers", ["cover.roommind_living_room_auto"]),
+    ],
+)
+async def test_save_room_rejects_own_entities(ws_hass, store, connection, field, value):
+    """Assigning RoomMind's own entities to a room is rejected."""
+    await store.async_load()
+    msg = {"id": 2, "type": "roommind/rooms/save", "area_id": "living_room", field: value}
+    await _save_room(ws_hass, connection, msg)
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_entity"
+
+
+@pytest.mark.asyncio
+async def test_save_room_allows_normal_entities(ws_hass, store, connection):
+    """Normal (non-RoomMind) entities are accepted."""
+    await store.async_load()
+    msg = {
+        "id": 2,
+        "type": "roommind/rooms/save",
+        "area_id": "living_room",
+        "thermostats": ["climate.living_room_trv"],
+        "temperature_sensor": "sensor.living_room_temp",
+    }
+    await _save_room(ws_hass, connection, msg)
+    connection.send_result.assert_called_once()
+    connection.send_error.assert_not_called()

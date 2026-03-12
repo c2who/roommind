@@ -2575,12 +2575,13 @@ class TestClimateControlDisabled:
         assert n_heating > 0, "EKF should have trained with heating observations"
 
     @pytest.mark.asyncio
-    async def test_missing_hvac_action_skips_training(self, hass, mock_config_entry):
-        """Device in heat mode without hvac_action → training should be skipped."""
+    async def test_missing_hvac_action_uses_inferred_mode(self, hass, mock_config_entry):
+        """Device in heat mode without hvac_action → training uses inferred mode (#69)."""
         store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
         store.get_settings.return_value = {"climate_control_active": False}
         hass.data = {"roommind": {"store": store}}
 
+        # Device in heat mode, current_temp (18) < setpoint (30) → inferred heating
         hass.states.get = MagicMock(
             side_effect=make_mock_states_get(
                 temp="18.0",
@@ -2588,7 +2589,7 @@ class TestClimateControlDisabled:
                 extra={
                     "climate.living_room": (
                         "heat",
-                        {"current_temperature": 18},
+                        {"current_temperature": 18, "temperature": 30},
                     ),
                 },
             ),
@@ -2602,7 +2603,7 @@ class TestClimateControlDisabled:
         n_idle, n_heating, n_cooling = coordinator._model_manager.get_mode_counts(
             "living_room_abc12345",
         )
-        assert n_idle == 0 and n_heating == 0 and n_cooling == 0, "No training should occur when hvac_action is missing"
+        assert n_heating > 0, "Training should use inferred heating when hvac_action is missing"
 
     @pytest.mark.asyncio
     async def test_inferred_heating_does_not_affect_previous_modes(self, hass, mock_config_entry):
@@ -4215,6 +4216,11 @@ class TestCoverageGaps:
         entry_other.entity_id = "sensor.other_thing"
 
         mock_registry = MagicMock()
+        # Global entity (not per-room) — should be kept
+        entry_vacation = MagicMock()
+        entry_vacation.unique_id = f"{DOMAIN}_vacation"
+        entry_vacation.entity_id = "switch.roommind_vacation"
+
         mock_registry.entities.values.return_value = [
             entry_valid_temp,
             entry_valid_mode,
@@ -4222,6 +4228,7 @@ class TestCoverageGaps:
             entry_valid_cover_paused,
             entry_orphaned_room,
             entry_other,
+            entry_vacation,
         ]
 
         with patch(
@@ -4230,7 +4237,7 @@ class TestCoverageGaps:
         ):
             coordinator.cleanup_orphaned_entities()
 
-        # Only the orphaned entity should be removed
+        # Only the orphaned entity should be removed (vacation is global, not orphaned)
         mock_registry.async_remove.assert_called_once_with("sensor.roommind_deleted_room_target_temp")
 
     def test_cleanup_orphaned_entities_removes_cover_entities_without_covers(self, hass, mock_config_entry):
@@ -4795,3 +4802,436 @@ class TestCoverageGaps:
         ]
         assert len(record_calls) == 1
         assert record_calls[0][0][1] == "living_room_abc12345"
+
+
+# --- Managed Mode display / training fixes (#69) ---
+
+MANAGED_ROOM = {
+    **SAMPLE_ROOM,
+    "temperature_sensor": "",  # No external sensor → Managed Mode
+}
+
+
+class TestManagedModeDisplay:
+    """Tests for Managed Mode display and EKF training fixes (#69)."""
+
+    @pytest.mark.asyncio
+    async def test_managed_mode_display_idle_at_setpoint(self, hass, mock_config_entry):
+        """Managed Mode: device at setpoint without hvac_action → display idle (#69)."""
+        store = _make_store_mock({"living_room_abc12345": MANAGED_ROOM})
+        hass.data = {"roommind": {"store": store}}
+
+        # Device in heat mode, current_temp (21) >= setpoint (21) → inferred idle
+        device_state = MagicMock()
+        device_state.state = "heat"
+        device_state.attributes = {
+            "current_temperature": 21.0,
+            "temperature": 21.0,
+            "hvac_modes": ["off", "heat"],
+        }
+        base_mock = make_mock_states_get(temp=None, humidity="55.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room":
+                return device_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["mode"] == "idle", "Managed Mode should show idle when device is at setpoint"
+        assert room["heating_power"] == 0
+
+    @pytest.mark.asyncio
+    async def test_managed_mode_display_heating_below_setpoint(self, hass, mock_config_entry):
+        """Managed Mode: device below setpoint without hvac_action → display heating (#69)."""
+        store = _make_store_mock({"living_room_abc12345": MANAGED_ROOM})
+        hass.data = {"roommind": {"store": store}}
+
+        # Device in heat mode, current_temp (18) < setpoint (21) → inferred heating
+        device_state = MagicMock()
+        device_state.state = "heat"
+        device_state.attributes = {
+            "current_temperature": 18.0,
+            "temperature": 21.0,
+            "hvac_modes": ["off", "heat"],
+        }
+        base_mock = make_mock_states_get(temp=None, humidity="55.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room":
+                return device_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["mode"] == "heating", "Managed Mode should show heating when device is below setpoint"
+        assert room["heating_power"] == 100
+
+    @pytest.mark.asyncio
+    async def test_managed_mode_display_uses_hvac_action(self, hass, mock_config_entry):
+        """Managed Mode: device with hvac_action=idle → display idle (#69)."""
+        store = _make_store_mock({"living_room_abc12345": MANAGED_ROOM})
+        hass.data = {"roommind": {"store": store}}
+
+        device_state = MagicMock()
+        device_state.state = "heat"
+        device_state.attributes = {
+            "hvac_action": "idle",
+            "current_temperature": 21.0,
+            "temperature": 21.0,
+            "hvac_modes": ["off", "heat"],
+        }
+        base_mock = make_mock_states_get(temp=None, humidity="55.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room":
+                return device_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["mode"] == "idle", "Managed Mode should use hvac_action when available"
+
+    @pytest.mark.asyncio
+    async def test_managed_mode_ekf_trains_inferred_idle(self, hass, mock_config_entry):
+        """Managed Mode: EKF should train with inferred idle, not always heating (#69)."""
+        store = _make_store_mock({"living_room_abc12345": MANAGED_ROOM})
+        hass.data = {"roommind": {"store": store}}
+
+        # Device at setpoint → inferred idle. EKF should see idle, not heating.
+        device_state = MagicMock()
+        device_state.state = "heat"
+        device_state.attributes = {
+            "current_temperature": 21.0,
+            "temperature": 21.0,
+            "hvac_modes": ["off", "heat"],
+        }
+        base_mock = make_mock_states_get(temp=None, humidity="55.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room":
+                return device_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        for _ in range(13):
+            await coordinator._async_update_data()
+
+        n_idle, n_heating, n_cooling = coordinator._model_manager.get_mode_counts(
+            "living_room_abc12345",
+        )
+        assert n_idle > 0, "EKF should have idle training samples in Managed Mode at setpoint"
+        assert n_heating == 0, "EKF should NOT train as heating when device is at setpoint"
+
+    @pytest.mark.asyncio
+    async def test_learn_only_infer_fallback(self, hass, mock_config_entry):
+        """Climate off, no hvac_action → training uses inferred mode, not skipped (#69)."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        store.get_settings.return_value = {"climate_control_active": False}
+        hass.data = {"roommind": {"store": store}}
+
+        # Device in heat mode, at setpoint, no hvac_action → inferred idle
+        device_state = MagicMock()
+        device_state.state = "heat"
+        device_state.attributes = {
+            "current_temperature": 21.0,
+            "temperature": 21.0,
+            "hvac_modes": ["off", "heat"],
+        }
+        base_mock = make_mock_states_get(temp="21.0", humidity="55.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room":
+                return device_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        for _ in range(13):
+            await coordinator._async_update_data()
+
+        n_idle, n_heating, n_cooling = coordinator._model_manager.get_mode_counts(
+            "living_room_abc12345",
+        )
+        assert n_idle > 0, "Learn-only mode should use inferred idle when hvac_action is missing"
+
+    @pytest.mark.asyncio
+    async def test_managed_mode_display_cooling_idle_at_setpoint(self, hass, mock_config_entry):
+        """Managed Mode cooling: AC at setpoint without hvac_action → display idle (#69)."""
+        managed_cool_room = {
+            **MANAGED_ROOM,
+            "thermostats": [],
+            "acs": ["climate.living_room"],
+            "climate_mode": "cool_only",
+        }
+        store = _make_store_mock({"living_room_abc12345": managed_cool_room})
+        hass.data = {"roommind": {"store": store}}
+
+        # AC in cool mode, current_temp (21) <= setpoint (22) → inferred idle
+        device_state = MagicMock()
+        device_state.state = "cool"
+        device_state.attributes = {
+            "current_temperature": 21.0,
+            "temperature": 22.0,
+            "hvac_modes": ["off", "cool"],
+        }
+        base_mock = make_mock_states_get(temp=None, humidity="55.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room":
+                return device_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room = data["rooms"]["living_room_abc12345"]
+        assert room["mode"] == "idle", "Managed Mode should show idle when AC is at setpoint"
+
+
+class TestHeatSourceOrchestration:
+    """Tests for heat source orchestration wiring in the coordinator."""
+
+    ROOM_WITH_BOTH = {
+        "area_id": "living_room_abc12345",
+        "thermostats": ["climate.living_room"],
+        "acs": ["climate.living_room_ac"],
+        "temperature_sensor": "sensor.living_room_temp",
+        "humidity_sensor": "sensor.living_room_humidity",
+        "climate_mode": "auto",
+        "schedules": [{"entity_id": "schedule.living_room_heating"}],
+        "schedule_selector_entity": "",
+        "comfort_temp": 21.0,
+        "eco_temp": 17.0,
+        "heat_source_orchestration": True,
+    }
+
+    @pytest.mark.asyncio
+    async def test_orchestration_wiring_calls_evaluate_and_passes_plan(self, hass, mock_config_entry):
+        """Room with both thermostats and ACs, orchestration enabled, MODE_HEATING.
+
+        Verify evaluate_heat_sources is called and the plan is forwarded to async_apply.
+        """
+        from custom_components.roommind.managers.heat_source_orchestrator import (
+            HeatSourcePlan,
+        )
+
+        store = _make_store_mock({"living_room_abc12345": self.ROOM_WITH_BOTH})
+        hass.data = {"roommind": {"store": store}}
+
+        # AC entity needs hvac_modes with 'heat' so it's detected as heat-capable
+        ac_state = MagicMock()
+        ac_state.state = "off"
+        ac_state.attributes = {"hvac_modes": ["heat", "cool", "off"], "min_temp": 16, "max_temp": 30}
+
+        base_mock = make_mock_states_get(temp="18.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room_ac":
+                return ac_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        fake_plan = HeatSourcePlan(commands=[], active_sources="primary", reason="test")
+
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources",
+            return_value=fake_plan,
+        ) as mock_evaluate:
+            coordinator = _create_coordinator(hass, mock_config_entry)
+            data = await coordinator._async_update_data()
+
+            # evaluate_heat_sources must have been called
+            mock_evaluate.assert_called_once()
+            call_kwargs = mock_evaluate.call_args
+            assert call_kwargs.kwargs["room_config"]["area_id"] == "living_room_abc12345"
+            assert call_kwargs.kwargs["mode"] == "heating"
+
+        # The plan's active_sources should be stored in _heat_source_states
+        assert coordinator._heat_source_states.get("living_room_abc12345") == "primary"
+
+        # async_apply was called with the plan (no exception = wiring works)
+        room_state = data["rooms"]["living_room_abc12345"]
+        assert room_state["mode"] == "heating"
+
+    @pytest.mark.asyncio
+    async def test_orchestration_disabled_plan_is_none(self, hass, mock_config_entry):
+        """Room with heat_source_orchestration=False. Plan should be None (normal path)."""
+        room = {**self.ROOM_WITH_BOTH, "heat_source_orchestration": False}
+        store = _make_store_mock({"living_room_abc12345": room})
+        hass.data = {"roommind": {"store": store}}
+
+        ac_state = MagicMock()
+        ac_state.state = "off"
+        ac_state.attributes = {"hvac_modes": ["heat", "cool", "off"], "min_temp": 16, "max_temp": 30}
+
+        base_mock = make_mock_states_get(temp="18.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room_ac":
+                return ac_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources",
+        ) as mock_evaluate:
+            coordinator = _create_coordinator(hass, mock_config_entry)
+            await coordinator._async_update_data()
+
+            # evaluate_heat_sources must NOT have been called
+            mock_evaluate.assert_not_called()
+
+        # No state stored
+        assert "living_room_abc12345" not in coordinator._heat_source_states
+
+    @pytest.mark.asyncio
+    async def test_state_cleanup_on_disable(self, hass, mock_config_entry):
+        """Disabling orchestration removes the stale state entry."""
+        from custom_components.roommind.managers.heat_source_orchestrator import (
+            HeatSourcePlan,
+        )
+
+        # First cycle: orchestration ON
+        store = _make_store_mock({"living_room_abc12345": self.ROOM_WITH_BOTH})
+        hass.data = {"roommind": {"store": store}}
+
+        ac_state = MagicMock()
+        ac_state.state = "off"
+        ac_state.attributes = {"hvac_modes": ["heat", "cool", "off"], "min_temp": 16, "max_temp": 30}
+
+        base_mock = make_mock_states_get(temp="18.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room_ac":
+                return ac_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        fake_plan = HeatSourcePlan(commands=[], active_sources="both", reason="test")
+
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources",
+            return_value=fake_plan,
+        ):
+            coordinator = _create_coordinator(hass, mock_config_entry)
+            await coordinator._async_update_data()
+
+        assert coordinator._heat_source_states.get("living_room_abc12345") == "both"
+
+        # Second cycle: orchestration OFF
+        room_disabled = {**self.ROOM_WITH_BOTH, "heat_source_orchestration": False}
+        store.get_rooms.return_value = {"living_room_abc12345": room_disabled}
+
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources",
+        ) as mock_evaluate:
+            await coordinator._async_update_data()
+            mock_evaluate.assert_not_called()
+
+        # State entry must be removed
+        assert "living_room_abc12345" not in coordinator._heat_source_states
+
+    @pytest.mark.asyncio
+    async def test_state_cleanup_on_room_deletion(self, hass, mock_config_entry):
+        """async_room_removed cleans up _heat_source_states for the deleted room."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+
+        # Seed some state
+        coordinator._heat_source_states["test_room_123"] = "primary"
+        coordinator._heat_source_states["other_room_456"] = "secondary"
+
+        mock_registry = MagicMock()
+        mock_registry.entities = MagicMock()
+        mock_registry.entities.values.return_value = []
+
+        with patch(
+            "homeassistant.helpers.entity_registry.async_get",
+            return_value=mock_registry,
+        ):
+            await coordinator.async_room_removed("test_room_123")
+
+        assert "test_room_123" not in coordinator._heat_source_states
+        # Other rooms are not affected
+        assert coordinator._heat_source_states["other_room_456"] == "secondary"
+
+    @pytest.mark.asyncio
+    async def test_active_heat_sources_in_live_data(self, hass, mock_config_entry):
+        """_build_live_data includes active_heat_sources from _heat_source_states."""
+        from custom_components.roommind.managers.heat_source_orchestrator import (
+            HeatSourcePlan,
+        )
+
+        store = _make_store_mock({"living_room_abc12345": self.ROOM_WITH_BOTH})
+        hass.data = {"roommind": {"store": store}}
+
+        ac_state = MagicMock()
+        ac_state.state = "off"
+        ac_state.attributes = {"hvac_modes": ["heat", "cool", "off"], "min_temp": 16, "max_temp": 30}
+
+        base_mock = make_mock_states_get(temp="18.0")
+
+        def custom_get(eid):
+            if eid == "climate.living_room_ac":
+                return ac_state
+            return base_mock(eid)
+
+        hass.states.get = MagicMock(side_effect=custom_get)
+        hass.services.async_call = AsyncMock()
+
+        fake_plan = HeatSourcePlan(commands=[], active_sources="both", reason="test")
+
+        with patch(
+            "custom_components.roommind.coordinator.evaluate_heat_sources",
+            return_value=fake_plan,
+        ):
+            coordinator = _create_coordinator(hass, mock_config_entry)
+            data = await coordinator._async_update_data()
+
+        room_state = data["rooms"]["living_room_abc12345"]
+        assert room_state["active_heat_sources"] == "both"
+
+    @pytest.mark.asyncio
+    async def test_active_heat_sources_none_when_not_orchestrated(self, hass, mock_config_entry):
+        """active_heat_sources is None for rooms without orchestration."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        hass.data = {"roommind": {"store": store}}
+
+        hass.states.get = MagicMock(side_effect=make_mock_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room_state = data["rooms"]["living_room_abc12345"]
+        assert room_state["active_heat_sources"] is None

@@ -19,6 +19,8 @@ export class RsDeviceSection extends LitElement {
   @property({ type: Number }) public windowOpenDelay = 0;
   @property({ type: Number }) public windowCloseDelay = 0;
   @property({ type: String }) public heatingSystemType = "";
+  @property({ attribute: false }) public valveProtectionExclude: Set<string> = new Set();
+  @property({ type: Boolean }) public valveProtectionEnabled = false;
 
   @property({ type: Boolean }) public editing = false;
   @state() private _systemTypeInfoExpanded = false;
@@ -219,6 +221,38 @@ export class RsDeviceSection extends LitElement {
       margin-top: 1px;
     }
 
+    .valve-exclude-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 14px 2px 42px;
+      font-size: 12px;
+      color: var(--secondary-text-color);
+    }
+
+    .valve-exclude-row ha-icon {
+      --mdc-icon-size: 14px;
+      color: var(--secondary-text-color);
+    }
+
+    .valve-exclude-row ha-checkbox {
+      --mdc-checkbox-unchecked-color: var(--secondary-text-color);
+      margin: -8px -4px -8px -8px;
+    }
+
+    .valve-exclude-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--secondary-text-color);
+      background: var(--secondary-background-color);
+      padding: 2px 6px;
+      border-radius: 8px;
+      --mdc-icon-size: 12px;
+    }
+
     ha-entity-picker {
       width: 100%;
     }
@@ -396,11 +430,22 @@ export class RsDeviceSection extends LitElement {
         displayValue = `${Math.round(Number(state))}%`;
     }
 
+    const showExcludeBadge =
+      type === "climate" &&
+      this.valveProtectionEnabled &&
+      this.valveProtectionExclude.has(entityId);
+
     return html`
       <div class="view-row">
         <span class="view-name entity-link" @click=${() => openEntityInfo(this, entityId)}
           >${friendlyName}</span
         >
+        ${showExcludeBadge
+          ? html`<span class="valve-exclude-badge">
+              <ha-icon icon="mdi:shield-off-outline"></ha-icon>
+              ${localize("devices.valve_protection_excluded", this.hass.language)}
+            </span>`
+          : nothing}
         ${displayValue ? html`<span class="view-value">${displayValue}</span>` : nothing}
       </div>
     `;
@@ -448,11 +493,15 @@ export class RsDeviceSection extends LitElement {
 
   private _renderEditMode() {
     // Fetch all area entities once, then filter by category
+    // Exclude RoomMind's own entities to prevent self-assignment (#86)
     const allAreaEntities = getEntitiesForArea(
       this.area.area_id,
       this.hass?.entities,
       this.hass?.devices,
-    );
+    ).filter((e) => {
+      const idAfterDot = e.entity_id.substring(e.entity_id.indexOf(".") + 1);
+      return !idAfterDot.startsWith("roommind_");
+    });
 
     const areaClimateEntities = allAreaEntities.filter((e) => e.entity_id.startsWith("climate."));
 
@@ -686,6 +735,7 @@ export class RsDeviceSection extends LitElement {
     const friendlyName = (entityState?.attributes?.friendly_name as string) || entityId;
     const currentState = entityState?.state;
     const currentTemp = entityState?.attributes?.current_temperature as number | undefined;
+    const isExcluded = this.valveProtectionExclude.has(entityId);
 
     return html`
       <div class="device-row ${isSelected ? "selected" : ""}">
@@ -785,6 +835,24 @@ export class RsDeviceSection extends LitElement {
             `
           : nothing}
       </div>
+      ${isThermostat && this.valveProtectionEnabled
+        ? html`
+            <div
+              class="valve-exclude-row"
+              title=${localize("devices.valve_protection_exclude_hint", this.hass.language)}
+            >
+              <ha-checkbox
+                .checked=${isExcluded}
+                @change=${(e: Event) => {
+                  const target = e.target as HTMLElement & { checked: boolean };
+                  this._onValveProtectionExcludeToggle(entityId, target.checked);
+                }}
+              ></ha-checkbox>
+              <ha-icon icon="mdi:shield-off-outline"></ha-icon>
+              ${localize("devices.valve_protection_excluded", this.hass.language)}
+            </div>
+          `
+        : nothing}
     `;
   }
 
@@ -940,6 +1008,16 @@ export class RsDeviceSection extends LitElement {
     );
   }
 
+  private _onValveProtectionExcludeToggle(entityId: string, excluded: boolean) {
+    this.dispatchEvent(
+      new CustomEvent("valve-protection-exclude-toggle", {
+        detail: { entityId, excluded },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
   private _onHeatingSystemTypeChange(e: Event) {
     const raw = getSelectValue(e) ?? "";
     const value = raw === "standard" ? "" : raw;
@@ -955,6 +1033,9 @@ export class RsDeviceSection extends LitElement {
 
   private _entityFilter = (entity: { entity_id: string }): boolean => {
     const id = entity.entity_id;
+    // Exclude RoomMind's own entities to prevent self-assignment
+    const idAfterDot = id.substring(id.indexOf(".") + 1);
+    if (idAfterDot.startsWith("roommind_")) return false;
     // Exclude already-selected entities
     if (this.selectedThermostats.has(id) || this.selectedAcs.has(id)) return false;
     if (this.selectedTempSensor === id) return false;

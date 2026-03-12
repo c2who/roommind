@@ -6,7 +6,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.core import HomeAssistant
 
@@ -30,9 +30,34 @@ from .mpc_optimizer import MPCOptimizer, MPCPlan
 from .residual_heat import get_min_run_blocks
 from .thermal_model import RoomModelManager
 
+if TYPE_CHECKING:
+    from ..managers.heat_source_orchestrator import HeatSourcePlan
+
 _LOGGER = logging.getLogger(__name__)
 
 _SENTINEL: object = object()  # default marker for backward-compat keyword detection
+
+# Cache of last successfully sent command per climate entity.
+# Fallback for IR devices that don't report temperature attributes.
+# Persists across MPCController instances (created fresh each 30s cycle),
+# resets on integration reload (module reimport).
+_last_commands: dict[str, dict[str, Any]] = {}
+
+
+def _cache_entry(service: str, data: dict) -> dict[str, Any]:
+    """Build a cache entry from a service call."""
+    return {
+        "service": service,
+        "hvac_mode": data.get("hvac_mode"),
+        "temperature": data.get("temperature"),
+        "target_temp_low": data.get("target_temp_low"),
+        "target_temp_high": data.get("target_temp_high"),
+    }
+
+
+def clear_command_cache() -> None:
+    """Clear the sent-command cache (for tests)."""
+    _last_commands.clear()
 
 
 async def async_turn_off_climate(
@@ -54,6 +79,10 @@ async def async_turn_off_climate(
     if not hvac_modes or "off" in hvac_modes:
         if state and state.state == "off":
             return  # already off
+        # Cache fallback for IR devices
+        cached = _last_commands.get(entity_id)
+        if cached and cached.get("service") == "set_hvac_mode" and cached.get("hvac_mode") == "off":
+            return
         try:
             await hass.services.async_call(
                 "climate",
@@ -61,6 +90,7 @@ async def async_turn_off_climate(
                 {"entity_id": entity_id, "hvac_mode": "off"},
                 blocking=True,
             )
+            _last_commands[entity_id] = _cache_entry("set_hvac_mode", {"hvac_mode": "off"})
         except Exception:  # noqa: BLE001
             _LOGGER.warning(
                 "Area '%s': climate.set_hvac_mode(off) failed on '%s'",
@@ -92,11 +122,32 @@ async def async_turn_off_climate(
         )
         if cur_check is not None and round(cur_check, 1) == round(fallback_temp, 1):
             return
+        if cur_check is None:
+            cached = _last_commands.get(entity_id)
+            if cached and cached.get("service") == "set_temperature":
+                c_low = cached.get("target_temp_low")
+                c_high = cached.get("target_temp_high")
+                if (
+                    c_low is not None
+                    and c_high is not None
+                    and round(c_low, 1) == round(fallback_temp, 1)
+                    and round(c_high, 1) == round(fallback_temp, 1)
+                ):
+                    return
         svc_data: dict = {"entity_id": entity_id, "target_temp_low": fallback_temp, "target_temp_high": fallback_temp}
     else:
         current_temp_setting = state.attributes.get("temperature")
         if current_temp_setting is not None and round(current_temp_setting, 1) == round(fallback_temp, 1):
             return
+        if current_temp_setting is None:
+            cached = _last_commands.get(entity_id)
+            if (
+                cached
+                and cached.get("service") == "set_temperature"
+                and cached.get("temperature") is not None
+                and round(cached["temperature"], 1) == round(fallback_temp, 1)
+            ):
+                return
         svc_data = {"entity_id": entity_id, "temperature": fallback_temp}
 
     _LOGGER.debug(
@@ -112,6 +163,7 @@ async def async_turn_off_climate(
             svc_data,
             blocking=True,
         )
+        _last_commands[entity_id] = _cache_entry("set_temperature", svc_data)
     except Exception:  # noqa: BLE001
         _LOGGER.warning(
             "Area '%s': climate.set_temperature(%s) fallback failed on '%s'",
@@ -656,6 +708,7 @@ class MPCController:
         heating_boost_target: float | None = None,
         ac_heating_boost_target: float | None = None,
         cooling_boost_target: float | None = None,
+        heat_source_plan: HeatSourcePlan | None = None,
     ) -> None:
         """Apply the determined mode with proportional valve control."""
         # Backward compat: accept legacy keyword
@@ -768,6 +821,85 @@ class MPCController:
                         await self._call("set_temperature", {"entity_id": eid, "temperature": ac_target})
                     else:
                         await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
+            return
+
+        if mode == MODE_HEATING and heat_source_plan is not None:
+            # Orchestrated heating: route power to specific devices per plan
+            for cmd in heat_source_plan.commands:
+                if cmd.entity_id in _exclude:
+                    continue
+                if cmd.active:
+                    if cmd.device_type == "thermostat":
+                        if self.has_external_sensor and current_temp is not None:
+                            t = round(
+                                current_temp + cmd.power_fraction * (trv_heat_boost - current_temp),
+                                1,
+                            )
+                            t = max(effective_target, t)
+                            t = min(trv_heat_boost, t)
+                        else:
+                            t = trv_heat_boost if self.has_external_sensor else effective_target
+                        ha_t = celsius_to_ha_temp(self.hass, t)
+                        await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "heat"})
+                        await self._call(
+                            "set_temperature",
+                            {"entity_id": cmd.entity_id, "temperature": ha_t},
+                            temp_intent="heat",
+                        )
+                    else:  # ac
+                        if self.has_external_sensor and current_temp is not None:
+                            t = round(
+                                current_temp + cmd.power_fraction * (ac_heat_boost - current_temp),
+                                1,
+                            )
+                            t = max(effective_target, t)
+                            t = min(ac_heat_boost, t)
+                        else:
+                            t = effective_target
+                        ha_t = celsius_to_ha_temp(self.hass, t)
+                        ac_state = self.hass.states.get(cmd.entity_id)
+                        ac_modes = (ac_state.attributes.get("hvac_modes") or []) if ac_state else []
+                        if "heat" in ac_modes:
+                            await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "heat"})
+                            await self._call(
+                                "set_temperature",
+                                {"entity_id": cmd.entity_id, "temperature": ha_t},
+                                temp_intent="heat",
+                            )
+                        elif "heat_cool" in ac_modes:
+                            await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "heat_cool"})
+                            await self._call(
+                                "set_temperature",
+                                {"entity_id": cmd.entity_id, "temperature": ha_t},
+                                temp_intent="heat",
+                            )
+                        elif "auto" in ac_modes:
+                            await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "auto"})
+                            await self._call(
+                                "set_temperature",
+                                {"entity_id": cmd.entity_id, "temperature": ha_t},
+                                temp_intent="heat",
+                            )
+                        else:
+                            await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "off"})
+                else:
+                    # Inactive device
+                    if cmd.device_type == "thermostat":
+                        # Keep TRV in heat mode at current temp to keep valve closed
+                        # while the preferred source handles heating.
+                        # current_temp is guaranteed non-None here: the orchestrator
+                        # returns None when current_temp is None (line 100).
+                        assert current_temp is not None
+                        ha_t = celsius_to_ha_temp(self.hass, current_temp)
+                        await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "heat"})
+                        await self._call(
+                            "set_temperature",
+                            {"entity_id": cmd.entity_id, "temperature": ha_t},
+                            temp_intent="heat",
+                        )
+                    else:
+                        # ACs can be turned off without boiler cycling concerns
+                        await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "off"})
             return
 
         if mode == MODE_HEATING:
@@ -925,11 +1057,12 @@ class MPCController:
             if dev_max is not None and data["target_temp_high"] > dev_max:
                 data = {**data, "target_temp_high": dev_max}
 
-        # Skip redundant commands (avoids IR blaster beeping every cycle)
+        # --- Redundancy: primary (device state) then fallback (sent cache) ---
+        skip = False
         if state:
             if service == "set_hvac_mode" and state.state == data.get("hvac_mode"):
-                return
-            if service == "set_temperature":
+                skip = True
+            elif service == "set_temperature":
                 if "target_temp_low" in data:
                     cur_low = state.attributes.get("target_temp_low")
                     cur_high = state.attributes.get("target_temp_high")
@@ -943,15 +1076,48 @@ class MPCController:
                         and round(cur_low, 1) == round(des_low, 1)
                         and round(cur_high, 1) == round(des_high, 1)
                     ):
-                        return
+                        skip = True
                 else:
                     current = state.attributes.get("temperature")
                     desired = data.get("temperature")
                     if current is not None and desired is not None and round(current, 1) == round(desired, 1):
-                        return
+                        skip = True
+
+        # Fallback: check sent-command cache (for IR devices without state feedback)
+        if not skip and eid:
+            cached = _last_commands.get(eid)
+            if cached is not None and cached.get("service") == service:
+                if service == "set_hvac_mode":
+                    if cached.get("hvac_mode") == data.get("hvac_mode"):
+                        skip = True
+                elif service == "set_temperature":
+                    if "target_temp_low" in data:
+                        c_low = cached.get("target_temp_low")
+                        c_high = cached.get("target_temp_high")
+                        d_low = data.get("target_temp_low")
+                        d_high = data.get("target_temp_high")
+                        if (
+                            c_low is not None
+                            and d_low is not None
+                            and c_high is not None
+                            and d_high is not None
+                            and round(c_low, 1) == round(d_low, 1)
+                            and round(c_high, 1) == round(d_high, 1)
+                        ):
+                            skip = True
+                    else:
+                        c_temp = cached.get("temperature")
+                        d_temp = data.get("temperature")
+                        if c_temp is not None and d_temp is not None and round(c_temp, 1) == round(d_temp, 1):
+                            skip = True
+
+        if skip:
+            return
 
         try:
             await self.hass.services.async_call("climate", service, data, blocking=True)
+            if eid:
+                _last_commands[eid] = _cache_entry(service, data)
         except Exception:  # noqa: BLE001
             _LOGGER.warning(
                 "Area '%s': climate.%s failed on '%s'",

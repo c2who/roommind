@@ -79,6 +79,10 @@ _ROOM_SAVE_FIELDS = (
     "anomaly_suppress_heating",
     "anomaly_suppress_cooling",
     "anomaly_suppression_minutes",
+    "heat_source_orchestration",
+    "heat_source_primary_delta",
+    "heat_source_outdoor_threshold",
+    "heat_source_ac_min_outdoor",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -186,6 +190,7 @@ async def websocket_list_rooms(
             "active_cover_schedule_index": live.get("active_cover_schedule_index", -1),
             "cover_shading_active": live.get("cover_shading_active", False),
             "cover_shading_position": live.get("cover_shading_position"),
+            "active_heat_sources": live.get("active_heat_sources"),
         }
         result[area_id] = room_data
 
@@ -213,6 +218,7 @@ async def websocket_list_rooms(
             "presence_away_action": settings.get("presence_away_action", "eco"),
             "schedule_off_action": settings.get("schedule_off_action", "eco"),
             "anyone_home": _compute_anyone_home(hass, settings),
+            "valve_protection_enabled": settings.get("valve_protection_enabled", False),
         },
     )
 
@@ -276,6 +282,11 @@ async def websocket_list_rooms(
         vol.Optional("anomaly_suppression_minutes"): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=60)
         ),
+        vol.Optional("valve_protection_exclude"): [str],
+        vol.Optional("heat_source_orchestration"): bool,
+        vol.Optional("heat_source_primary_delta"): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=5.0)),
+        vol.Optional("heat_source_outdoor_threshold"): vol.All(vol.Coerce(float), vol.Range(min=-20, max=25)),
+        vol.Optional("heat_source_ac_min_outdoor"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=5)),
     }
 )
 @websocket_api.async_response
@@ -293,6 +304,27 @@ async def websocket_save_room(
     for key in _ROOM_SAVE_FIELDS:
         if key in msg:
             config[key] = msg[key]
+
+    # Reject RoomMind's own entities to prevent self-assignment (#86)
+    own_prefix = f"{DOMAIN}_"
+    for field in ("thermostats", "acs", "window_sensors", "covers"):
+        for eid in config.get(field, []):
+            if eid.split(".", 1)[-1].startswith(own_prefix):
+                connection.send_error(
+                    msg["id"],
+                    "invalid_entity",
+                    f"Cannot assign RoomMind's own entity '{eid}' to a room",
+                )
+                return
+    for field in ("temperature_sensor", "humidity_sensor"):
+        eid = config.get(field, "")
+        if eid and eid.split(".", 1)[-1].startswith(own_prefix):
+            connection.send_error(
+                msg["id"],
+                "invalid_entity",
+                f"Cannot assign RoomMind's own entity '{eid}' to a room",
+            )
+            return
 
     room = await store.async_save_room(area_id, config)
 

@@ -12,6 +12,9 @@ from .const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
+    DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
+    DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     DOMAIN,
 )
 
@@ -163,8 +166,15 @@ class RoomMindStore:
                 "is_outdoor": config.get("is_outdoor", False),
                 "anomaly_suppress_heating": config.get("anomaly_suppress_heating", True),
                 "anomaly_suppress_cooling": config.get("anomaly_suppress_cooling", True),
-                "anomaly_suppression_minutes": config.get(
-                    "anomaly_suppression_minutes", 10
+                "anomaly_suppression_minutes": config.get("anomaly_suppression_minutes", 10),
+                "valve_protection_exclude": config.get("valve_protection_exclude", []),
+                "heat_source_orchestration": config.get("heat_source_orchestration", False),
+                "heat_source_primary_delta": config.get("heat_source_primary_delta", DEFAULT_HEAT_SOURCE_PRIMARY_DELTA),
+                "heat_source_outdoor_threshold": config.get(
+                    "heat_source_outdoor_threshold", DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD
+                ),
+                "heat_source_ac_min_outdoor": config.get(
+                    "heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR
                 ),
             }
             self._data[area_id] = room
