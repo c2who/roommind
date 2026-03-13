@@ -493,12 +493,6 @@ export class RsAreaCard extends LitElement {
                 })}
               </span>`
             : nothing}
-          ${live.anomaly_suppressed
-            ? html`<span class="mold-badge prevention">
-                <ha-icon icon="mdi:thermometer-alert"></ha-icon>
-                ${localize("card.anomaly_suppressed", this.hass.language)}
-              </span>`
-            : nothing}
           ${showMpcIcon
             ? html`<span class="mpc-badge ${live.mpc_active ? "active" : "learning"}">
                 <ha-icon .icon=${live.mpc_active ? "mdi:brain" : "mdi:school-outline"}></ha-icon>

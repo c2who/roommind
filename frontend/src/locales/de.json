@@ -177,9 +177,7 @@
   "devices.valve_protection_exclude_hint": "Dieses Gerät wird nicht vom Ventilschutz bewegt (z.B. virtuelle Kessel-Entitäten)",
 
   "hero.window_open": "Fenster offen - pausiert",
-  "hero.anomaly_suppressed": "Anomalie erkannt — pausiert",
   "card.window_open": "Fenster offen",
-  "card.anomaly_suppressed": "Anomalie — pausiert",
 
   "room.section.covers": "Rollos & Jalousien",
   "covers.section_title": "Rollos & Jalousien",
@@ -398,14 +396,6 @@
   "card.mold_critical": "Schimmelgefahr!",
   "card.mold_prevention": "Schimmelschutz +{delta}{unit}",
   "room.mold_surface_rh": "Geschätzte Oberflächenfeuchte: {value}%",
-
-  "anomaly.section_title": "Anomalie-Erkennung",
-  "anomaly.section_hint": "Erkennt, wenn sich die Raumtemperatur schneller ändert als das Modell vorhersagt (z.B. passives Auskühlen durch gleichzeitiges Lüften in Nachbarräumen) und unterdrückt vorübergehend die unangemessene Heiz- oder Kühlaktion.",
-  "anomaly.suppress_heating": "Heizen bei anomaler Abkühlung unterdrücken",
-  "anomaly.suppress_heating_hint": "Verhindert Heizen, wenn der Raum schneller abkühlt als erwartet (z.B. kalte Luft aus Nachbarräumen).",
-  "anomaly.suppress_cooling": "Kühlen bei anomaler Erwärmung unterdrücken",
-  "anomaly.suppress_cooling_hint": "Verhindert Kühlen, wenn sich der Raum schneller erwärmt als erwartet.",
-  "anomaly.suppression_duration": "Unterdrückungsdauer",
 
   "passive_devices.section_title": "Passive Beobachtungen",
   "passive_devices.section_hint": "Externe Geräte, die die Raumtemperatur beeinflussen, aber nicht von RoomMind gesteuert werden. Verbessert die Genauigkeit des Lernmodells.",

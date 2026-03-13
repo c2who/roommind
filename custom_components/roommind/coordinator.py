@@ -17,7 +17,6 @@ from .const import (
     AC_HEATING_BOOST_TARGET,
     CLIMATE_MODE_COOL_ONLY,
     CLIMATE_MODE_HEAT_ONLY,
-    DEFAULT_ANOMALY_SUPPRESSION_MINUTES,
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
@@ -41,11 +40,9 @@ from .control.mpc_controller import (
     MPCController,
     check_acs_can_heat,
     get_can_heat_cool,
-    is_mpc_active,
 )
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
-from .managers.anomaly_manager import AnomalyManager
 from .managers.cover_orchestrator import CoverOrchestrator
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
@@ -107,8 +104,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._residual_tracker = ResidualHeatTracker()
         # EKF training accumulation
         self._ekf_training = EkfTrainingManager(self._model_manager)
-        # Anomaly detection (post-airing heating suppression)
-        self._anomaly_manager = AnomalyManager()
         # Cover/blind automatic control
         from .managers.cover_manager import CoverManager
 
@@ -346,7 +341,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "mold_surface_rh": None,
                 "mold_prevention_active": False,
                 "mold_prevention_delta": 0,
-                "anomaly_suppressed": None,
                 "shading_factor": 1.0,
                 "n_observations": 0,
                 "blind_position": None,
@@ -490,39 +484,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if window_open:
             mode = MODE_IDLE
             power_fraction = 0.0
-
-        # --- Anomaly detection: suppress heating/cooling on anomalous temp changes ---
-        anomaly_suppressed: str | None = None
-        if not window_open and current_temp is not None and self.outdoor_temp is not None:
-            innovation = self._model_manager.get_last_innovation(area_id)
-            pred_std = self._model_manager.get_prediction_std(
-                area_id, 0.0, current_temp, self.outdoor_temp, UPDATE_INTERVAL / 60.0
-            )
-            confidence = self._model_manager.get_confidence(area_id)
-            can_h, can_c = get_can_heat_cool(room, acs_can_heat=check_acs_can_heat(self.hass, room))
-            mpc_active_for_anomaly = is_mpc_active(
-                self._model_manager, area_id, can_h, can_c, current_temp, self.outdoor_temp
-            )
-            anomaly_suppressed = self._anomaly_manager.update(
-                area_id=area_id,
-                innovation=innovation,
-                prediction_std=pred_std,
-                confidence=confidence,
-                mpc_active=mpc_active_for_anomaly,
-                window_open=window_open,
-                suppress_heating_enabled=room.get("anomaly_suppress_heating", True),
-                suppress_cooling_enabled=room.get("anomaly_suppress_cooling", True),
-                suppression_minutes=room.get(
-                    "anomaly_suppression_minutes",
-                    DEFAULT_ANOMALY_SUPPRESSION_MINUTES,
-                ),
-            )
-            if anomaly_suppressed == "heating" and mode == MODE_HEATING:
-                mode = MODE_IDLE
-                power_fraction = 0.0
-            elif anomaly_suppressed == "cooling" and mode == MODE_COOLING:
-                mode = MODE_IDLE
-                power_fraction = 0.0
 
         # observed_mode/observed_pf: only populated when climate control is off
         observed_mode: str | None = None
@@ -719,7 +680,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 can_heat=can_heat,
                 can_cool=can_cool,
                 dt_minutes=UPDATE_INTERVAL / 60.0,
-                anomaly_suppressed=anomaly_suppressed is not None,
             )
         else:
             self._ekf_training.clear(area_id)
@@ -798,7 +758,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "mold_surface_rh": (round(mold_surface_rh, 1) if mold_surface_rh is not None else None),
             "mold_prevention_active": mold_prevention_active_room,
             "mold_prevention_delta": mold_prevention_temp_delta,
-            "anomaly_suppressed": anomaly_suppressed,
             "shading_factor": shading_factor,
             "n_observations": self._model_manager.get_n_observations(area_id),
             "blind_position": (
@@ -1254,7 +1213,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._ekf_training.remove_room(area_id)
         self._pending_predictions.pop(area_id, None)
         self._residual_tracker.remove_room(area_id)
-        self._anomaly_manager.remove_room(area_id)
         self._cover_orchestrator.remove_room(area_id)
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)

@@ -563,12 +563,6 @@ export class RsHeroStatus extends LitElement {
                     ${localize("hero.window_open", this.hass?.language ?? "en")}
                   </div>`
                 : nothing}
-              ${live.anomaly_suppressed && !this.isOutdoor
-                ? html`<div class="hero-window-open">
-                    <ha-icon icon="mdi:thermometer-alert"></ha-icon>
-                    ${localize("hero.anomaly_suppressed", this.hass?.language ?? "en")}
-                  </div>`
-                : nothing}
               <div class="hero-temps">
                 ${live.current_temp !== null
                   ? html`

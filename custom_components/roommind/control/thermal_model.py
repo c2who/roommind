@@ -298,14 +298,8 @@ class ThermalEKF:
         self._initialized: bool = False
         self._k_window: float = self._K_WINDOW_DEFAULT
         self._k_window_n: int = 0
-        self._last_innovation: float = 0.0
 
     # -- public API ----------------------------------------------------------
-
-    @property
-    def last_innovation(self) -> float:
-        """Last measurement innovation (T_measured - T_predicted)."""
-        return self._last_innovation
 
     @property
     def confidence(self) -> float:
@@ -685,7 +679,6 @@ class ThermalEKF:
         # Innovation
         y_pred = self._x[0]
         innovation = T_measured - y_pred
-        self._last_innovation = innovation
 
         # Innovation covariance: S = P[0][0] + R
         S = P[0][0] + self._R
@@ -901,12 +894,6 @@ class RoomModelManager:
         return self._estimators[area_id].prediction_std(
             Q_active, T_room, T_outdoor, dt_minutes, q_solar=q_solar, q_residual=q_residual
         )
-
-    def get_last_innovation(self, area_id: str) -> float:
-        """Return the last EKF innovation for *area_id* (0.0 if not available)."""
-        if area_id not in self._estimators:
-            return 0.0
-        return self._estimators[area_id].last_innovation
 
     def get_mode_counts(self, area_id: str) -> tuple[int, int, int]:
         """Return (n_idle, n_heating, n_cooling) for *area_id*."""
