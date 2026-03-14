@@ -55,7 +55,7 @@ class RoomMindCoverAutoSwitch(CoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_cover_auto"
-        self._attr_name = f"{area_id} Cover Auto"
+        self._attr_name = f"{area_id.replace('_', ' ').title()} Cover Auto"
         self._attr_icon = "mdi:blinds-horizontal"
         self.entity_id = f"switch.{DOMAIN}_{area_id}_cover_auto"
 

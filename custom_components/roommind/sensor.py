@@ -60,7 +60,7 @@ class _RoomMindBaseSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_{suffix}"
-        self._attr_name = f"{area_id} {name_label}"
+        self._attr_name = f"{area_id.replace('_', ' ').title()} {name_label}"
         self.entity_id = f"sensor.{DOMAIN}_{area_id}_{suffix}"
 
     @property

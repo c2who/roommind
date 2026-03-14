@@ -48,10 +48,10 @@ def test_unique_id_and_entity_id(mock_coordinator):
 
 
 def test_name(mock_coordinator):
-    """Climate entity name is the area_id."""
+    """Climate entity name is the area_id, title-cased."""
     coordinator, _ = mock_coordinator
     entity = RoomMindClimate(coordinator, "living_room")
-    assert entity.name == "living_room"
+    assert entity.name == "Living Room"
 
 
 # --- HVAC mode ---

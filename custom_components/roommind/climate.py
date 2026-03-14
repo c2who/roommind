@@ -95,7 +95,7 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_climate"
-        self._attr_name = area_id
+        self._attr_name = area_id.replace("_", " ").title()
         self.entity_id = f"climate.{DOMAIN}_{area_id}_climate"
 
     def _get_room(self) -> dict | None:
