@@ -4,7 +4,7 @@
 
 export type ClimateMode = "auto" | "heat_only" | "cool_only";
 
-export type RoomMode = "idle" | "heating" | "cooling";
+export type RoomMode = "idle" | "heating" | "cooling" | "disabled";
 
 export type OverrideType = "boost" | "eco" | "custom";
 

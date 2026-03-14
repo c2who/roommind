@@ -43,6 +43,8 @@ export function getModeClass(mode: RoomMode | undefined): string {
       return "mode-cooling";
     case "idle":
       return "mode-idle";
+    case "disabled":
+      return "mode-disabled";
     default:
       return "mode-other";
   }
@@ -52,6 +54,7 @@ const modeKeys: Record<RoomMode, TranslationKey> = {
   heating: "mode.heating",
   cooling: "mode.cooling",
   idle: "mode.idle",
+  disabled: "mode.disabled",
 };
 
 /**

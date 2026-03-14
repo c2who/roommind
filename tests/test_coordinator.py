@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from custom_components.roommind.const import MODE_IDLE
+from custom_components.roommind.const import MODE_DISABLED, MODE_IDLE
 from custom_components.roommind.managers.weather_manager import WeatherManager
 
 SAMPLE_ROOM = {
@@ -5235,3 +5235,20 @@ class TestHeatSourceOrchestration:
 
         room_state = data["rooms"]["living_room_abc12345"]
         assert room_state["active_heat_sources"] is None
+
+    @pytest.mark.asyncio
+    async def test_disabled_room_shows_disabled_mode(self, hass, mock_config_entry):
+        """When room_enabled=False, display mode should be 'disabled' not 'idle'."""
+        room = {**SAMPLE_ROOM, "room_enabled": False}
+        store = _make_store_mock({"living_room_abc12345": room})
+        hass.data = {"roommind": {"store": store}}
+
+        hass.states.get = MagicMock(side_effect=make_mock_states_get())
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        room_state = data["rooms"]["living_room_abc12345"]
+        assert room_state["mode"] == MODE_DISABLED
+        assert room_state["heating_power"] == 0

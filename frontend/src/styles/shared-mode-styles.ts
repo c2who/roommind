@@ -45,6 +45,15 @@ export const modeStyles = css`
     background: var(--disabled-text-color, #bdbdbd);
   }
 
+  .mode-disabled {
+    color: var(--disabled-text-color, #9e9e9e);
+    background: rgba(0, 0, 0, 0.04);
+    opacity: 0.7;
+  }
+  .mode-disabled .mode-dot {
+    background: var(--disabled-text-color, #9e9e9e);
+  }
+
   .mode-other {
     color: var(--secondary-text-color);
     background: rgba(0, 0, 0, 0.05);

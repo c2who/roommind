@@ -27,6 +27,7 @@ from .const import (
     HISTORY_WRITE_CYCLES,
     MAX_PREDICTION_DELTA,
     MODE_COOLING,
+    MODE_DISABLED,
     MODE_HEATING,
     MODE_IDLE,
     ROOM_ENABLED_DEFAULT,
@@ -717,7 +718,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Compute display mode: show actual device state when RoomMind doesn't
         # directly control the device, without affecting internal tracking
         # (residual heat, valve actuation, _previous_modes).  See #36, #69.
-        if control_active:
+        if not room_enabled:
+            display_mode = MODE_DISABLED
+            display_pf = 0.0
+        elif control_active:
             if has_external_sensor:
                 # Full Control: controller's mode is authoritative, but cross-check
                 # actual device state when MPC says IDLE — a device that ignores OFF
@@ -756,7 +760,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "heat_target": targets.heat,
             "cool_target": targets.cool,
             "mode": display_mode,
-            "heating_power": round(display_pf * 100) if display_mode != MODE_IDLE else 0,
+            "heating_power": round(display_pf * 100) if display_mode not in (MODE_IDLE, MODE_DISABLED) else 0,
             "device_setpoint": self._compute_device_setpoint_orchestrated(
                 heat_source_plan,
                 current_temp,

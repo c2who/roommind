@@ -99,6 +99,7 @@
   "mode.heating": "Heizen",
   "mode.cooling": "Kühlen",
   "mode.idle": "Standby",
+  "mode.disabled": "Deaktiviert",
 
   "schedule.add_schedule": "Zeitplan hinzufügen",
   "schedule.select_schedule": "Zeitplan-Helfer auswählen",

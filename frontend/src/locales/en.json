@@ -99,6 +99,7 @@
   "mode.heating": "Heating",
   "mode.cooling": "Cooling",
   "mode.idle": "Standby",
+  "mode.disabled": "Disabled",
 
   "schedule.add_schedule": "Add schedule",
   "schedule.select_schedule": "Select schedule helper",
