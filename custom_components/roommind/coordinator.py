@@ -88,6 +88,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self.outdoor_humidity: float | None = None
         self._window_manager = WindowManager()
         self._previous_modes: dict[str, str] = {}
+        self._previous_decisions: dict[str, dict] = {}
+        self._last_resolve_reason: dict[str, str] = {}
         self._model_manager: RoomModelManager = RoomModelManager()
         self._model_loaded = False
         self._thermal_save_count: int = 0
@@ -752,6 +754,36 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 display_mode = MODE_IDLE
                 display_pf = 0.0
 
+        # --- Decision logging ---
+        target_reason = self._last_resolve_reason.get(area_id, "unknown")
+        decision = {
+            "heat_target": targets.heat,
+            "cool_target": targets.cool,
+            "mode": display_mode,
+            "mpc_active": mpc_active,
+            "window_open": window_open,
+            "presence_away": presence_away,
+            "mold_prevention": mold_prevention_active_room,
+            "force_off": force_off,
+            "target_reason": target_reason,
+        }
+        prev = self._previous_decisions.get(area_id, {})
+        changes = {k: v for k, v in decision.items() if prev.get(k) != v}
+        if changes:
+            _LOGGER.info(
+                "[%s] %s | temp=%s targets=%s/%s (%s) mode=%s pf=%.0f%% mpc=%s",
+                area_id,
+                " ".join(f"{k}={v}" for k, v in changes.items()),
+                f"{current_temp:.1f}" if current_temp is not None else "n/a",
+                f"{targets.heat:.1f}" if targets.heat is not None else "off",
+                f"{targets.cool:.1f}" if targets.cool is not None else "off",
+                target_reason,
+                display_mode,
+                display_pf * 100,
+                mpc_active,
+            )
+        self._previous_decisions[area_id] = decision
+
         return {
             "area_id": area_id,
             "current_temp": current_temp,
@@ -1073,7 +1105,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         Priority: override > vacation > presence away > schedule block temp > comfort/eco.
         Returns TargetTemps(heat, cool). None values mean "force off".
+        Sets self._last_resolve_reason[area_id] as a side effect.
         """
+        area_id = room.get("area_id", "unknown")
+
         # 1. Override — dual-target or single-point
         override_temp = room.get("override_temp")
         override_until = room.get("override_until")
@@ -1082,13 +1117,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         has_override = override_temp is not None or (override_heat is not None and override_cool is not None)
         if has_override:
             if override_until is None or time.time() < override_until:
+                self._last_resolve_reason[area_id] = "override"
                 if override_heat is not None and override_cool is not None:
                     return TargetTemps(heat=float(override_heat), cool=float(override_cool))
                 t = float(override_temp)  # type: ignore[arg-type]
                 return TargetTemps(heat=t, cool=t)
             else:
                 # Timed override has expired — auto-clear
-                area_id = room.get("area_id", "unknown")
                 store = self.hass.data[DOMAIN]["store"]
                 self.hass.async_create_task(
                     store.async_update_room(
@@ -1111,6 +1146,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 if vacation_temp is not None:
                     t = float(vacation_temp)
                     eco_cool = room.get("eco_cool", DEFAULT_ECO_COOL)
+                    self._last_resolve_reason[area_id] = "vacation"
                     return TargetTemps(heat=t, cool=max(t, eco_cool))
             else:
                 self.hass.async_create_task(
@@ -1123,7 +1159,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # 2.5 Presence-based eco or off
         if self._is_presence_away(room, settings):
-            if settings.get("presence_away_action", "eco") == "off":
+            action = settings.get("presence_away_action", "eco")
+            self._last_resolve_reason[area_id] = "presence_away"
+            if action == "off":
                 return TargetTemps(heat=None, cool=None)
             return TargetTemps(
                 heat=room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT)),
@@ -1138,19 +1176,23 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         idx = self._get_active_schedule_index(room)
         if idx < 0:
+            self._last_resolve_reason[area_id] = "comfort"
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
 
         schedules = room.get("schedules", [])
         schedule_entity_id = schedules[idx].get("entity_id", "")
 
         if not schedule_entity_id:
+            self._last_resolve_reason[area_id] = "comfort"
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
 
         state = self.hass.states.get(schedule_entity_id)
         if state is None or state.state in ("unavailable", "unknown"):
+            self._last_resolve_reason[area_id] = "comfort"
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
 
         if state.state == SCHEDULE_STATE_ON:
+            self._last_resolve_reason[area_id] = "schedule_on"
             # Check for split heat/cool temps first
             heat_temp = state.attributes.get("heat_temperature")
             cool_temp = state.attributes.get("cool_temperature")
@@ -1178,6 +1220,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
 
         # Schedule is "off" -> eco or off
+        self._last_resolve_reason[area_id] = "schedule_off"
         if settings.get("schedule_off_action", "eco") == "off":
             return TargetTemps(heat=None, cool=None)
         return TargetTemps(heat=eco_heat, cool=eco_cool)
@@ -1252,6 +1295,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Clean up in-memory state
         self._window_manager.remove_room(area_id)
         self._previous_modes.pop(area_id, None)
+        self._previous_decisions.pop(area_id, None)
+        self._last_resolve_reason.pop(area_id, None)
         self._ekf_training.remove_room(area_id)
         self._pending_predictions.pop(area_id, None)
         self._residual_tracker.remove_room(area_id)

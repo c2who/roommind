@@ -46,6 +46,7 @@ class MoldManager:
         self.hass = hass
         self._risk_since: dict[str, float] = {}
         self._prevention_active: dict[str, bool] = {}
+        self._prev_risk: dict[str, str] = {}
         self._throttler = NotificationThrottler()
 
     async def evaluate(
@@ -78,6 +79,14 @@ class MoldManager:
         )
         result.risk_level = risk_level
         result.surface_rh = surface_rh
+
+        prev_risk = self._prev_risk.get(area_id, MOLD_RISK_OK)
+        if risk_level != prev_risk:
+            _LOGGER.info(
+                "[%s] Mold risk: %s -> %s (humidity=%.0f%% surface_rh=%.0f%%)",
+                area_id, prev_risk, risk_level, current_humidity, surface_rh or 0,
+            )
+            self._prev_risk[area_id] = risk_level
 
         threshold = settings.get(
             "mold_humidity_threshold",
@@ -137,6 +146,10 @@ class MoldManager:
 
                 if not self._prevention_active.get(area_id):
                     self._prevention_active[area_id] = True
+                    _LOGGER.info(
+                        "[%s] Mold prevention activated (delta=+%.1f, intensity=%s)",
+                        area_id, result.prevention_delta, intensity,
+                    )
                     if (
                         settings.get("mold_prevention_notify_enabled")
                         and settings.get("mold_notifications_enabled", True)
@@ -170,6 +183,10 @@ class MoldManager:
                 self._risk_since.pop(area_id, None)
                 if self._prevention_active.get(area_id):
                     self._prevention_active[area_id] = False
+                    _LOGGER.info(
+                        "[%s] Mold prevention deactivated (surface_rh=%.0f%%)",
+                        area_id, surface_rh,
+                    )
                     dismiss_mold_notification(
                         self.hass,
                         area_id,
@@ -189,5 +206,6 @@ class MoldManager:
         """Clean up state for a removed room."""
         self._risk_since.pop(area_id, None)
         self._prevention_active.pop(area_id, None)
+        self._prev_risk.pop(area_id, None)
         self._throttler.clear(f"detect_{area_id}")
         self._throttler.clear(f"prevent_{area_id}")

@@ -487,10 +487,18 @@ class MPCController:
         )
 
         if mode == MODE_HEATING:
-            return predicted >= target + margin
-        if mode == MODE_COOLING:
-            return predicted <= target - margin
-        return False
+            should_exit = predicted >= target + margin
+        elif mode == MODE_COOLING:
+            should_exit = predicted <= target - margin
+        else:
+            should_exit = False
+
+        if should_exit:
+            _LOGGER.debug(
+                "[%s] Early exit min-run: predicted=%.1f target=%.1f remaining=%.0fmin mode=%s",
+                self._area_id, predicted, target, remaining_minutes, mode,
+            )
+        return should_exit
 
     def _evaluate_mpc(
         self,
@@ -588,12 +596,20 @@ class MPCController:
             if not self._within_min_run(MODE_HEATING) or self._should_early_exit_min_run(
                 MODE_HEATING, current_temp, max(near_heat)
             ):
+                _LOGGER.debug(
+                    "[%s] Safety guard: overrode HEATING to IDLE (temp %.1f >= max target %.1f)",
+                    self._area_id, current_temp, max(near_heat),
+                )
                 action = MODE_IDLE
                 power_fraction = 0.0
         elif near_cool and action == MODE_COOLING and current_temp <= min(near_cool):
             if not self._within_min_run(MODE_COOLING) or self._should_early_exit_min_run(
                 MODE_COOLING, current_temp, min(near_cool)
             ):
+                _LOGGER.debug(
+                    "[%s] Safety guard: overrode COOLING to IDLE (temp %.1f <= min target %.1f)",
+                    self._area_id, current_temp, min(near_cool),
+                )
                 action = MODE_IDLE
                 power_fraction = 0.0
 

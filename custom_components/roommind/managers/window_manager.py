@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import time
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class WindowManager:
@@ -32,6 +35,7 @@ class WindowManager:
                     self._open_since[area_id] = now
                 if now - self._open_since[area_id] >= open_delay:
                     self._paused[area_id] = True
+                    _LOGGER.info("[%s] Window open confirmed after %ds -> climate paused", area_id, open_delay)
         else:
             self._open_since.pop(area_id, None)
             if was_paused:
@@ -40,6 +44,7 @@ class WindowManager:
                 if now - self._closed_since[area_id] >= close_delay:
                     self._paused[area_id] = False
                     self._closed_since.pop(area_id, None)
+                    _LOGGER.info("[%s] Window closed confirmed after %ds -> climate resumed", area_id, close_delay)
 
         return self._paused.get(area_id, False)
 
