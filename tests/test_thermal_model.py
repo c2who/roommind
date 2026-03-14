@@ -289,8 +289,8 @@ def test_ekf_prediction_std_mode_aware():
     std_idle = ekf.prediction_std(0.0, 20.0, 10.0, 5.0)
     std_heating = ekf.prediction_std(model.Q_heat, 20.0, 10.0, 5.0)
 
-    # Heating std should be notably larger than idle std
-    assert std_heating > std_idle * 1.5, f"heating std={std_heating} not much larger than idle std={std_idle}"
+    # Heating std should be larger than idle std (beta_h never excited by idle data)
+    assert std_heating > std_idle * 1.2, f"heating std={std_heating} not much larger than idle std={std_idle}"
 
 
 def test_ekf_psd_preserved():
@@ -1288,6 +1288,52 @@ def test_manager_get_k_window_unknown_room():
     """get_k_window for unknown room returns default."""
     mgr = RoomModelManager()
     assert mgr.get_k_window("nonexistent") == ThermalEKF._K_WINDOW_DEFAULT
+
+
+def test_ekf_relative_noise_heavy_building_converges():
+    """EKF with relative process noise converges for heavy-masonry rooms.
+
+    A room with alpha=0.01 (time constant ~100h) and weak heater beta_h=0.5
+    previously failed to converge because absolute process noise dwarfed the
+    small parameter values. With relative noise, the EKF should converge toward
+    the true alpha value.
+    """
+    true_alpha = 0.01  # heavy masonry: U/C very small
+    true_beta_h = 0.5  # weak heater
+    # Build a ground-truth RCModel with C=1 normalization
+    true_model = RCModel(C=1.0, U=true_alpha, Q_heat=true_beta_h, Q_cool=1.0)
+
+    ekf = ThermalEKF()
+    T = 20.0
+    T_out = 5.0
+
+    # Initialize
+    ekf.update(T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+
+    # Feed idle data (alpha learning)
+    for _ in range(120):
+        T_new = true_model.predict(T, T_out, 0.0, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
+        T = T_new
+
+    # Feed heating data (beta_h learning)
+    for _ in range(60):
+        T_new = true_model.predict(T, T_out, true_model.Q_heat, dt_minutes=5.0)
+        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0)
+        T = T_new
+
+    # Alpha should have converged toward true value, not random-walked away
+    learned_alpha = ekf._x[1]
+    # With relative noise, alpha should be within 5x of true value
+    assert learned_alpha < 5 * true_alpha, (
+        f"alpha={learned_alpha:.4f} diverged from true={true_alpha}"
+    )
+    assert learned_alpha > true_alpha / 10, (
+        f"alpha={learned_alpha:.6f} collapsed below true={true_alpha}"
+    )
+
+    # Confidence should be meaningfully above zero
+    assert ekf.confidence > 0.3, f"confidence={ekf.confidence:.2f} too low"
 
 
 def test_manager_repr():

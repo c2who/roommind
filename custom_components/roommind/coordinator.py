@@ -700,9 +700,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # (residual heat, valve actuation, _previous_modes).  See #36, #69.
         if climate_active:
             if has_external_sensor:
-                # Full Control: controller's mode is authoritative
-                display_mode = mode
-                display_pf = power_fraction
+                # Full Control: controller's mode is authoritative, but cross-check
+                # actual device state when MPC says IDLE — a device that ignores OFF
+                # should show its actual state in analytics.
+                if mode == MODE_IDLE:
+                    obs_mode, obs_pf = self._observe_device_action(room)
+                    if obs_mode is not None and obs_mode != MODE_IDLE:
+                        display_mode = obs_mode
+                        display_pf = obs_pf
+                    else:
+                        display_mode = mode
+                        display_pf = power_fraction
+                else:
+                    display_mode = mode
+                    display_pf = power_fraction
             else:
                 # Managed Mode: show observed/inferred device state (#69)
                 display_mode = managed_display_mode if managed_display_mode is not None else mode

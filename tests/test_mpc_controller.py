@@ -2626,6 +2626,79 @@ def test_evaluate_mpc_safety_guard_fires_after_default_min_run_heating(monkeypat
     assert pf == 0.0
 
 
+def test_evaluate_mpc_passes_initial_mode_within_min_run(monkeypatch):
+    """MPC passes initial_mode and blocks_in_mode to optimizer within min-run window."""
+    hass = build_hass()
+    room = make_room()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        heating_system_type="radiator",
+        mode_on_since=time.time() - 120,  # started 2 min ago → blocks_in_mode < min_run
+    )
+    captured = {}
+
+    def spy_optimize(*a, **kw):
+        captured["initial_mode"] = kw.get("initial_mode")
+        captured["initial_blocks_in_mode"] = kw.get("initial_blocks_in_mode")
+        return MPCPlan(
+            actions=[MODE_HEATING] * 6,
+            temperatures=[22.0] * 7,
+            power_fractions=[1.0] * 6,
+        )
+
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        spy_optimize,
+    )
+    mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=22.5, cool=24.0))
+    assert captured["initial_mode"] == MODE_HEATING
+    assert captured["initial_blocks_in_mode"] >= 1
+    assert mode == MODE_HEATING
+
+
+def test_evaluate_mpc_passes_zero_blocks_when_idle(monkeypatch):
+    """MPC passes blocks_in_mode=0 when previous mode is idle."""
+    hass = build_hass()
+    room = make_room()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_IDLE,
+        heating_system_type="radiator",
+    )
+    captured = {}
+
+    def spy_optimize(*a, **kw):
+        captured["initial_mode"] = kw.get("initial_mode")
+        captured["initial_blocks_in_mode"] = kw.get("initial_blocks_in_mode")
+        return MPCPlan(
+            actions=[MODE_IDLE] * 6,
+            temperatures=[22.0] * 7,
+            power_fractions=[0.0] * 6,
+        )
+
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        spy_optimize,
+    )
+    mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=22.5, cool=24.0))
+    assert captured["initial_mode"] == MODE_IDLE
+    assert captured["initial_blocks_in_mode"] == 0
+    assert mode == MODE_IDLE
+
+
 # ---------------------------------------------------------------------------
 # _evaluate_mpc without target_resolver
 # ---------------------------------------------------------------------------
@@ -4060,7 +4133,7 @@ async def test_call_cache_hvac_mode_fallback_no_state():
 
 @pytest.mark.asyncio
 async def test_turn_off_cache_fallback():
-    """async_turn_off_climate skips when cache says device is already off."""
+    """async_turn_off_climate: cache says off but device state is 'heat' → resend."""
     hass = build_hass()
     state = MagicMock()
     state.state = "heat"
@@ -4077,7 +4150,8 @@ async def test_turn_off_cache_fallback():
     }
 
     await async_turn_off_climate(hass, "climate.ac")
-    hass.services.async_call.assert_not_called()
+    # Device state contradicts cache — command must be resent
+    hass.services.async_call.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -4925,3 +4999,155 @@ async def test_heat_source_plan_managed_mode_no_external_sensor():
     ac_temp = [c for c in calls if c[0][1] == "set_temperature" and c[0][2]["entity_id"] == "climate.ac1"]
     assert len(ac_temp) == 1
     assert ac_temp[0][0][2]["temperature"] == 21.0
+
+
+# ---------------------------------------------------------------------------
+# Cache contradiction tests — device state contradicts stale cache
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_turn_off_cache_stale_device_still_heating():
+    """Cache says 'off' but device state is 'heat' → cache invalidated, command resent."""
+    hass = build_hass()
+    state = MagicMock()
+    state.state = "heat"
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    hass.states.get = MagicMock(return_value=state)
+
+    # Prepopulate cache as if we already sent off
+    _last_commands["climate.trv"] = {
+        "service": "set_hvac_mode",
+        "hvac_mode": "off",
+        "temperature": None,
+        "target_temp_low": None,
+        "target_temp_high": None,
+    }
+
+    await async_turn_off_climate(hass, "climate.trv", area_id="room_a")
+    # Should have resent the off command because device is still heating
+    hass.services.async_call.assert_called_once()
+    call_args = hass.services.async_call.call_args[0]
+    assert call_args[1] == "set_hvac_mode"
+    assert call_args[2]["hvac_mode"] == "off"
+
+
+@pytest.mark.asyncio
+async def test_turn_off_cache_respected_when_unavailable():
+    """Cache says 'off' and device state is 'unavailable' → command skipped (IR path)."""
+    hass = build_hass()
+    state = MagicMock()
+    state.state = "unavailable"
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    hass.states.get = MagicMock(return_value=state)
+
+    _last_commands["climate.ir_ac"] = {
+        "service": "set_hvac_mode",
+        "hvac_mode": "off",
+        "temperature": None,
+        "target_temp_low": None,
+        "target_temp_high": None,
+    }
+
+    await async_turn_off_climate(hass, "climate.ir_ac", area_id="room_a")
+    hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_turn_off_cache_respected_when_no_state():
+    """Cache says 'off' and no state object → command skipped (IR path)."""
+    hass = build_hass()
+    hass.states.get = MagicMock(return_value=None)
+
+    _last_commands["climate.ir_ac"] = {
+        "service": "set_hvac_mode",
+        "hvac_mode": "off",
+        "temperature": None,
+        "target_temp_low": None,
+        "target_temp_high": None,
+    }
+
+    await async_turn_off_climate(hass, "climate.ir_ac", area_id="room_a")
+    hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_cache_hvac_mode_stale_device_contradicts():
+    """_call: cache says 'off' but device state is 'heat' → cache invalidated, resend."""
+    _last_commands.clear()
+    hass = build_hass()
+    state = MagicMock()
+    state.state = "heat"
+    state.attributes = {"hvac_modes": ["heat", "off"], "min_temp": 5.0, "max_temp": 30.0}
+    hass.states.get = MagicMock(return_value=state)
+
+    # Prepopulate cache as if we already sent off
+    _last_commands["climate.living_trv"] = {
+        "service": "set_hvac_mode",
+        "hvac_mode": "off",
+        "temperature": None,
+        "target_temp_low": None,
+        "target_temp_high": None,
+    }
+
+    room = make_room()
+    ctrl = MPCController(
+        hass, room, model_manager=RoomModelManager(), outdoor_temp=5.0, settings={}, has_external_sensor=True
+    )
+    # Primary dedup: state.state == "heat" != "off", so no skip
+    # Cache: cached "off" == requested "off", but state is "heat" → invalidate, resend
+    await ctrl._call("set_hvac_mode", {"entity_id": "climate.living_trv", "hvac_mode": "off"})
+    hass.services.async_call.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_call_cache_hvac_mode_respected_when_unavailable():
+    """_call: cache says 'heat' and device is unavailable → skip (IR device path)."""
+    _last_commands.clear()
+    hass = build_hass()
+    state = MagicMock()
+    state.state = "unavailable"
+    state.attributes = {"hvac_modes": ["heat", "off"], "min_temp": 5.0, "max_temp": 30.0}
+    hass.states.get = MagicMock(return_value=state)
+
+    _last_commands["climate.ir_ac"] = {
+        "service": "set_hvac_mode",
+        "hvac_mode": "heat",
+        "temperature": None,
+        "target_temp_low": None,
+        "target_temp_high": None,
+    }
+
+    room = make_room()
+    ctrl = MPCController(
+        hass, room, model_manager=RoomModelManager(), outdoor_temp=5.0, settings={}, has_external_sensor=True
+    )
+    await ctrl._call("set_hvac_mode", {"entity_id": "climate.ir_ac", "hvac_mode": "heat"})
+    hass.services.async_call.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_cache_hvac_mode_confirmed_by_device():
+    """_call: cache says 'heat' and device state is 'heat' → skip (confirmed)."""
+    _last_commands.clear()
+    hass = build_hass()
+    state = MagicMock()
+    state.state = "heat"
+    state.attributes = {"hvac_modes": ["heat", "off"], "min_temp": 5.0, "max_temp": 30.0}
+    hass.states.get = MagicMock(return_value=state)
+
+    _last_commands["climate.living_trv"] = {
+        "service": "set_hvac_mode",
+        "hvac_mode": "heat",
+        "temperature": None,
+        "target_temp_low": None,
+        "target_temp_high": None,
+    }
+
+    room = make_room()
+    ctrl = MPCController(
+        hass, room, model_manager=RoomModelManager(), outdoor_temp=5.0, settings={}, has_external_sensor=True
+    )
+    await ctrl._call("set_hvac_mode", {"entity_id": "climate.living_trv", "hvac_mode": "heat"})
+    # Primary dedup catches this (state.state == "heat" == requested), so no call
+    hass.services.async_call.assert_not_called()

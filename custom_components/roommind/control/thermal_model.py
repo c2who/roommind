@@ -247,11 +247,51 @@ class ThermalEKF:
 
     # Process noise (diagonal of Q_noise matrix)
     # Higher values keep the filter adaptive; lower values freeze parameters.
-    _Q_T: float = 0.01  # unmodeled disturbances (~0.1 degC/step)
-    _Q_ALPHA: float = 0.001  # building property drift (10x previous)
-    _Q_BETA_H: float = 0.005  # HVAC power drift (5x previous)
-    _Q_BETA_C: float = 0.005  # HVAC power drift (5x previous)
-    _Q_BETA_S: float = 0.002  # solar gain drift
+    _Q_T: float = 0.01  # absolute — unmodeled disturbances (~0.1 degC/step)
+
+    # --- Relative (proportional) process noise ---
+    #
+    # Why relative instead of fixed absolute noise?
+    #   With fixed Q values, the Kalman gain for a parameter is independent of
+    #   that parameter's current magnitude.  This causes two problems:
+    #     1. Small parameters (e.g. alpha≈0.02 for a well-insulated room) get
+    #        the same absolute noise as large ones, making the filter jittery
+    #        and slow to converge on small values.
+    #     2. Large parameters (e.g. beta_h≈10 for a powerful heater) get
+    #        relatively tiny noise, effectively freezing the filter and
+    #        preventing it from tracking real drift.
+    #
+    # How it works:
+    #   For each learned parameter x, the process noise variance is:
+    #       Q_x = clamp((rel * x)^2,  floor,  cap)
+    #   - The squared term converts a relative standard-deviation fraction into
+    #     variance (EKF covariance units).
+    #   - The floor prevents Q from collapsing to zero when x is near zero
+    #     (e.g. alpha at its lower bound), which would freeze the parameter.
+    #   - The cap prevents runaway noise for very large parameter values, which
+    #     would destabilize the filter.
+    #
+    # Calibration: relative fractions were chosen so that at the default
+    # parameter values (alpha=0.15, beta_h=3.0, beta_c=4.0, beta_s=0.5) the
+    # resulting Q values match the previous fixed absolute noise, ensuring
+    # identical behavior for typical rooms while improving extreme cases.
+    _Q_ALPHA_REL: float = 0.21  # 21% per step → (0.21*0.15)^2 ≈ 0.001
+    _Q_BETA_H_REL: float = 0.024  # 2.4% per step → (0.024*3.0)^2 ≈ 0.005
+    _Q_BETA_C_REL: float = 0.018  # 1.8% per step → (0.018*4.0)^2 ≈ 0.005
+    _Q_BETA_S_REL: float = 0.09  # 9% per step → (0.09*0.5)^2 ≈ 0.002
+
+    # Floors: keep the filter learning even when the parameter is near zero.
+    # Only needed for alpha and beta_s which can legitimately be very small;
+    # beta_h/beta_c have natural lower bounds from HVAC physics.
+    _Q_ALPHA_FLOOR: float = 1e-6
+    _Q_BETA_S_FLOOR: float = 1e-4
+
+    # Caps: bound the noise for very large parameter values to prevent
+    # covariance growth that would make the filter overshoot on every update.
+    _Q_ALPHA_CAP: float = 0.01
+    _Q_BETA_H_CAP: float = 0.05
+    _Q_BETA_C_CAP: float = 0.05
+    _Q_BETA_S_CAP: float = 0.01
 
     # Measurement noise
     _R: float = 0.04  # sensor noise variance (0.2 degC std)
@@ -653,7 +693,14 @@ class ThermalEKF:
         # Covariance prediction: P = F @ P @ F^T + Q_noise
         N = self._N
         P = self._P
-        Q = [self._Q_T, self._Q_ALPHA, self._Q_BETA_H, self._Q_BETA_C, self._Q_BETA_S]
+        # Per-parameter relative process noise: Q_x = clamp((rel * x)^2, floor, cap)
+        Q = [
+            self._Q_T,
+            min(max((self._Q_ALPHA_REL * alpha) ** 2, self._Q_ALPHA_FLOOR), self._Q_ALPHA_CAP),
+            min((self._Q_BETA_H_REL * beta_h) ** 2, self._Q_BETA_H_CAP),
+            min((self._Q_BETA_C_REL * beta_c) ** 2, self._Q_BETA_C_CAP),
+            min(max((self._Q_BETA_S_REL * beta_s) ** 2, self._Q_BETA_S_FLOOR), self._Q_BETA_S_CAP),
+        ]
 
         # FP = F @ P
         FP = [[sum(F[i][k] * P[k][j] for k in range(N)) for j in range(N)] for i in range(N)]
@@ -855,6 +902,44 @@ class RoomModelManager:
         est.update(
             T_new, T_outdoor, mode, dt_minutes, power_fraction=power_fraction, q_solar=q_solar, q_residual=q_residual
         )
+
+        # Periodic diagnostic log (~every 9 min at ~3 min EKF update interval).
+        # Outputs: confidence %, physical params (tau, heating/cooling rates),
+        # prediction std at idle/heat, raw EKF state with covariance diagonals,
+        # and current Q noise values. Useful for tuning and spotting divergence.
+        if est._n_updates > 0 and est._n_updates % 3 == 0:
+            alpha, beta_h, beta_c, beta_s = est._x[1], est._x[2], est._x[3], est._x[4]
+            P = est._P
+            tau = 1.0 / alpha if alpha > 0 else float("inf")
+            std_idle = est.prediction_std(0.0, T_new, T_outdoor, 5.0)
+            std_heat = est.prediction_std(beta_h, T_new, T_outdoor, 5.0)
+            _LOGGER.info(
+                "EKF [%s] n=%d conf=%.0f%% | tau=%.1fh heat=%.1f°C/h cool=%.1f°C/h solar=%.2f°C/h "
+                "| std_idle=%.3f std_heat=%.3f "
+                "| alpha=%.4f (P=%.2e) beta_h=%.2f (P=%.2e) beta_c=%.2f (P=%.2e) beta_s=%.3f (P=%.2e) "
+                "| Q_alpha=%.2e Q_bh=%.2e Q_bc=%.2e Q_bs=%.2e",
+                area_id,
+                est._n_updates,
+                est.confidence * 100,
+                tau,
+                beta_h,
+                beta_c,
+                beta_s,
+                std_idle,
+                std_heat,
+                alpha,
+                P[1][1],
+                beta_h,
+                P[2][2],
+                beta_c,
+                P[3][3],
+                beta_s,
+                P[4][4],
+                min(max((est._Q_ALPHA_REL * alpha) ** 2, est._Q_ALPHA_FLOOR), est._Q_ALPHA_CAP),
+                min((est._Q_BETA_H_REL * beta_h) ** 2, est._Q_BETA_H_CAP),
+                min((est._Q_BETA_C_REL * beta_c) ** 2, est._Q_BETA_C_CAP),
+                min(max((est._Q_BETA_S_REL * beta_s) ** 2, est._Q_BETA_S_FLOOR), est._Q_BETA_S_CAP),
+            )
 
     def predict(
         self,

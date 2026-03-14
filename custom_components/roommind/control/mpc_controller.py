@@ -79,10 +79,13 @@ async def async_turn_off_climate(
     if not hvac_modes or "off" in hvac_modes:
         if state and state.state == "off":
             return  # already off
-        # Cache fallback for IR devices
+        # Cache fallback: only trust when device lacks reliable state (IR blasters)
         cached = _last_commands.get(entity_id)
         if cached and cached.get("service") == "set_hvac_mode" and cached.get("hvac_mode") == "off":
-            return
+            if not state or state.state in ("unavailable", "unknown", None):
+                return
+            # Device state contradicts cache — stale, invalidate and resend
+            _last_commands.pop(entity_id, None)
         try:
             await hass.services.async_call(
                 "climate",
@@ -509,6 +512,14 @@ class MPCController:
             min_run_blocks=min_run,
         )
 
+        # Pass current mode state so the optimizer enforces min_run
+        # across 30s re-planning cycles.
+        if self.previous_mode != MODE_IDLE and self._mode_on_since is not None:
+            elapsed = time.time() - self._mode_on_since
+            blocks_in_mode = max(1, int(elapsed / (PLAN_DT_MINUTES * 60)))
+        else:
+            blocks_in_mode = 0
+
         plan = optimizer.optimize(
             T_room=current_temp,
             T_outdoor_series=outdoor_series,
@@ -517,6 +528,8 @@ class MPCController:
             dt_minutes=PLAN_DT_MINUTES,
             solar_series=solar_series,
             residual_series=residual_series,
+            initial_mode=self.previous_mode,
+            initial_blocks_in_mode=blocks_in_mode,
         )
         self.last_plan = plan
 
@@ -1089,7 +1102,12 @@ class MPCController:
             if cached is not None and cached.get("service") == service:
                 if service == "set_hvac_mode":
                     if cached.get("hvac_mode") == data.get("hvac_mode"):
-                        skip = True
+                        if not state or state.state in ("unavailable", "unknown", None):
+                            skip = True
+                        elif state.state == data.get("hvac_mode"):
+                            skip = True  # device state confirms — safe to skip
+                        else:
+                            _last_commands.pop(eid, None)  # stale cache, resend
                 elif service == "set_temperature":
                     if "target_temp_low" in data:
                         c_low = cached.get("target_temp_low")

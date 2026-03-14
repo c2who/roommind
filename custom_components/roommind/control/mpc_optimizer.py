@@ -60,6 +60,8 @@ class MPCOptimizer:
         *,
         solar_series: list[float] | None = None,
         residual_series: list[float] | None = None,
+        initial_mode: str = MODE_IDLE,
+        initial_blocks_in_mode: int = 0,
     ) -> MPCPlan:
         """Find optimal action sequence over the planning horizon.
 
@@ -87,8 +89,8 @@ class MPCOptimizer:
         temperatures: list[float] = [T_room]
         power_fractions: list[float] = []
         current_temp = T_room
-        current_mode = MODE_IDLE
-        blocks_in_mode = 0
+        current_mode = initial_mode
+        blocks_in_mode = initial_blocks_in_mode
 
         for i in range(n_blocks):
             T_out = T_outdoor_series[i]

@@ -358,3 +358,40 @@ def test_optimizer_inverted_targets_clamped():
         dt_minutes=5,
     )
     assert plan.actions[0] == "heating"
+
+
+# ---------------------------------------------------------------------------
+# Initial mode state tests
+# ---------------------------------------------------------------------------
+
+
+def test_optimizer_continues_heating_within_min_run():
+    """Optimizer with initial_mode=HEATING and blocks < min_run must continue heating."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    opt = MPCOptimizer(model, min_run_blocks=2)
+    # Room is at target — without initial_mode, optimizer would idle
+    plan = opt.optimize(
+        T_room=21.0,
+        T_outdoor_series=[21.0] * 12,
+        heat_target_series=[21.0] * 12,
+        dt_minutes=5,
+        initial_mode="heating",
+        initial_blocks_in_mode=1,
+    )
+    assert plan.actions[0] == "heating", "Must continue heating within min_run window"
+
+
+def test_optimizer_may_idle_after_min_run_reached():
+    """Optimizer with blocks_in_mode >= min_run_blocks is free to switch to idle."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    opt = MPCOptimizer(model, min_run_blocks=2)
+    # Room at target, outdoor matches — no reason to heat
+    plan = opt.optimize(
+        T_room=21.0,
+        T_outdoor_series=[21.0] * 12,
+        heat_target_series=[21.0] * 12,
+        dt_minutes=5,
+        initial_mode="heating",
+        initial_blocks_in_mode=2,
+    )
+    assert plan.actions[0] == "idle", "Free to idle after min_run satisfied"
