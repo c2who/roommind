@@ -449,6 +449,49 @@ class MPCController:
         min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
 
+    def _should_early_exit_min_run(
+        self,
+        mode: str,
+        current_temp: float,
+        target: float,
+    ) -> bool:
+        """Return True if the thermal model predicts the room will stay comfortable without HVAC.
+
+        Uses RCModel.predict() with Q_active=0 over the remaining min-run time.
+        Only called when _within_min_run() is True, to allow early exit when
+        external heat sources (solar, residual thermal mass) are already driving
+        the room past target.
+        """
+        if self._mode_on_since is None:
+            return False
+
+        model = self._model_manager.get_model(self._area_id)
+        T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
+
+        # Compute remaining min-run time in minutes
+        min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
+        elapsed = time.time() - self._mode_on_since
+        remaining_minutes = max(0.0, (min_run_seconds - elapsed) / 60.0)
+        if remaining_minutes <= 0:
+            return True  # min run already elapsed
+
+        # Predict idle drift over remaining time
+        margin = 0.15
+        predicted = model.predict(
+            current_temp,
+            T_out,
+            Q_active=0.0,
+            dt_minutes=remaining_minutes,
+            q_solar=self.q_solar,
+            q_residual=self.q_residual,
+        )
+
+        if mode == MODE_HEATING:
+            return predicted >= target + margin
+        if mode == MODE_COOLING:
+            return predicted <= target - margin
+        return False
+
     def _evaluate_mpc(
         self,
         current_temp: float | None,
@@ -542,11 +585,15 @@ class MPCController:
         near_heat = heat_target_series[:6]
         near_cool = cool_target_series[:6]
         if near_heat and action == MODE_HEATING and current_temp >= max(near_heat):
-            if not self._within_min_run(MODE_HEATING):
+            if not self._within_min_run(MODE_HEATING) or self._should_early_exit_min_run(
+                MODE_HEATING, current_temp, max(near_heat)
+            ):
                 action = MODE_IDLE
                 power_fraction = 0.0
         elif near_cool and action == MODE_COOLING and current_temp <= min(near_cool):
-            if not self._within_min_run(MODE_COOLING):
+            if not self._within_min_run(MODE_COOLING) or self._should_early_exit_min_run(
+                MODE_COOLING, current_temp, min(near_cool)
+            ):
                 action = MODE_IDLE
                 power_fraction = 0.0
 
@@ -567,12 +614,16 @@ class MPCController:
 
         # Mode stickiness
         if self.previous_mode == MODE_HEATING and can_heat and heat_target is not None:
-            if current_temp < heat_target or self._within_min_run(MODE_HEATING):
+            if current_temp < heat_target:
+                return MODE_HEATING
+            if self._within_min_run(MODE_HEATING) and current_temp < heat_target + BANGBANG_HEAT_HYSTERESIS:
                 return MODE_HEATING
             return MODE_IDLE
 
         if self.previous_mode == MODE_COOLING and can_cool and cool_target is not None:
-            if current_temp > cool_target or self._within_min_run(MODE_COOLING):
+            if current_temp > cool_target:
+                return MODE_COOLING
+            if self._within_min_run(MODE_COOLING) and current_temp > cool_target - BANGBANG_COOL_HYSTERESIS:
                 return MODE_COOLING
             return MODE_IDLE
 

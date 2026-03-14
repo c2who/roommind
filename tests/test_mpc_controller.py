@@ -5151,3 +5151,139 @@ async def test_call_cache_hvac_mode_confirmed_by_device():
     await ctrl._call("set_hvac_mode", {"entity_id": "climate.living_trv", "hvac_mode": "heat"})
     # Primary dedup catches this (state.state == "heat" == requested), so no call
     hass.services.async_call.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Early exit from min-run tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mpc_early_exit_heating_solar_warming():
+    """MPC: model predicts room stays warm from solar → exits min run early."""
+    hass = build_hass()
+    room = make_room()
+    model_mgr = RoomModelManager()
+
+    # Put the controller in heating mode, within min run (started 2 min ago)
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=15.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 120,  # 2 min ago
+        q_solar=0.8,  # strong solar
+        q_residual=0.3,
+        heating_system_type="radiator",
+    )
+
+    # Current temp already at target — strong solar means idle drift stays warm
+    # The model with default params and Q_solar + q_solar=0.8 should predict
+    # the room stays above target + 0.15
+    result = ctrl._should_early_exit_min_run(MODE_HEATING, 22.0, 21.0)
+    assert result is True, "Should exit min-run when solar keeps room above target"
+
+
+@pytest.mark.asyncio
+async def test_mpc_no_early_exit_heating_cold_day():
+    """MPC: model predicts room cools without HVAC → continues min run."""
+    hass = build_hass()
+    room = make_room()
+    model_mgr = RoomModelManager()
+
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=-5.0,  # very cold outside
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 120,
+        q_solar=0.0,  # no solar
+        q_residual=0.0,
+        heating_system_type="radiator",
+    )
+
+    # Current temp at target but cold outdoor → room will cool without HVAC
+    result = ctrl._should_early_exit_min_run(MODE_HEATING, 21.0, 21.0)
+    assert result is False, "Should NOT exit min-run on cold day without solar"
+
+
+@pytest.mark.asyncio
+async def test_mpc_early_exit_cooling():
+    """MPC: cooling mode, model predicts room stays cool → exits min run."""
+    hass = build_hass()
+    room = make_room(acs=["climate.living_ac"])
+    model_mgr = RoomModelManager()
+
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=15.0,  # cool outside
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_COOLING,
+        mode_on_since=time.time() - 120,
+        q_solar=0.0,
+        q_residual=0.0,
+        heating_system_type="radiator",
+    )
+
+    # Current temp at target with cool outdoor → room stays cool without AC
+    result = ctrl._should_early_exit_min_run(MODE_COOLING, 24.0, 25.0)
+    assert result is True, "Should exit cooling min-run when outdoor is cool"
+
+
+@pytest.mark.asyncio
+async def test_bangbang_early_exit_above_hysteresis():
+    """Bang-bang: temp well above target during min run → exits early."""
+    hass = build_hass()
+    room = make_room()
+    model_mgr = RoomModelManager()
+
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 120,  # within min run
+        heating_system_type="radiator",
+    )
+
+    # current_temp = 21.5, target = 21.0, hysteresis = 0.2
+    # 21.5 >= 21.0 + 0.2 → should exit (not sticky)
+    mode = ctrl._evaluate_bangbang(21.5, TargetTemps(heat=21.0, cool=None))
+    assert mode == MODE_IDLE, "Should exit min-run when temp >= target + hysteresis"
+
+
+@pytest.mark.asyncio
+async def test_bangbang_no_early_exit_within_hysteresis():
+    """Bang-bang: temp barely above target during min run → continues."""
+    hass = build_hass()
+    room = make_room()
+    model_mgr = RoomModelManager()
+
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 120,  # within min run
+        heating_system_type="radiator",
+    )
+
+    # current_temp = 21.1, target = 21.0, hysteresis = 0.2
+    # 21.1 < 21.0 + 0.2 → should continue heating (sticky within hysteresis)
+    mode = ctrl._evaluate_bangbang(21.1, TargetTemps(heat=21.0, cool=None))
+    assert mode == MODE_HEATING, "Should continue min-run when temp < target + hysteresis"
