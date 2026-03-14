@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, VACATION_SENTINEL_UNTIL
 from .coordinator import RoomMindCoordinator
+from .device import get_area_name, roommind_device_info, roommind_hub_device_info
 
 
 def _create_room_switches(
@@ -55,9 +56,11 @@ class RoomMindCoverAutoSwitch(CoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_cover_auto"
-        self._attr_name = f"{area_id.replace('_', ' ').title()} Cover Auto"
+        self._attr_name = "Cover Auto"
         self._attr_icon = "mdi:blinds-horizontal"
         self.entity_id = f"switch.{DOMAIN}_{area_id}_cover_auto"
+        area_name = get_area_name(coordinator.hass, area_id)
+        self._attr_device_info = roommind_device_info(area_id, area_name)
 
     @property
     def is_on(self) -> bool:
@@ -90,6 +93,7 @@ class RoomMindVacationSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = "Vacation Mode"
         self._attr_icon = "mdi:beach"
         self.entity_id = f"switch.{DOMAIN}_vacation"
+        self._attr_device_info = roommind_hub_device_info()
 
     @property
     def is_on(self) -> bool:

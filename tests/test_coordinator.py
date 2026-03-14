@@ -2390,7 +2390,7 @@ class TestMoldRiskDetection:
 
         coordinator = _create_coordinator(hass, mock_config_entry)
         with patch(
-            "custom_components.roommind.coordinator._get_area_name",
+            "custom_components.roommind.device.get_area_name",
             return_value="Living Room",
         ):
             await coordinator._async_update_data()
@@ -3566,12 +3566,12 @@ class TestCoverageGaps:
     @pytest.mark.asyncio
     async def test_get_area_name_returns_area_id_when_area_none(self, hass, mock_config_entry):
         """_get_area_name returns area_id when area is not found."""
-        from custom_components.roommind.coordinator import _get_area_name
+        from custom_components.roommind.device import get_area_name
 
         mock_reg = MagicMock()
         mock_reg.async_get_area.return_value = None
-        with patch("custom_components.roommind.coordinator.ar.async_get", return_value=mock_reg):
-            result = _get_area_name(hass, "nonexistent_area")
+        with patch("custom_components.roommind.device.ar.async_get", return_value=mock_reg):
+            result = get_area_name(hass, "nonexistent_area")
         assert result == "nonexistent_area"
 
     @pytest.mark.asyncio

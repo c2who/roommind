@@ -33,6 +33,7 @@ from .const import (
     ROOM_ENABLED_DEFAULT,
 )
 from .coordinator import RoomMindCoordinator
+from .device import get_area_name, roommind_device_info
 
 
 def _create_room_climates(
@@ -95,8 +96,10 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_climate"
-        self._attr_name = area_id.replace("_", " ").title()
+        self._attr_name = None
         self.entity_id = f"climate.{DOMAIN}_{area_id}_climate"
+        area_name = get_area_name(coordinator.hass, area_id)
+        self._attr_device_info = roommind_device_info(area_id, area_name)
 
     def _get_room(self) -> dict | None:
         """Return current room config from store."""

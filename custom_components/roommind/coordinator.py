@@ -9,7 +9,6 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
@@ -45,6 +44,7 @@ from .control.mpc_controller import (
 )
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
+from .device import get_area_name as _get_area_name
 from .managers.cover_orchestrator import CoverOrchestrator
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
@@ -59,16 +59,6 @@ from .utils.sensor_utils import read_sensor_value
 from .utils.temp_utils import celsius_delta_to_ha, ha_temp_to_celsius, ha_temp_unit_str
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _get_area_name(hass: HomeAssistant, area_id: str) -> str:
-    """Get human-readable area name from area registry."""
-    try:
-        area_reg = ar.async_get(hass)
-        area = area_reg.async_get_area(area_id)
-        return area.name if area else area_id
-    except Exception:  # noqa: BLE001
-        return area_id
 
 
 class RoomMindCoordinator(DataUpdateCoordinator):

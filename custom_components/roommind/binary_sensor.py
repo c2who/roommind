@@ -12,6 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import RoomMindCoordinator
+from .device import get_area_name, roommind_device_info
 
 
 def _create_room_binary_sensors(
@@ -59,9 +60,11 @@ class RoomMindCoverPausedSensor(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_cover_paused"
-        self._attr_name = f"{area_id.replace('_', ' ').title()} Cover Paused"
+        self._attr_name = "Cover Paused"
         self._attr_icon = "mdi:hand-back-right"
         self.entity_id = f"binary_sensor.{DOMAIN}_{area_id}_cover_paused"
+        area_name = get_area_name(coordinator.hass, area_id)
+        self._attr_device_info = roommind_device_info(area_id, area_name)
 
     @property
     def is_on(self) -> bool:
@@ -93,6 +96,8 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
         self._attr_unique_id = f"{DOMAIN}_{area_id}_shading_{sanitized_eid}"
         self._attr_icon = "mdi:blinds"
         self.entity_id = f"binary_sensor.{DOMAIN}_{area_id}_shading_{sanitized_eid}"
+        area_name = get_area_name(coordinator.hass, area_id)
+        self._attr_device_info = roommind_device_info(area_id, area_name)
 
     @property
     def name(self) -> str:

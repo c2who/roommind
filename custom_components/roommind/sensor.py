@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import RoomMindCoordinator
+from .device import get_area_name, roommind_device_info
 
 
 def _create_room_entities(coordinator: RoomMindCoordinator, area_id: str) -> list[SensorEntity]:
@@ -63,8 +64,10 @@ class _RoomMindBaseSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_{suffix}"
-        self._attr_name = f"{area_id.replace('_', ' ').title()} {name_label}"
+        self._attr_name = name_label
         self.entity_id = f"sensor.{DOMAIN}_{area_id}_{suffix}"
+        area_name = get_area_name(coordinator.hass, area_id)
+        self._attr_device_info = roommind_device_info(area_id, area_name)
 
     @property
     def native_value(self) -> float | str | None:
