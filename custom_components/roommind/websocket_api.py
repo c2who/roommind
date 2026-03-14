@@ -80,6 +80,7 @@ _ROOM_SAVE_FIELDS = (
     "heat_source_primary_delta",
     "heat_source_outdoor_threshold",
     "heat_source_ac_min_outdoor",
+    "room_enabled",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -186,6 +187,7 @@ async def websocket_list_rooms(
             "active_cover_schedule_index": live.get("active_cover_schedule_index", -1),
             "cover_shading_active": live.get("cover_shading_active", False),
             "cover_shading_position": live.get("cover_shading_position"),
+            "room_enabled": live.get("room_enabled", True),
             "active_heat_sources": live.get("active_heat_sources"),
         }
         result[area_id] = room_data
@@ -278,6 +280,7 @@ async def websocket_list_rooms(
         vol.Optional("heat_source_primary_delta"): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=5.0)),
         vol.Optional("heat_source_outdoor_threshold"): vol.All(vol.Coerce(float), vol.Range(min=-20, max=25)),
         vol.Optional("heat_source_ac_min_outdoor"): vol.All(vol.Coerce(float), vol.Range(min=-30, max=5)),
+        vol.Optional("room_enabled"): bool,
     }
 )
 @websocket_api.async_response
@@ -394,18 +397,26 @@ async def websocket_override_set(
         return
 
     # Resolve override temperature
+    climate_mode = room.get("climate_mode", "auto")
+    override_heat: float | None = None
+    override_cool: float | None = None
+
     if override_type == "boost":
-        climate_mode = room.get("climate_mode", "auto")
         if climate_mode == "cool_only":
             override_temp = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
         else:
             override_temp = room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT))
+        if climate_mode == "auto":
+            override_heat = room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT))
+            override_cool = room.get("comfort_cool", DEFAULT_COMFORT_COOL)
     elif override_type == "eco":
-        climate_mode = room.get("climate_mode", "auto")
         if climate_mode == "cool_only":
             override_temp = room.get("eco_cool", DEFAULT_ECO_COOL)
         else:
             override_temp = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))
+        if climate_mode == "auto":
+            override_heat = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))
+            override_cool = room.get("eco_cool", DEFAULT_ECO_COOL)
     else:  # custom
         override_temp = msg.get("temperature")
         if override_temp is None:
@@ -418,6 +429,8 @@ async def websocket_override_set(
         area_id,
         {
             "override_temp": override_temp,
+            "override_heat": override_heat,
+            "override_cool": override_cool,
             "override_until": override_until,
             "override_type": override_type,
         },
@@ -460,6 +473,8 @@ async def websocket_override_clear(
         area_id,
         {
             "override_temp": None,
+            "override_heat": None,
+            "override_cool": None,
             "override_until": None,
             "override_type": None,
         },

@@ -29,6 +29,7 @@ from .const import (
     MODE_COOLING,
     MODE_HEATING,
     MODE_IDLE,
+    ROOM_ENABLED_DEFAULT,
     SCHEDULE_STATE_ON,
     THERMAL_SAVE_CYCLES,
     UPDATE_INTERVAL,
@@ -490,11 +491,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         observed_pf = 0.0
 
         climate_active = settings.get("climate_control_active", True)
+        room_enabled = room.get("room_enabled", ROOM_ENABLED_DEFAULT)
+        control_active = climate_active and room_enabled
 
         # --- Residual heat transition tracking ---
         # Only track when climate control is active — RoomMind-initiated heating
         # transitions don't exist when control is disabled.
-        if climate_active and system_type:
+        if control_active and system_type:
             self._residual_tracker.update(
                 area_id,
                 mode,
@@ -552,7 +555,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # so re-enabling starts fresh.
             self._heat_source_states.pop(area_id, None)
 
-        if climate_active:
+        if control_active:
             try:
                 await controller.async_apply(
                     mode,
@@ -571,14 +574,30 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     area_id,
                     exc_info=True,
                 )
+        elif not room_enabled:
+            # Room disabled via climate entity OFF — actively idle devices,
+            # then observe for EKF training.
+            try:
+                await controller.async_apply(
+                    MODE_IDLE,
+                    targets,
+                    power_fraction=0.0,
+                    current_temp=current_temp,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("Room '%s': idle command failed (room disabled)", area_id)
+            observed_mode, observed_pf = self._observe_device_action(room)
+            if observed_mode is None and self._devices_lack_hvac_action(room):
+                inferred = self._infer_device_mode(room)
+                observed_mode = inferred
+                observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
+            mode = MODE_IDLE
+            power_fraction = 0.0
         else:
-            # Climate control disabled (learn-only) — do NOT send commands,
+            # Global climate control disabled (learn-only) — do NOT send commands,
             # do NOT touch mode/power_fraction (used for internal tracking).
             observed_mode, observed_pf = self._observe_device_action(room)
             if observed_mode is None and self._devices_lack_hvac_action(room):
-                # No hvac_action on any device — fall back to temp-vs-setpoint
-                # inference for approximate training (better than skipping).
-                # Don't infer for other None reasons (conflicts, unavailable).
                 inferred = self._infer_device_mode(room)
                 observed_mode = inferred
                 observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
@@ -596,7 +615,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # self-regulates and may be idle at setpoint.  See #69.
         managed_display_mode: str | None = None
         managed_display_pf = 0.0
-        if climate_active and not has_external_sensor:
+        if control_active and not has_external_sensor:
             obs_mode, obs_pf = self._observe_device_action(room)
             if obs_mode is not None:
                 managed_display_mode = obs_mode
@@ -630,7 +649,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Determine mode for EKF training: use observed device state when
         # RoomMind doesn't directly control the device (see #36, #69).
-        if climate_active:
+        if control_active:
             if has_external_sensor:
                 # Full Control: controller's commanded mode is truth
                 ekf_mode: str | None = mode
@@ -698,7 +717,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Compute display mode: show actual device state when RoomMind doesn't
         # directly control the device, without affecting internal tracking
         # (residual heat, valve actuation, _previous_modes).  See #36, #69.
-        if climate_active:
+        if control_active:
             if has_external_sensor:
                 # Full Control: controller's mode is authoritative, but cross-check
                 # actual device state when MPC says IDLE — a device that ignores OFF
@@ -779,6 +798,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "cover_auto_paused": (self._cover_orchestrator.is_user_override_active(area_id) if cover_eids else False),
             "cover_forced_reason": (cover_result.forced_reason if (cover_eids or covers_sensor_only) else ""),
             "active_cover_schedule_index": (cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1),
+            "room_enabled": room_enabled,
             "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
                 room.get("covers_auto_enabled", False)
@@ -1050,12 +1070,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         Priority: override > vacation > presence away > schedule block temp > comfort/eco.
         Returns TargetTemps(heat, cool). None values mean "force off".
         """
-        # 1. Override — single-point target
+        # 1. Override — dual-target or single-point
         override_temp = room.get("override_temp")
         override_until = room.get("override_until")
-        if override_temp is not None:
+        override_heat = room.get("override_heat")
+        override_cool = room.get("override_cool")
+        has_override = override_temp is not None or (override_heat is not None and override_cool is not None)
+        if has_override:
             if override_until is None or time.time() < override_until:
-                t = float(override_temp)
+                if override_heat is not None and override_cool is not None:
+                    return TargetTemps(heat=float(override_heat), cool=float(override_cool))
+                t = float(override_temp)  # type: ignore[arg-type]
                 return TargetTemps(heat=t, cool=t)
             else:
                 # Timed override has expired — auto-clear
@@ -1066,6 +1091,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         area_id,
                         {
                             "override_temp": None,
+                            "override_heat": None,
+                            "override_cool": None,
                             "override_until": None,
                             "override_type": None,
                         },
@@ -1249,7 +1276,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         registry = er.async_get(self.hass)
 
         # Known valid suffixes for each condition
-        always_valid = ("_target_temp", "_mode", "_override")
+        always_valid = ("_target_temp", "_mode", "_climate")
         cover_only = ("_cover_auto", "_cover_paused")
         # Global entities (not per-room) that should never be cleaned up
         global_uids = {f"{DOMAIN}_vacation"}

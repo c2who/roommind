@@ -16,6 +16,7 @@ from .const import (
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     DOMAIN,
+    ROOM_ENABLED_DEFAULT,
 )
 
 STORAGE_VERSION = 1
@@ -173,6 +174,7 @@ class RoomMindStore:
                 "heat_source_ac_min_outdoor": config.get(
                     "heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR
                 ),
+                "room_enabled": config.get("room_enabled", ROOM_ENABLED_DEFAULT),
             }
             self._data[area_id] = room
             await self._async_save()

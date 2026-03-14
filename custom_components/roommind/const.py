@@ -138,6 +138,9 @@ HEAT_SOURCE_LARGE_GAP_MULTIPLIER = 2.0  # activate both sources when gap > prima
 HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (prevent overshoot)
 
 
+# Room enabled default
+ROOM_ENABLED_DEFAULT = True
+
 # Far-future sentinel: vacation active indefinitely (year 2999)
 VACATION_SENTINEL_UNTIL = 32503680000.0
 
@@ -151,5 +154,7 @@ def build_override_live(room: dict) -> dict:
         "override_active": active,
         "override_type": room.get("override_type") if active else None,
         "override_temp": override_temp if active else None,
+        "override_heat": room.get("override_heat") if active else None,
+        "override_cool": room.get("override_cool") if active else None,
         "override_until": override_until if active else None,
     }
