@@ -70,17 +70,30 @@ class CoverManager:
     # Public API
     # ------------------------------------------------------------------
 
-    def update_position(self, area_id: str, position: int, override_minutes: int = COVER_USER_OVERRIDE_MINUTES) -> None:
+    def update_position(
+        self,
+        area_id: str,
+        position: int,
+        override_minutes: int = COVER_USER_OVERRIDE_MINUTES,
+        sensor_only: bool = False,
+    ) -> None:
         """Update the tracked position from HA state. Call before evaluate().
 
         Detects user manual override: if the cover position differs significantly
         from the last position RoomMind commanded (in either direction), the user
         moved it manually. In that case, auto control pauses for
         COVER_USER_OVERRIDE_MINUTES.
+
+        In sensor-only mode, override detection is skipped because RoomMind never
+        commands covers — any position change comes from the external system.
         """
         state = self._get_state(area_id)
-        # Drift detection: only if we previously commanded a position
-        if (
+        if sensor_only:
+            # No override detection — external system controls covers.
+            # Reset last_commanded_position to avoid phantom overrides if
+            # sensor-only is later toggled off.
+            state.last_commanded_position = None
+        elif (
             state.last_commanded_position is not None
             and abs(position - state.last_commanded_position) > COVER_USER_CONFLICT_THRESHOLD
         ):

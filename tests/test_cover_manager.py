@@ -758,6 +758,62 @@ def test_no_night_close_when_no_forced_position(mock_t):
 # ── Mixed availability tests ──────────────────────────────────────────
 
 
+# ── Sensor-only mode tests ─────────────────────────────────────────────
+
+
+def test_update_position_sensor_only_skips_override():
+    """In sensor-only mode, position drift does not trigger user override."""
+    mgr = CoverManager()
+    state = mgr._get_state("lr")
+    state.last_commanded_position = 60
+
+    # Position differs significantly from last commanded, but sensor_only=True
+    mgr.update_position("lr", 100, sensor_only=True)
+
+    assert state.user_override_until == 0.0
+    assert state.last_commanded_position is None  # reset to avoid phantom overrides
+    assert state.current_position == 100
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_sensor_only_evaluate_then_update_no_override(mock_t):
+    """Round-trip: evaluate() in sensor-only produces a decision, then update_position()
+    with a different actual position does not trigger override."""
+    mock_t.time.return_value = 1000.0
+    mgr = CoverManager()
+
+    # evaluate() in sensor-only mode produces a decision
+    d = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=25.0,
+        target_temp=22.0,
+        sensor_only=True,
+        **_BASE_KWARGS,
+    )
+    assert d.changed is True
+    # _apply_change sets last_commanded_position
+    state = mgr._get_state("lr")
+    assert state.last_commanded_position == d.target_position
+
+    # External system sets a different position — sensor_only skips override
+    mgr.update_position("lr", 100, sensor_only=True)
+
+    assert state.user_override_until == 0.0
+    assert state.last_commanded_position is None
+    assert state.current_position == 100
+
+    # Next evaluate should not be blocked by user override
+    mock_t.time.return_value = 1001.0
+    d2 = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=25.0,
+        target_temp=22.0,
+        sensor_only=True,
+        **_BASE_KWARGS,
+    )
+    assert "user_override" not in d2.reason
+
+
 @patch("custom_components.roommind.managers.cover_manager.time")
 def test_evaluate_with_multiple_cover_entities(mock_t):
     """Evaluate works with multiple cover entity IDs."""

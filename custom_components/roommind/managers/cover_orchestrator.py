@@ -93,6 +93,7 @@ class CoverOrchestrator:
                 area_id,
                 int(sum(cover_positions) / len(cover_positions)),
                 override_minutes=room.get("covers_override_minutes", 60),
+                sensor_only=room.get("covers_sensor_only", False),
             )
 
         shading_factor = compute_shading_factor(cover_positions)

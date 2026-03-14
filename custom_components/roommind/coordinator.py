@@ -831,7 +831,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 if cover_eids
                 else (cover_result.decision.target_position if covers_sensor_only and room.get("covers_auto_enabled", False) else None)
             ),
-            "cover_auto_paused": (self._cover_orchestrator.is_user_override_active(area_id) if cover_eids else False),
+            "cover_auto_paused": (
+                self._cover_orchestrator.is_user_override_active(area_id)
+                if cover_eids and not covers_sensor_only
+                else False
+            ),
             "cover_forced_reason": (cover_result.forced_reason if (cover_eids or covers_sensor_only) else ""),
             "active_cover_schedule_index": (cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1),
             "room_enabled": room_enabled,
