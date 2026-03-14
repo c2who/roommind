@@ -913,7 +913,7 @@ class RoomModelManager:
             tau = 1.0 / alpha if alpha > 0 else float("inf")
             std_idle = est.prediction_std(0.0, T_new, T_outdoor, 5.0)
             std_heat = est.prediction_std(beta_h, T_new, T_outdoor, 5.0)
-            _LOGGER.info(
+            _LOGGER.debug(
                 "EKF [%s] n=%d conf=%.0f%% | tau=%.1fh heat=%.1f°C/h cool=%.1f°C/h solar=%.2f°C/h "
                 "| std_idle=%.3f std_heat=%.3f "
                 "| alpha=%.4f (P=%.2e) beta_h=%.2f (P=%.2e) beta_c=%.2f (P=%.2e) beta_s=%.3f (P=%.2e) "
