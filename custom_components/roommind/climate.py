@@ -88,9 +88,9 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
     )
     _attr_preset_modes = ["none", "boost", "eco"]
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_target_temperature_step = 0.5
-    _attr_min_temp = 5.0
-    _attr_max_temp = 35.0
+    _attr_target_temperature_step = 0.1
+    _attr_min_temp = 10.0
+    _attr_max_temp = 30.0
 
     def __init__(self, coordinator: RoomMindCoordinator, area_id: str) -> None:
         super().__init__(coordinator)
