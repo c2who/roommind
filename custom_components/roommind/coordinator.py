@@ -478,7 +478,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if window_open:
             mode = MODE_IDLE
             power_fraction = 0.0
-        elif self._window_manager.in_open_delay(area_id):
+        elif self._window_manager.in_open_delay(area_id) or self._window_manager.in_close_delay(area_id):
             # Window physically open but delay not elapsed.
             # Block new starts and mode switches, but allow MPC to stop naturally.
             prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
