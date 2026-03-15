@@ -27,6 +27,72 @@ async def test_no_weather_entity_returns_empty():
 
 
 @pytest.mark.asyncio
+async def test_forecast_entry_without_temperature():
+    """Forecast entry without 'temperature' key is passed through unchanged."""
+    hass = _make_hass()
+    hass.services.async_call = AsyncMock(
+        return_value={
+            "weather.home": {
+                "forecast": [
+                    {"temperature": 10.0, "cloud_coverage": 50},
+                    {"cloud_coverage": 80},  # no temperature key
+                ]
+            }
+        }
+    )
+
+    mgr = WeatherManager(hass)
+    result = await mgr.async_read_forecast({"weather_entity": "weather.home"})
+
+    assert len(result) == 2
+    assert result[0]["temperature"] == 10.0
+    # Second entry has no temperature, should be passed through as-is
+    assert "temperature" not in result[1]
+    assert result[1]["cloud_coverage"] == 80
+
+
+# --- extract_cloud_series ---
+
+
+def test_extract_cloud_series_with_valid_data():
+    """Forecast entries with cloud_coverage return list of floats."""
+    forecast = [
+        {"cloud_coverage": 20},
+        {"cloud_coverage": 80},
+        {"cloud_coverage": 50},
+    ]
+    result = WeatherManager.extract_cloud_series(forecast)
+    assert result == [20.0, 80.0, 50.0]
+
+
+def test_extract_cloud_series_empty_forecast():
+    """Empty forecast list returns None."""
+    result = WeatherManager.extract_cloud_series([])
+    assert result is None
+
+
+def test_extract_cloud_series_missing_key():
+    """Entries without cloud_coverage key produce None in the series."""
+    forecast = [
+        {"cloud_coverage": 30},
+        {"temperature": 10},  # no cloud_coverage
+        {"cloud_coverage": 70},
+    ]
+    result = WeatherManager.extract_cloud_series(forecast)
+    assert result == [30.0, None, 70.0]
+
+
+def test_extract_cloud_series_all_missing_returns_none():
+    """If no entry has cloud_coverage, returns None (clear-sky fallback)."""
+    forecast = [
+        {"temperature": 10},
+        {"temperature": 12},
+    ]
+    result = WeatherManager.extract_cloud_series(forecast)
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_service_response_parsed_and_stored():
     """Successful get_forecasts service call returns converted forecast."""
     hass = _make_hass()

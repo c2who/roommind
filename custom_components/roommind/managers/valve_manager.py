@@ -13,6 +13,7 @@ from ..const import (
     VALVE_PROTECTION_CYCLE_DURATION,
 )
 from ..control.mpc_controller import async_turn_off_climate, resolve_hvac_mode
+from ..utils.device_utils import get_trv_eids
 from ..utils.temp_utils import celsius_to_ha_temp
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ class ValveManager:
         all_excluded: set[str] = set()
         for room in rooms.values():
             all_excluded.update(room.get("valve_protection_exclude", []))
-            for eid in room.get("thermostats", []):
+            for eid in get_trv_eids(room.get("devices", [])):
                 all_trvs.add(eid)
         all_trvs -= all_excluded
 

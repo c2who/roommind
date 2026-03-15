@@ -157,7 +157,7 @@ class CoverManager:
         # Rate limiting only applies to thermal/solar MPC-based decisions below.
         if forced_position is not None:
             state.last_was_forced = True
-            if forced_position == current:
+            if abs(forced_position - current) <= 2:
                 return CoverDecision(
                     target_position=current, changed=False, reason=f"forced_at_target({forced_reason})"
                 )

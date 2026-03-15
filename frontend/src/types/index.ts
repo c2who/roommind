@@ -59,10 +59,31 @@ export interface RoomLiveData {
   active_heat_sources: string | null;
 }
 
+export type DeviceType = "trv" | "ac";
+export type DeviceRole = "primary" | "secondary" | "auto";
+
+export interface DeviceConfig {
+  entity_id: string;
+  type: DeviceType;
+  role: DeviceRole;
+  heating_system_type?: string;
+  idle_action?: "off" | "fan_only"; // default "off"
+  idle_fan_mode?: string; // default "low"
+}
+
+export interface CompressorGroup {
+  id: string;
+  name: string;
+  members: string[];
+  min_run_minutes: number;
+  min_off_minutes: number;
+}
+
 export interface RoomConfig {
   area_id: string;
   thermostats: string[];
   acs: string[];
+  devices?: DeviceConfig[];
   temperature_sensor: string;
   humidity_sensor: string;
   window_sensors: string[];
@@ -134,6 +155,7 @@ export interface GlobalSettings {
   mold_prevention_intensity?: "light" | "medium" | "strong";
   mold_prevention_notify_enabled?: boolean;
   mold_prevention_notify_targets?: NotificationTarget[];
+  compressor_groups?: CompressorGroup[];
   room_order?: string[];
   group_by_floor?: boolean;
   boost_applied_at?: Record<string, number>;
@@ -195,6 +217,7 @@ export interface AnalyticsDataPoint {
   planned_mode?: string;
   solar_irradiance: number | null;
   blind_position?: number | null;
+  device_setpoint?: number | null;
 }
 
 export interface AnalyticsData {

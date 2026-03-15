@@ -9,7 +9,7 @@ export function buildCsvString(data: AnalyticsData): string | null {
   if (points.length === 0) return null;
 
   const header =
-    "timestamp,datetime,room_temp,outdoor_temp,target_temp,mode,predicted_temp,window_open,heating_power,solar_irradiance,blind_position";
+    "timestamp,datetime,room_temp,outdoor_temp,target_temp,mode,predicted_temp,window_open,heating_power,solar_irradiance,blind_position,device_setpoint";
   const rows = points.map((p) => {
     const dt = new Date(p.ts * 1000).toISOString();
     const rt = p.room_temp ?? "";
@@ -19,7 +19,8 @@ export function buildCsvString(data: AnalyticsData): string | null {
     const hp = p.heating_power ?? "";
     const si = p.solar_irradiance ?? "";
     const bp = p.blind_position ?? "";
-    return `${p.ts},${dt},${rt},${ot},${tt},${p.mode},${pt},${p.window_open},${hp},${si},${bp}`;
+    const ds = p.device_setpoint ?? "";
+    return `${p.ts},${dt},${rt},${ot},${tt},${p.mode},${pt},${p.window_open},${hp},${si},${bp},${ds}`;
   });
 
   return [header, ...rows].join("\n");
@@ -41,8 +42,10 @@ export function buildDiagnosticsString(
     area_id: areaId,
     room_config: {
       climate_mode: room?.climate_mode,
-      has_thermostats: (room?.thermostats?.length || 0) > 0,
-      has_acs: (room?.acs?.length || 0) > 0,
+      has_thermostats:
+        room?.devices?.some((d) => d.type === "trv") ?? (room?.thermostats?.length ?? 0) > 0,
+      has_cooling_devices:
+        room?.devices?.some((d) => d.type === "ac") ?? (room?.acs?.length ?? 0) > 0,
       has_temp_sensor: !!room?.temperature_sensor,
       has_window_sensors: (room?.window_sensors?.length || 0) > 0,
     },

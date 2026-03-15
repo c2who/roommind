@@ -528,6 +528,34 @@ def test_forced_position_already_at_target():
     assert "forced_at_target" in d.reason
 
 
+def test_forced_position_within_tolerance():
+    """Forced position treats ±2 as at target to avoid repeated commands from HA rounding."""
+    mgr = CoverManager()
+    mgr._get_state("lr").current_position = 2  # HA reports 2 instead of 0
+    d = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "forced_position": 0, "forced_reason": "night_close"},
+    )
+    assert d.changed is False
+    assert "forced_at_target" in d.reason
+
+
+def test_forced_position_outside_tolerance():
+    """Forced position beyond ±2 triggers a change."""
+    mgr = CoverManager()
+    mgr._get_state("lr").current_position = 5  # outside tolerance
+    d = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "forced_position": 0, "forced_reason": "night_close"},
+    )
+    assert d.changed is True
+    assert d.target_position == 0
+
+
 @patch("custom_components.roommind.managers.cover_manager.time")
 def test_forced_position_not_rate_limited(mock_t):
     """Forced positions bypass rate limiting — apply immediately."""

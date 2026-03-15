@@ -1,30 +1,44 @@
-import { LitElement, html, css, nothing } from "lit";
+import { LitElement, html, css, nothing, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, HassArea } from "../types";
+import type { HomeAssistant, HassArea, DeviceConfig, DeviceType } from "../types";
 import { getEntitiesForArea } from "../utils/room-state";
 import { localize } from "../utils/localize";
 import { getSelectValue, openEntityInfo } from "../utils/events";
 import { tempUnit } from "../utils/temperature";
+import { resolveHeatingSystemType } from "../utils/device-utils";
 
 @customElement("rs-device-section")
 export class RsDeviceSection extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ attribute: false }) public area!: HassArea;
-  @property({ attribute: false }) public selectedThermostats: Set<string> = new Set();
-  @property({ attribute: false }) public selectedAcs: Set<string> = new Set();
+  @property({ attribute: false }) public devices: DeviceConfig[] = [];
   @property({ attribute: false }) public entityModes: Record<string, "auto" | "heat_only" | "cool_only"> = {};
   @property({ type: String }) public selectedTempSensor = "";
   @property({ type: String }) public selectedHumiditySensor = "";
   @property({ attribute: false }) public selectedWindowSensors: Set<string> = new Set();
   @property({ type: Number }) public windowOpenDelay = 0;
   @property({ type: Number }) public windowCloseDelay = 0;
-  @property({ type: String }) public heatingSystemType = "";
   @property({ attribute: false }) public valveProtectionExclude: Set<string> = new Set();
   @property({ type: Boolean }) public valveProtectionEnabled = false;
 
   @property({ type: Boolean }) public editing = false;
   @state() private _systemTypeInfoExpanded = false;
   @state() private _showBoostHint = false;
+  @state() private _selectedThermostats: Set<string> = new Set();
+  @state() private _selectedCoolingDevices: Set<string> = new Set();
+  @state() private _heatingSystemType = "";
+
+  protected willUpdate(changed: PropertyValues): void {
+    if (changed.has("devices")) {
+      this._selectedThermostats = new Set(
+        this.devices.filter((d) => d.type === "trv").map((d) => d.entity_id),
+      );
+      this._selectedCoolingDevices = new Set(
+        this.devices.filter((d) => d.type === "ac").map((d) => d.entity_id),
+      );
+      this._heatingSystemType = resolveHeatingSystemType(this.devices);
+    }
+  }
 
   static styles = css`
     :host {
@@ -221,6 +235,17 @@ export class RsDeviceSection extends LitElement {
       margin-top: 1px;
     }
 
+    .idle-action-row {
+      display: flex;
+      gap: 12px;
+      padding: 4px 14px 4px 42px;
+    }
+
+    .idle-action-row ha-select {
+      flex: 1;
+      min-width: 0;
+    }
+
     .valve-exclude-row {
       display: flex;
       align-items: center;
@@ -330,7 +355,7 @@ export class RsDeviceSection extends LitElement {
   }
 
   private _renderViewMode() {
-    const hasClimate = this.selectedThermostats.size > 0 || this.selectedAcs.size > 0;
+    const hasClimate = this._selectedThermostats.size > 0 || this._selectedCoolingDevices.size > 0;
     const hasTempSensor = !!this.selectedTempSensor;
     const hasHumiditySensor = !!this.selectedHumiditySensor;
 
@@ -341,8 +366,8 @@ export class RsDeviceSection extends LitElement {
               <div class="section-subtitle">
                 ${localize("devices.climate_entities", this.hass.language)}
               </div>
-              ${[...this.selectedThermostats].map((id) => this._renderClimateViewRow(id))}
-              ${[...this.selectedAcs].map((id) => this._renderClimateViewRow(id))}
+              ${[...this._selectedThermostats].map((id) => this._renderClimateViewRow(id))}
+              ${[...this._selectedCoolingDevices].map((id) => this._renderClimateViewRow(id))}
             </div>
           `
         : nothing}
@@ -391,7 +416,7 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
-      ${this.heatingSystemType
+      ${this._heatingSystemType
         ? html`
             <div class="device-group">
               <div class="section-subtitle">
@@ -399,11 +424,11 @@ export class RsDeviceSection extends LitElement {
               </div>
               <div class="view-row">
                 <span class="view-name"
-                  >${this.heatingSystemType === "radiator"
+                  >${this._heatingSystemType === "radiator"
                     ? localize("devices.system_type_radiator", this.hass.language)
-                    : this.heatingSystemType === "underfloor"
+                    : this._heatingSystemType === "underfloor"
                       ? localize("devices.system_type_underfloor", this.hass.language)
-                      : this.heatingSystemType}</span
+                      : this._heatingSystemType}</span
                 >
               </div>
             </div>
@@ -435,11 +460,22 @@ export class RsDeviceSection extends LitElement {
       this.valveProtectionEnabled &&
       this.valveProtectionExclude.has(entityId);
 
+    const device =
+      type === "climate" ? this.devices.find((d) => d.entity_id === entityId) : undefined;
+    const showFanOnlyBadge = device?.idle_action === "fan_only";
+
     return html`
       <div class="view-row">
         <span class="view-name entity-link" @click=${() => openEntityInfo(this, entityId)}
           >${friendlyName}</span
         >
+        ${showFanOnlyBadge
+          ? html`<span class="valve-exclude-badge">
+              ${localize("devices.idle_action_fan_only", this.hass.language)}${device!.idle_fan_mode
+                ? ` (${device!.idle_fan_mode})`
+                : nothing}
+            </span>`
+          : nothing}
         ${showExcludeBadge
           ? html`<span class="valve-exclude-badge">
               <ha-icon icon="mdi:shield-off-outline"></ha-icon>
@@ -533,7 +569,7 @@ export class RsDeviceSection extends LitElement {
 
     // Find selected entities not in this area (manually added)
     const areaClimateIds = new Set(areaClimateEntities.map((e) => e.entity_id));
-    const allSelectedClimate = new Set([...this.selectedThermostats, ...this.selectedAcs]);
+    const allSelectedClimate = new Set(this.devices.map((d) => d.entity_id));
     const externalClimateIds = [...allSelectedClimate].filter((id) => !areaClimateIds.has(id));
 
     const areaTempIds = new Set(areaTempSensors.map((e) => e.entity_id));
@@ -632,7 +668,7 @@ export class RsDeviceSection extends LitElement {
                   @change=${this._onWindowCloseDelayChange}
                 ></ha-textfield>
               </div>
-              ${this.heatingSystemType === "underfloor" && this.windowOpenDelay < 300
+              ${this._heatingSystemType === "underfloor" && this.windowOpenDelay < 300
                 ? html`
                     <div class="delay-hint">
                       <ha-icon icon="mdi:information-outline"></ha-icon>
@@ -655,7 +691,7 @@ export class RsDeviceSection extends LitElement {
         ></ha-entity-picker>
       </div>
 
-      ${this.selectedThermostats.size > 0
+      ${this._selectedThermostats.size > 0
         ? html`
             <div class="device-group">
               <div class="subtitle-row">
@@ -678,7 +714,7 @@ export class RsDeviceSection extends LitElement {
                   `
                 : nothing}
               <ha-select
-                .value=${this.heatingSystemType || "standard"}
+                .value=${this._heatingSystemType || "standard"}
                 .options=${[
                   {
                     value: "standard",
@@ -728,8 +764,8 @@ export class RsDeviceSection extends LitElement {
   }
 
   private _renderClimateRow(entityId: string, external: boolean) {
-    const isThermostat = this.selectedThermostats.has(entityId);
-    const isAc = this.selectedAcs.has(entityId);
+    const isThermostat = this._selectedThermostats.has(entityId);
+    const isAc = this._selectedCoolingDevices.has(entityId);
     const isSelected = isThermostat || isAc;
     const entityState = this.hass.states[entityId];
     const friendlyName = (entityState?.attributes?.friendly_name as string) || entityId;
@@ -770,7 +806,7 @@ export class RsDeviceSection extends LitElement {
                 <ha-select
                   class="device-type-select"
                   outlined
-                  .value=${isAc ? "ac" : "thermostat"}
+                  .value=${this._getDeviceDisplayType(entityId)}
                   .options=${[
                     {
                       value: "thermostat",
@@ -835,6 +871,59 @@ export class RsDeviceSection extends LitElement {
             `
           : nothing}
       </div>
+      ${(() => {
+        const hvacModes = (entityState?.attributes?.hvac_modes ?? []) as string[];
+        const supportsFanOnly = hvacModes.includes("fan_only");
+        const device = this.devices.find((d) => d.entity_id === entityId);
+        if (!isSelected || !supportsFanOnly || device?.type !== "ac") return nothing;
+        return html`
+          <div class="idle-action-row">
+            <ha-select
+              .label=${localize("devices.idle_action", this.hass.language)}
+              .value=${device.idle_action ?? "off"}
+              .options=${[
+                {
+                  value: "off",
+                  label: localize("devices.idle_action_off", this.hass.language),
+                },
+                {
+                  value: "fan_only",
+                  label: localize("devices.idle_action_fan_only", this.hass.language),
+                },
+              ]}
+              @selected=${(e: Event) => this._onIdleActionChange(entityId, getSelectValue(e)!)}
+              @closed=${(e: Event) => e.stopPropagation()}
+              fixedMenuPosition
+            >
+              <ha-list-item value="off"
+                >${localize("devices.idle_action_off", this.hass.language)}</ha-list-item
+              >
+              <ha-list-item value="fan_only"
+                >${localize("devices.idle_action_fan_only", this.hass.language)}</ha-list-item
+              >
+            </ha-select>
+            ${device.idle_action === "fan_only"
+              ? html`
+                  <ha-select
+                    .label=${localize("devices.idle_fan_mode", this.hass.language)}
+                    .value=${device.idle_fan_mode ?? "low"}
+                    .options=${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                      (fm) => ({ value: fm, label: fm }),
+                    )}
+                    @selected=${(e: Event) =>
+                      this._onIdleFanModeChange(entityId, getSelectValue(e)!)}
+                    @closed=${(e: Event) => e.stopPropagation()}
+                    fixedMenuPosition
+                  >
+                    ${((entityState?.attributes?.fan_modes ?? []) as string[]).map(
+                      (fm) => html`<ha-list-item value="${fm}">${fm}</ha-list-item>`,
+                    )}
+                  </ha-select>
+                `
+              : nothing}
+          </div>
+        `;
+      })()}
       ${isThermostat && this.valveProtectionEnabled
         ? html`
             <div
@@ -930,30 +1019,40 @@ export class RsDeviceSection extends LitElement {
   // ---- Event handlers ----
 
   private _detectClimateType(entityId: string): "thermostat" | "ac" {
-    const modes = this.hass.states[entityId]?.attributes?.hvac_modes as string[] | undefined;
-    if (!modes) return "thermostat";
-    const canCool = modes.includes("cool") || modes.includes("heat_cool");
-    return canCool ? "ac" : "thermostat";
+    const state = this.hass.states[entityId];
+    const modes = (state?.attributes?.hvac_modes ?? []) as string[];
+    // Only explicit heat/cool modes count. "auto" is ambiguous (device self-regulates)
+    // and should not influence the initial classification. User can override manually.
+    const canCool = modes.some((m) => ["cool", "heat_cool"].includes(m));
+    if (canCool) return "ac";
+    return "thermostat";
+  }
+
+  private _getDeviceDisplayType(entityId: string): string {
+    const device = this.devices.find((d) => d.entity_id === entityId);
+    if (!device) return "thermostat";
+    if (device.type === "ac") return "ac";
+    return "thermostat";
   }
 
   private _onClimateToggle(entityId: string, checked: boolean) {
-    this.dispatchEvent(
-      new CustomEvent("climate-toggle", {
-        detail: { entityId, checked, detectedType: this._detectClimateType(entityId) },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    let newDevices: DeviceConfig[];
+    if (checked) {
+      const detected = this._detectClimateType(entityId);
+      const type: DeviceType = detected === "thermostat" ? "trv" : "ac";
+      newDevices = [...this.devices, { entity_id: entityId, type, role: "auto" }];
+    } else {
+      newDevices = this.devices.filter((d) => d.entity_id !== entityId);
+    }
+    this._fireDeviceChanged(newDevices);
   }
 
   private _onDeviceTypeChange(entityId: string, type: "thermostat" | "ac") {
-    this.dispatchEvent(
-      new CustomEvent("device-type-change", {
-        detail: { entityId, type },
-        bubbles: true,
-        composed: true,
-      }),
+    const deviceType: DeviceType = type === "thermostat" ? "trv" : "ac";
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, type: deviceType } : d,
     );
+    this._fireDeviceChanged(newDevices);
   }
 
   private _onEntityModeChange(entityId: string, mode: "auto" | "heat_only" | "cool_only") {
@@ -1018,13 +1117,39 @@ export class RsDeviceSection extends LitElement {
     );
   }
 
+  private _onIdleActionChange(entityId: string, idleAction: string): void {
+    const newDevices = this.devices.map((d) => {
+      if (d.entity_id !== entityId) return d;
+      const updated = { ...d, idle_action: idleAction as "off" | "fan_only" };
+      if (idleAction === "fan_only" && !d.idle_fan_mode) {
+        updated.idle_fan_mode = "low";
+      }
+      return updated;
+    });
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onIdleFanModeChange(entityId: string, fanMode: string): void {
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId ? { ...d, idle_fan_mode: fanMode } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
   private _onHeatingSystemTypeChange(e: Event) {
     const raw = getSelectValue(e) ?? "";
     const value = raw === "standard" ? "" : raw;
     this._showBoostHint = true;
+    const newDevices = this.devices.map((d) =>
+      d.type === "trv" ? { ...d, heating_system_type: value } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _fireDeviceChanged(devices: DeviceConfig[]) {
     this.dispatchEvent(
-      new CustomEvent("heating-system-type-changed", {
-        detail: { value },
+      new CustomEvent("device-changed", {
+        detail: { devices },
         bubbles: true,
         composed: true,
       }),
@@ -1037,7 +1162,7 @@ export class RsDeviceSection extends LitElement {
     const idAfterDot = id.substring(id.indexOf(".") + 1);
     if (idAfterDot.startsWith("roommind_")) return false;
     // Exclude already-selected entities
-    if (this.selectedThermostats.has(id) || this.selectedAcs.has(id)) return false;
+    if (this.devices.some((d) => d.entity_id === id)) return false;
     if (this.selectedTempSensor === id) return false;
     if (this.selectedHumiditySensor === id) return false;
     if (this.selectedWindowSensors.has(id)) return false;
@@ -1072,11 +1197,21 @@ export class RsDeviceSection extends LitElement {
       category = deviceClass === "humidity" ? "humidity" : "temp";
     }
 
-    const detectedType = category === "climate" ? this._detectClimateType(entityId) : undefined;
+    if (category === "climate") {
+      const detected = this._detectClimateType(entityId);
+      const type: DeviceType = detected === "thermostat" ? "trv" : "ac";
+      const newDevices = [...this.devices, { entity_id: entityId, type, role: "auto" as const }];
+      this._fireDeviceChanged(newDevices);
+      // Clear the picker value
+      const picker = e.target as HTMLElement & { value: string };
+      picker.value = "";
+      return;
+    }
 
+    // For non-climate entities, keep the external-entity-added event
     this.dispatchEvent(
       new CustomEvent("external-entity-added", {
-        detail: { entityId, category, detectedType },
+        detail: { entityId, category },
         bubbles: true,
         composed: true,
       }),

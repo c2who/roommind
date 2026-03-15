@@ -39,10 +39,16 @@ def _make_room(
     outdoor_threshold: float = DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     ac_min_outdoor: float = DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
 ) -> dict:
+    trv_list = thermostats if thermostats is not None else ["climate.trv_1"]
+    ac_list = acs if acs is not None else ["climate.ac_1"]
+    devices = [{"entity_id": eid, "type": "trv", "role": "auto", "heating_system_type": ""} for eid in trv_list] + [
+        {"entity_id": eid, "type": "ac", "role": "auto", "heating_system_type": ""} for eid in ac_list
+    ]
     return {
         "area_id": "test_room",
-        "thermostats": thermostats if thermostats is not None else ["climate.trv_1"],
-        "acs": acs if acs is not None else ["climate.ac_1"],
+        "thermostats": trv_list,
+        "acs": ac_list,
+        "devices": devices,
         "heat_source_orchestration": orchestration,
         "heat_source_primary_delta": primary_delta,
         "heat_source_outdoor_threshold": outdoor_threshold,

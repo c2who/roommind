@@ -14,6 +14,8 @@ from .const import (
     CLIMATE_MODES,
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
+    DEFAULT_COMPRESSOR_MIN_OFF_MINUTES,
+    DEFAULT_COMPRESSOR_MIN_RUN_MINUTES,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
     DOMAIN,
@@ -45,6 +47,7 @@ def _get_coordinator(hass: HomeAssistant) -> RoomMindCoordinator | None:
 _ROOM_SAVE_FIELDS = (
     "thermostats",
     "acs",
+    "devices",
     "temperature_sensor",
     "humidity_sensor",
     "climate_mode",
@@ -115,6 +118,7 @@ _SETTINGS_SAVE_FIELDS = (
     "mold_prevention_notify_targets",
     "room_order",
     "group_by_floor",
+    "compressor_groups",
 )
 
 
@@ -217,6 +221,7 @@ async def websocket_list_rooms(
             "schedule_off_action": settings.get("schedule_off_action", "eco"),
             "anyone_home": _compute_anyone_home(hass, settings),
             "valve_protection_enabled": settings.get("valve_protection_enabled", False),
+            "compressor_groups": settings.get("compressor_groups", []),
         },
     )
 
@@ -232,6 +237,16 @@ async def websocket_list_rooms(
         vol.Required("area_id"): str,
         vol.Optional("thermostats"): [str],
         vol.Optional("acs"): [str],
+        vol.Optional("devices"): [
+            {
+                vol.Required("entity_id"): str,
+                vol.Required("type"): vol.In(["trv", "ac"]),
+                vol.Optional("role", default="auto"): vol.In(["primary", "secondary", "auto"]),
+                vol.Optional("heating_system_type", default=""): vol.In(["", "radiator", "underfloor"]),
+                vol.Optional("idle_action", default="off"): vol.In(["off", "fan_only"]),
+                vol.Optional("idle_fan_mode", default="low"): str,
+            }
+        ],
         vol.Optional("temperature_sensor"): str,
         vol.Optional("humidity_sensor"): str,
         vol.Optional("climate_mode"): vol.In(CLIMATE_MODES),
@@ -310,6 +325,15 @@ async def websocket_save_room(
                     f"Cannot assign RoomMind's own entity '{eid}' to a room",
                 )
                 return
+    for device in config.get("devices", []):
+        eid = device.get("entity_id", "")
+        if eid.split(".", 1)[-1].startswith(own_prefix):
+            connection.send_error(
+                msg["id"],
+                "invalid_entity",
+                f"Cannot assign RoomMind's own entity '{eid}' to a room",
+            )
+            return
     for field in ("temperature_sensor", "humidity_sensor"):
         eid = config.get(field, "")
         if eid and eid.split(".", 1)[-1].startswith(own_prefix):
@@ -319,6 +343,23 @@ async def websocket_save_room(
                 f"Cannot assign RoomMind's own entity '{eid}' to a room",
             )
             return
+
+    # Reject duplicate entity_ids in devices[]
+    device_eids = [d["entity_id"] for d in config.get("devices", [])]
+    if len(device_eids) != len(set(device_eids)):
+        connection.send_error(
+            msg["id"],
+            "duplicate_entity",
+            "devices[] contains duplicate entity_ids",
+        )
+        return
+
+    if ("thermostats" in config or "acs" in config) and "devices" not in config:
+        _LOGGER.warning(
+            "Room save for '%s' uses legacy thermostats/acs fields without devices. "
+            "This is deprecated and will be removed in a future version.",
+            area_id,
+        )
 
     room = await store.async_save_room(area_id, config)
 
@@ -555,6 +596,19 @@ async def websocket_get_settings(
         ],
         vol.Optional("room_order"): [str],
         vol.Optional("group_by_floor"): bool,
+        vol.Optional("compressor_groups"): [
+            {
+                vol.Required("id"): str,
+                vol.Required("name"): str,
+                vol.Required("members"): vol.All([str], vol.Length(min=1)),
+                vol.Optional("min_run_minutes", default=DEFAULT_COMPRESSOR_MIN_RUN_MINUTES): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=60)
+                ),
+                vol.Optional("min_off_minutes", default=DEFAULT_COMPRESSOR_MIN_OFF_MINUTES): vol.All(
+                    vol.Coerce(int), vol.Range(min=1, max=30)
+                ),
+            }
+        ],
     }
 )
 @websocket_api.async_response
@@ -569,6 +623,37 @@ async def websocket_save_settings(
     for key in _SETTINGS_SAVE_FIELDS:
         if key in msg:
             changes[key] = msg[key]
+
+    # Validate compressor groups
+    groups = changes.get("compressor_groups")
+    if groups:
+        group_ids = [g.get("id", "") for g in groups]
+        if len(group_ids) != len(set(group_ids)):
+            connection.send_error(
+                msg["id"],
+                "duplicate_group_id",
+                "Compressor group IDs must be unique",
+            )
+            return
+        all_members: list[str] = []
+        for g in groups:
+            for eid in g.get("members", []):
+                if not eid.startswith("climate."):
+                    connection.send_error(
+                        msg["id"],
+                        "invalid_member",
+                        f"Compressor group member '{eid}' is not a climate entity",
+                    )
+                    return
+            all_members.extend(g.get("members", []))
+        if len(all_members) != len(set(all_members)):
+            connection.send_error(
+                msg["id"],
+                "duplicate_member",
+                "A climate entity cannot be in multiple compressor groups",
+            )
+            return
+
     settings = await store.async_save_settings(changes)
     connection.send_result(msg["id"], {"settings": settings})
 

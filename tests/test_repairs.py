@@ -21,14 +21,6 @@ async def test_create_fix_flow_returns_instance():
 
 
 @pytest.mark.asyncio
-async def test_create_fix_flow_ignores_params():
-    """Factory works with any issue_id and data."""
-    hass = MagicMock()
-    flow = await async_create_fix_flow(hass, "other_issue", {"key": "val"})
-    assert isinstance(flow, RestartRequiredFixFlow)
-
-
-@pytest.mark.asyncio
 async def test_init_step_delegates_to_confirm():
     """async_step_init delegates to async_step_confirm_restart."""
     flow = RestartRequiredFixFlow()

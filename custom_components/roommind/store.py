@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
@@ -18,6 +19,15 @@ from .const import (
     DOMAIN,
     ROOM_ENABLED_DEFAULT,
 )
+from .utils.device_utils import (
+    devices_to_legacy,
+    ensure_room_has_devices,
+    get_room_heating_system_type,
+    legacy_to_devices,
+    migrate_heat_pump_devices,
+)
+
+_LOGGER = logging.getLogger(__name__)
 
 STORAGE_VERSION = 1
 STORAGE_KEY = DOMAIN
@@ -33,6 +43,14 @@ def _migrate_room_temps(room: dict) -> dict:
         room["eco_heat"] = room.get("eco_temp", DEFAULT_ECO_HEAT)
     if "eco_cool" not in room:
         room["eco_cool"] = DEFAULT_ECO_COOL
+    return room
+
+
+def _migrate_room(room: dict) -> dict:
+    """Apply all read-time migrations (safety net)."""
+    _migrate_room_temps(room)
+    migrate_heat_pump_devices(room.get("devices", []))
+    ensure_room_has_devices(room)
     return room
 
 
@@ -57,6 +75,25 @@ class RoomMindStore:
         self._settings = stored.get("settings", {}) if stored else {}
         self._thermal_data = stored.get("thermal_data", {}) if stored else {}
 
+        # One-time migrations (combined into single pass + single save)
+        device_migrated = 0
+        hp_migrated = 0
+        for room in self._data.values():
+            if "devices" not in room:
+                ensure_room_has_devices(room)
+                device_migrated += 1
+            if migrate_heat_pump_devices(room.get("devices", [])):
+                t, a = devices_to_legacy(room["devices"])
+                room["thermostats"] = t
+                room["acs"] = a
+                hp_migrated += 1
+        if device_migrated or hp_migrated:
+            await self._async_save()
+        if device_migrated:
+            _LOGGER.info("Migrated %d room(s) to unified device model", device_migrated)
+        if hp_migrated:
+            _LOGGER.info("Migrated %d room(s) from heat_pump to ac device type", hp_migrated)
+
     async def _async_save(self) -> None:
         """Persist current room data to the HA store."""
         await self._store.async_save(
@@ -67,7 +104,7 @@ class RoomMindStore:
         """Return a deep copy of all rooms (with migration applied)."""
         rooms = copy.deepcopy(dict(self._data))
         for room in rooms.values():
-            _migrate_room_temps(room)
+            _migrate_room(room)
         return rooms
 
     def get_room(self, area_id: str) -> dict | None:
@@ -76,7 +113,7 @@ class RoomMindStore:
         if room is None:
             return None
         result = copy.deepcopy(room)
-        _migrate_room_temps(result)
+        _migrate_room(result)
         return result
 
     def get_settings(self) -> dict:
@@ -126,6 +163,21 @@ class RoomMindStore:
                 existing["comfort_heat"] = config["comfort_temp"]
             if "eco_temp" in config and "eco_heat" not in config:
                 existing["eco_heat"] = config["eco_temp"]
+            # Directional device sync
+            if "devices" in config:
+                # New frontend: devices is source of truth -> regenerate legacy.
+                # Also derive heating_system_type from devices (ignore any sent value).
+                t, a = devices_to_legacy(existing["devices"])
+                existing["thermostats"] = t
+                existing["acs"] = a
+                existing["heating_system_type"] = get_room_heating_system_type(existing["devices"])
+            elif "thermostats" in config or "acs" in config:
+                # Old frontend: legacy is source of truth -> regenerate devices
+                existing["devices"] = legacy_to_devices(
+                    existing.get("thermostats", []),
+                    existing.get("acs", []),
+                    existing.get("heating_system_type", ""),
+                )
             await self._async_save()
             return existing
         else:
@@ -134,8 +186,7 @@ class RoomMindStore:
             eco_heat = config.get("eco_heat", config.get("eco_temp", DEFAULT_ECO_HEAT))
             room = {
                 "area_id": area_id,
-                "thermostats": config.get("thermostats", []),
-                "acs": config.get("acs", []),
+                "devices": config.get("devices", []),
                 "temperature_sensor": config.get("temperature_sensor", ""),
                 "humidity_sensor": config.get("humidity_sensor", ""),
                 "climate_mode": config.get("climate_mode", "auto"),
@@ -176,12 +227,33 @@ class RoomMindStore:
                 ),
                 "room_enabled": config.get("room_enabled", ROOM_ENABLED_DEFAULT),
             }
+            # Directional device sync for new rooms
+            if "devices" in config and config["devices"]:
+                t, a = devices_to_legacy(room["devices"])
+                room["thermostats"] = t
+                room["acs"] = a
+                room["heating_system_type"] = get_room_heating_system_type(room["devices"])
+            elif "thermostats" in config or "acs" in config:
+                room["thermostats"] = config.get("thermostats", [])
+                room["acs"] = config.get("acs", [])
+                room["devices"] = legacy_to_devices(
+                    room["thermostats"],
+                    room["acs"],
+                    room.get("heating_system_type", ""),
+                )
+            # Ensure legacy keys always exist (for backward compat)
+            room.setdefault("thermostats", [])
+            room.setdefault("acs", [])
             self._data[area_id] = room
             await self._async_save()
             return room
 
     async def async_update_room(self, area_id: str, changes: dict) -> dict:
-        """Merge changes into an existing room. Raises KeyError if not found."""
+        """Merge changes into an existing room. Raises KeyError if not found.
+
+        Note: Does NOT perform device sync (devices <-> thermostats/acs).
+        Use async_save_room() for changes involving device fields.
+        """
         if area_id not in self._data:
             raise KeyError(f"Room '{area_id}' not found")
 

@@ -82,6 +82,7 @@ async def test_list_rooms_empty(ws_hass, store, connection):
             "schedule_off_action": "eco",
             "anyone_home": True,
             "valve_protection_enabled": False,
+            "compressor_groups": [],
         },
     )
 
@@ -1705,6 +1706,24 @@ async def test_save_room_rejects_own_entities(ws_hass, store, connection, field,
 
 
 @pytest.mark.asyncio
+async def test_save_room_devices_duplicate_entity_rejected(ws_hass, store, connection):
+    """Duplicate entity_ids in devices[] are rejected."""
+    await store.async_load()
+    msg = {
+        "id": 2,
+        "type": "roommind/rooms/save",
+        "area_id": "living_room",
+        "devices": [
+            {"entity_id": "climate.trv1", "type": "trv"},
+            {"entity_id": "climate.trv1", "type": "ac"},
+        ],
+    }
+    await _save_room(ws_hass, connection, msg)
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "duplicate_entity"
+
+
+@pytest.mark.asyncio
 async def test_save_room_allows_normal_entities(ws_hass, store, connection):
     """Normal (non-RoomMind) entities are accepted."""
     await store.async_load()
@@ -1718,3 +1737,214 @@ async def test_save_room_allows_normal_entities(ws_hass, store, connection):
     await _save_room(ws_hass, connection, msg)
     connection.send_result.assert_called_once()
     connection.send_error.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Unified Device Model: devices field in WS save
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_room_with_devices_accepted(ws_hass, store, connection):
+    """WS save with devices array is accepted and stored."""
+    await store.async_load()
+    msg = {
+        "id": 2,
+        "type": "roommind/rooms/save",
+        "area_id": "living_room",
+        "devices": [
+            {"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": "radiator"},
+            {"entity_id": "climate.ac1", "type": "ac", "role": "auto", "heating_system_type": ""},
+        ],
+    }
+    await _save_room(ws_hass, connection, msg)
+    connection.send_result.assert_called_once()
+    room = connection.send_result.call_args[0][1]["room"]
+    assert room["devices"] == [
+        {"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": "radiator"},
+        {"entity_id": "climate.ac1", "type": "ac", "role": "auto", "heating_system_type": ""},
+    ]
+    # Legacy keys should be synced
+    assert room["thermostats"] == ["climate.trv1"]
+    assert room["acs"] == ["climate.ac1"]
+
+
+@pytest.mark.asyncio
+async def test_save_room_device_type_heat_pump_rejected(ws_hass, store, connection):
+    """Sending type: 'heat_pump' in a device should be rejected by the WS schema.
+
+    The voluptuous schema on the websocket_save_room handler only allows
+    'trv' and 'ac'.  We rebuild the schema from the decorator definition
+    and validate through it to ensure heat_pump is rejected at the WS layer.
+    """
+    import voluptuous as vol
+
+    # Reproduce the device sub-schema from websocket_api.py
+    device_schema = vol.Schema(
+        {
+            vol.Required("entity_id"): str,
+            vol.Required("type"): vol.In(["trv", "ac"]),
+            vol.Optional("role", default="auto"): vol.In(["primary", "secondary", "auto"]),
+            vol.Optional("heating_system_type", default=""): vol.In(["", "radiator", "underfloor"]),
+        }
+    )
+    save_room_schema = vol.Schema(
+        {
+            vol.Required("id"): int,
+            vol.Required("type"): "roommind/rooms/save",
+            vol.Required("area_id"): str,
+            vol.Optional("devices"): [device_schema],
+        },
+        extra=vol.ALLOW_EXTRA,
+    )
+
+    msg = {
+        "id": 2,
+        "type": "roommind/rooms/save",
+        "area_id": "living_room",
+        "devices": [
+            {"entity_id": "climate.hp1", "type": "heat_pump", "role": "auto"},
+        ],
+    }
+
+    with pytest.raises(vol.Invalid):
+        save_room_schema(msg)
+
+
+@pytest.mark.asyncio
+async def test_save_room_devices_self_assignment_rejected(ws_hass, store, connection):
+    """Self-assignment check rejects RoomMind's own entities in devices."""
+    await store.async_load()
+    msg = {
+        "id": 2,
+        "type": "roommind/rooms/save",
+        "area_id": "living_room",
+        "devices": [
+            {"entity_id": "climate.roommind_living_room_trv", "type": "trv"},
+        ],
+    }
+    await _save_room(ws_hass, connection, msg)
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_entity"
+
+
+# ---------------------------------------------------------------------------
+# Compressor group validation tests (K3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_groups_valid(ws_hass, store, connection):
+    """Saving valid compressor_groups succeeds and persists them."""
+    await store.async_load()
+
+    msg = {
+        "id": 20,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "outdoor1",
+                "name": "Outdoor Unit 1",
+                "members": ["climate.ac_living", "climate.ac_bedroom"],
+                "min_run_minutes": 10,
+                "min_off_minutes": 5,
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_result.assert_called_once()
+    result = connection.send_result.call_args[0][1]
+    groups = result["settings"]["compressor_groups"]
+    assert len(groups) == 1
+    assert groups[0]["id"] == "outdoor1"
+    assert groups[0]["members"] == ["climate.ac_living", "climate.ac_bedroom"]
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_groups_duplicate_member(ws_hass, store, connection):
+    """Duplicate entity across compressor groups should be rejected."""
+    await store.async_load()
+
+    msg = {
+        "id": 21,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "group1",
+                "name": "Group 1",
+                "members": ["climate.ac_living"],
+                "min_run_minutes": 5,
+                "min_off_minutes": 5,
+            },
+            {
+                "id": "group2",
+                "name": "Group 2",
+                "members": ["climate.ac_living"],
+                "min_run_minutes": 5,
+                "min_off_minutes": 5,
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "duplicate_member"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_groups_invalid_member(ws_hass, store, connection):
+    """Non-climate entity in compressor group should be rejected."""
+    await store.async_load()
+
+    msg = {
+        "id": 22,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "group1",
+                "name": "Group 1",
+                "members": ["switch.pump_relay"],
+                "min_run_minutes": 5,
+                "min_off_minutes": 5,
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_member"
+
+
+# ---------------------------------------------------------------------------
+# V11: Legacy-only save syncs devices
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_room_with_legacy_only_syncs_devices(ws_hass, store, connection):
+    """Saving with thermostats/acs but NO devices key creates devices[] from legacy."""
+    await store.async_load()
+
+    msg = {
+        "id": 30,
+        "type": "roommind/rooms/save",
+        "area_id": "legacy_room",
+        "thermostats": ["climate.trv1"],
+        "acs": ["climate.ac1"],
+    }
+    await _save_room(ws_hass, connection, msg)
+
+    connection.send_result.assert_called_once()
+    room = connection.send_result.call_args[0][1]["room"]
+
+    # Store should have synthesized devices from legacy fields
+    assert "devices" in room
+    assert len(room["devices"]) == 2
+
+    trv_devices = [d for d in room["devices"] if d["type"] == "trv"]
+    ac_devices = [d for d in room["devices"] if d["type"] == "ac"]
+    assert len(trv_devices) == 1
+    assert trv_devices[0]["entity_id"] == "climate.trv1"
+    assert len(ac_devices) == 1
+    assert ac_devices[0]["entity_id"] == "climate.ac1"

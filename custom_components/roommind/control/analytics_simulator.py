@@ -13,6 +13,7 @@ from ..const import (
     MODE_HEATING,
     MODE_IDLE,
 )
+from ..utils.device_utils import get_ac_eids, get_trv_eids
 from .mpc_controller import get_can_heat_cool
 from .mpc_optimizer import MPCOptimizer
 from .residual_heat import build_residual_series, get_min_run_blocks
@@ -347,8 +348,8 @@ def _simulate_bangbang(
 ) -> tuple[list[float], list[str]]:
     """Bang-bang fallback simulation with mode stickiness + idle rate cap."""
     observed_idle_rate = compute_observed_idle_rate(all_points)
-    has_heat = bool(room_config.get("thermostats")) or acs_can_heat
-    has_cool = bool(room_config.get("acs"))
+    has_heat = bool(get_trv_eids(room_config.get("devices", []))) or acs_can_heat
+    has_cool = bool(get_ac_eids(room_config.get("devices", [])))
 
     min_run = get_min_run_blocks(heating_system_type, 5.0)
 

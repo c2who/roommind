@@ -5,7 +5,13 @@
  */
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import type { HomeAssistant, GlobalSettings, RoomConfig, NotificationTarget } from "../types";
+import type {
+  HomeAssistant,
+  GlobalSettings,
+  RoomConfig,
+  NotificationTarget,
+  CompressorGroup,
+} from "../types";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
 import { VACATION_SENTINEL } from "../utils/constants";
@@ -16,6 +22,7 @@ import "./settings/rs-settings-control";
 import "./settings/rs-settings-presence";
 import "./settings/rs-settings-vacation";
 import "./settings/rs-settings-valve";
+import "./settings/rs-settings-compressor";
 import "./settings/rs-settings-mold";
 import "./settings/rs-settings-notifications";
 import "./settings/rs-settings-learning";
@@ -55,6 +62,7 @@ export class RsSettings extends LitElement {
   @state() private _moldPreventionEnabled = false;
   @state() private _moldPreventionIntensity: "light" | "medium" | "strong" = "medium";
   @state() private _moldPreventionNotify = false;
+  @state() private _compressorGroups: CompressorGroup[] = [];
   @state() private _boostAppliedAt: Record<string, number> = {};
   @state() private _loaded = false;
 
@@ -110,6 +118,7 @@ export class RsSettings extends LitElement {
       this._moldPreventionEnabled = s.mold_prevention_enabled ?? false;
       this._moldPreventionIntensity = s.mold_prevention_intensity ?? "medium";
       this._moldPreventionNotify = s.mold_prevention_notify_enabled ?? false;
+      this._compressorGroups = s.compressor_groups ?? [];
       this._boostAppliedAt = s.boost_applied_at ?? {};
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -210,6 +219,18 @@ export class RsSettings extends LitElement {
           .valveProtectionInterval=${this._valveProtectionInterval}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-valve>
+      </rs-settings-panel>
+
+      <rs-settings-panel
+        icon="mdi:heat-pump-outline"
+        .heading=${localize("compressor.title", l)}
+        .intro=${localize("settings.intro.compressor", l)}
+      >
+        <rs-settings-compressor
+          .hass=${this.hass}
+          .compressorGroups=${this._compressorGroups}
+          @setting-changed=${this._onSettingChanged}
+        ></rs-settings-compressor>
       </rs-settings-panel>
 
       <rs-settings-panel
@@ -326,6 +347,7 @@ export class RsSettings extends LitElement {
         schedule_off_action: this._scheduleOffAction,
         valve_protection_enabled: this._valveProtectionEnabled,
         valve_protection_interval_days: this._valveProtectionInterval,
+        compressor_groups: this._compressorGroups.filter((g) => g.members.length > 0),
         mold_detection_enabled: this._moldDetectionEnabled,
         mold_humidity_threshold: this._moldHumidityThreshold,
         mold_sustained_minutes: this._moldSustainedMinutes,

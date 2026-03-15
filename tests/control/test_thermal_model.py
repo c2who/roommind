@@ -566,10 +566,14 @@ def test_manager_update_room():
 
 
 def test_manager_predict():
-    """predict() returns a float."""
+    """predict() for untrained room uses RC model with defaults → temp rises with heating."""
     mgr = RoomModelManager()
     result = mgr.predict("living_room", T_room=20.0, T_outdoor=5.0, Q_active=1000.0, dt_minutes=10)
     assert isinstance(result, float)
+    # With Q_active=1000 (heating), prediction should be above T_room
+    assert result > 20.0
+    # And physically reasonable (not above 30 with only 10 min heating from 20)
+    assert result < 30.0
 
 
 def test_manager_get_confidence():
@@ -717,7 +721,10 @@ def test_manager_update_window_open():
     # First need to initialize the estimator
     mgr.update("room1", 22.0, 10.0, "idle", 0.5)
     mgr.update_window_open("room1", 21.5, 5.0, 0.5)
-    assert mgr.get_k_window("room1") != ThermalEKF._K_WINDOW_DEFAULT or True  # just no crash
+    # Verify model still has valid state after window update
+    est = mgr.get_estimator("room1")
+    assert est is not None
+    assert est._initialized is True
 
 
 def test_manager_predict_window_open():

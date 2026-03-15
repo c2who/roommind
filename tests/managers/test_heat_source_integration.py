@@ -26,6 +26,10 @@ ROOM_WITH_TRV_AND_AC = {
     "area_id": "living_room",
     "thermostats": ["climate.trv_living"],
     "acs": ["climate.ac_living"],
+    "devices": [
+        {"entity_id": "climate.trv_living", "type": "trv", "role": "auto", "heating_system_type": ""},
+        {"entity_id": "climate.ac_living", "type": "ac", "role": "auto", "heating_system_type": ""},
+    ],
     "temperature_sensor": "sensor.living_room_temp",
     "humidity_sensor": "sensor.living_room_humidity",
     "climate_mode": "auto",

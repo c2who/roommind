@@ -208,13 +208,13 @@ class TestSimulateMPC:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         settings = {"comfort_weight": 70}
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=18.0, room_config=room_config, settings=settings,
-
         )
         assert len(temps) == 10
         assert all(isinstance(t, float) for t in temps)
@@ -229,19 +229,19 @@ class TestSimulateMPC:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         settings = {"comfort_weight": 70}
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config, settings=settings,
-
         )
         # Temperature should increase when starting cold
         assert temps[-1] > 15.0
 
     def test_with_solar_series(self):
-        """Solar series is accepted without error."""
+        """Solar series is accepted and affects prediction."""
         model = RCModel(C=1.0, U=0.5, Q_heat=50.0, Q_cool=50.0, Q_solar=10.0)
         target_forecast = [{"target_temp": 21.0}] * 5
         outdoor_series = [10.0] * 5
@@ -249,16 +249,22 @@ class TestSimulateMPC:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         settings = {"comfort_weight": 70}
-        temps, actions = _simulate_mpc(
+        temps_with_solar, actions_with_solar = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings=settings,
-
             solar_series=solar_series,
         )
-        assert len(temps) == 5
+        temps_no_solar, actions_no_solar = _simulate_mpc(
+            model, target_forecast, outdoor_series,
+            current_temp=20.0, room_config=room_config, settings=settings,
+        )
+        assert len(temps_with_solar) == 5
+        # Solar gain should produce higher temperatures
+        assert temps_with_solar[-1] > temps_no_solar[-1]
 
     def test_temperatures_clamped(self):
         """Output temps are clamped between 5 and 40."""
@@ -268,13 +274,13 @@ class TestSimulateMPC:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         settings = {}
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings=settings,
-
         )
         assert all(5.0 <= t <= 40.0 for t in temps)
 
@@ -286,13 +292,13 @@ class TestSimulateMPC:
         room_config = {
             "thermostats": [],
             "acs": [],
+            "devices": [],
             "climate_mode": "auto",
         }
         settings = {}
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings=settings,
-
         )
         # Without devices, temp should drift downward toward outdoor
         assert temps[-1] < 20.0
@@ -314,13 +320,13 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         all_points: list[dict] = []
         temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config,
-
             all_points=all_points,
         )
         assert len(temps) == 20
@@ -335,18 +341,22 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         all_points: list[dict] = []
-        # Start well below target to trigger heating
+        # Start below target - hysteresis (20.8 - 0.2 = below triggers heating)
         temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
-            current_temp=20.0, room_config=room_config,
-
+            current_temp=18.0, room_config=room_config,
             all_points=all_points,
         )
-        # With very high Q_heat, temp jumps quickly, but min run enforces at least 2 blocks
         assert len(temps) == 5
+        # With very high Q_heat (5000), temp exceeds target after 1 block, but
+        # min_run=2 forces at least 2 consecutive heating blocks. Verify first
+        # two blocks both show temperature increases (heating active).
+        assert temps[0] > 18.0, "Block 1 should heat"
+        assert temps[1] > temps[0], "Block 2 should still heat (min_run stickiness)"
 
     def test_cooling_scenario(self):
         """Hot room with ACs → temperature should decrease."""
@@ -356,13 +366,13 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": [],
             "acs": ["climate.ac"],
+            "devices": [{"entity_id": "climate.ac", "type": "ac", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         all_points: list[dict] = []
         temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=28.0, room_config=room_config,
-
             all_points=all_points,
         )
         # Should cool down from 28°C
@@ -376,6 +386,7 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": [],
             "acs": [],
+            "devices": [],
             "climate_mode": "auto",
         }
         # Create idle rate observations (slow drift)
@@ -394,7 +405,6 @@ class TestSimulateBangbang:
         temps_uncapped, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
-
             all_points=[],
         )
         # Capped should drift less aggressively than uncapped
@@ -408,12 +418,12 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
-
             all_points=[],
         )
         assert all(5.0 <= t <= 40.0 for t in temps)
@@ -427,6 +437,7 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": [],
             "acs": [],
+            "devices": [],
             "climate_mode": "auto",
         }
         temps_with_solar, _ = _simulate_bangbang(
@@ -438,7 +449,6 @@ class TestSimulateBangbang:
         temps_no_solar, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
-
             all_points=[],
         )
         # Solar gain should raise temperatures compared to no solar
@@ -453,12 +463,12 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.9, room_config=room_config,
-
             all_points=[],
         )
         # Within hysteresis, should stay approximately the same (idle)
@@ -475,12 +485,15 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": ["climate.ac"],
+            "devices": [
+                {"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": "climate.ac", "type": "ac", "role": "auto", "heating_system_type": ""},
+            ],
             "climate_mode": "auto",
         }
         temps, actions = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config,
-
             all_points=[],
         )
         assert len(temps) == 5
@@ -495,6 +508,7 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": [],
             "acs": [],
+            "devices": [],
             "climate_mode": "auto",
         }
         now = time.time()
@@ -511,7 +525,6 @@ class TestSimulateBangbang:
         temps_uncapped, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
-
             all_points=[],
         )
         # Capped should rise less aggressively than uncapped
@@ -525,13 +538,13 @@ class TestSimulateBangbang:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         # With residual heat from underfloor heating
         temps_with_residual, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
-
             all_points=[],
             q_residual=0.5,
             heating_system_type="underfloor",
@@ -541,11 +554,14 @@ class TestSimulateBangbang:
         temps_no_residual, _ = _simulate_bangbang(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config,
-
             all_points=[],
         )
         assert len(temps_with_residual) == 10
         assert len(temps_no_residual) == 10
+        # Residual heat should produce higher temperatures at some point
+        assert any(r > n for r, n in zip(temps_with_residual, temps_no_residual, strict=True)), (
+            "Residual heat should raise temperatures compared to no residual"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -566,9 +582,11 @@ class TestSimulatePrediction:
             model=model, estimator=est, target_forecast=target_forecast,
             outdoor_series=outdoor_series, current_temp=20.0, window_open=True,
             mpc_active=False, room_config={}, settings={}, all_points=[],
-
         )
         assert len(temps) == 5
+        assert all(-10 < t < 60 for t in temps)
+        # Window open with cold outdoor: temps should drift toward outdoor_temp (5.0)
+        assert temps[-1] < 20.0
 
     def test_mpc_active_dispatches_to_mpc_sim(self):
         """mpc_active=True, window_open=False → _simulate_mpc path."""
@@ -579,15 +597,18 @@ class TestSimulatePrediction:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         temps, modes = simulate_prediction(
             model=model, estimator=est, target_forecast=target_forecast,
             outdoor_series=outdoor_series, current_temp=18.0, window_open=False,
             mpc_active=True, room_config=room_config, settings={}, all_points=[],
-
         )
         assert len(temps) == 5
+        assert all(-10 < t < 60 for t in temps)
+        # Heating scenario: temps should be >= initial temp
+        assert temps[-1] >= 18.0
 
     def test_fallback_dispatches_to_bangbang(self):
         """Neither window_open nor mpc_active → bangbang path."""
@@ -598,15 +619,18 @@ class TestSimulatePrediction:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         temps, modes = simulate_prediction(
             model=model, estimator=est, target_forecast=target_forecast,
             outdoor_series=outdoor_series, current_temp=18.0, window_open=False,
             mpc_active=False, room_config=room_config, settings={}, all_points=[],
-
         )
         assert len(temps) == 5
+        assert all(-10 < t < 60 for t in temps)
+        # Heating scenario (bangbang): temps should be >= initial temp
+        assert temps[-1] >= 18.0
 
 
 # ---------------------------------------------------------------------------
@@ -658,12 +682,15 @@ class TestSimulateMPCEdgeCases:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": ["climate.ac"],
+            "devices": [
+                {"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": "climate.ac", "type": "ac", "role": "auto", "heating_system_type": ""},
+            ],
             "climate_mode": "auto",
         }
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config, settings={},
-
         )
         assert len(temps) == 5
         # Should drift toward outdoor (all idle)
@@ -677,15 +704,30 @@ class TestSimulateMPCEdgeCases:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
+        # With underfloor min_run=6 blocks, heating continues even if temp exceeds target
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=15.0, room_config=room_config, settings={},
-
             heating_system_type="underfloor",
         )
         assert len(temps) == 10
+        # With Q_heat=5000, temp exceeds target (21) after block 1, but
+        # underfloor min_run=6 forces continued heating. Verify at least 6
+        # consecutive temperature increases from the start.
+        consecutive_increases = 0
+        prev = 15.0
+        for t in temps:
+            if t > prev:
+                consecutive_increases += 1
+            else:
+                break
+            prev = t
+        assert consecutive_increases >= 6, (
+            f"Expected >= 6 consecutive heating blocks (underfloor min_run), got {consecutive_increases}"
+        )
 
     def test_cooling_action_applies_negative_q(self):
         """Cooling action → Q = -(pf * Q_cool)."""
@@ -695,12 +737,12 @@ class TestSimulateMPCEdgeCases:
         room_config = {
             "thermostats": [],
             "acs": ["climate.ac"],
+            "devices": [{"entity_id": "climate.ac", "type": "ac", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         temps, actions = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=28.0, room_config=room_config, settings={},
-
         )
         assert len(temps) == 20
         # Should cool down from 28
@@ -714,18 +756,27 @@ class TestSimulateMPCEdgeCases:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
-        temps, actions = _simulate_mpc(
+        temps_with_residual, _ = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=20.0, room_config=room_config, settings={},
-
             q_residual=0.5,
             heating_system_type="underfloor",
             heating_duration_minutes=60.0,
             last_power_fraction=1.0,
         )
-        assert len(temps) == 10
+        temps_no_residual, _ = _simulate_mpc(
+            model, target_forecast, outdoor_series,
+            current_temp=20.0, room_config=room_config, settings={},
+        )
+        assert len(temps_with_residual) == 10
+        assert len(temps_no_residual) == 10
+        # Residual heat should produce higher temperatures at some point
+        assert any(r > n for r, n in zip(temps_with_residual, temps_no_residual, strict=True)), (
+            "Residual heat should raise temperatures compared to no residual"
+        )
 
     def test_residual_series_built_when_active(self):
         """Residual series is built for optimizer when q_residual > 0."""
@@ -735,16 +786,25 @@ class TestSimulateMPCEdgeCases:
         room_config = {
             "thermostats": ["climate.trv"],
             "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "climate_mode": "auto",
         }
         # Start at target to force optimizer path (not stickiness)
-        temps, actions = _simulate_mpc(
+        temps_with_residual, _ = _simulate_mpc(
             model, target_forecast, outdoor_series,
             current_temp=21.0, room_config=room_config, settings={},
-
             q_residual=0.3,
             heating_system_type="radiator",
             heating_duration_minutes=30.0,
             last_power_fraction=0.8,
         )
-        assert len(temps) == 5
+        temps_no_residual, _ = _simulate_mpc(
+            model, target_forecast, outdoor_series,
+            current_temp=21.0, room_config=room_config, settings={},
+        )
+        assert len(temps_with_residual) == 5
+        assert len(temps_no_residual) == 5
+        # Residual heat should affect output (higher temps at some point)
+        assert any(r > n for r, n in zip(temps_with_residual, temps_no_residual, strict=True)), (
+            "Residual series should raise temperatures compared to no residual"
+        )

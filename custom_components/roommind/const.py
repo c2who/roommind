@@ -6,7 +6,7 @@ from typing import NamedTuple
 from homeassistant.const import Platform
 
 DOMAIN = "roommind"
-VERSION = "1.4.3-beta.1"
+VERSION = "1.5.0-beta.1"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -137,6 +137,10 @@ DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR = -15.0  # °C hard-disable AC heating below 
 HEAT_SOURCE_HYSTERESIS = 0.3  # °C hysteresis band to prevent oscillation
 HEAT_SOURCE_LARGE_GAP_MULTIPLIER = 2.0  # activate both sources when gap > primary_delta * this
 HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (prevent overshoot)
+
+# Compressor group defaults
+DEFAULT_COMPRESSOR_MIN_RUN_MINUTES = 15
+DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
 
 
 # Room enabled default

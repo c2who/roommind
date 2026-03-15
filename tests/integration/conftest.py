@@ -13,6 +13,7 @@ ROOM_LIVING = {
     "area_id": "living_room",
     "thermostats": ["climate.living_room"],
     "acs": [],
+    "devices": [{"entity_id": "climate.living_room", "type": "trv", "role": "auto", "heating_system_type": ""}],
     "temperature_sensor": "sensor.living_room_temp",
     "humidity_sensor": "sensor.living_room_humidity",
     "climate_mode": "auto",

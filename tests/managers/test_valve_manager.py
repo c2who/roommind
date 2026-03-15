@@ -102,7 +102,12 @@ async def test_check_and_cycle_exception_on_disable_close(vm):
 @pytest.mark.asyncio
 async def test_check_and_cycle_exception_starting_cycle(vm):
     """Exception during cycle start is caught; valve not added to cycling."""
-    rooms = {"living": {"thermostats": ["climate.trv1"]}}
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1"],
+            "devices": [{"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""}],
+        }
+    }
     settings = {
         "valve_protection_enabled": True,
         "valve_protection_interval_days": 0,  # always stale
@@ -128,7 +133,12 @@ async def test_check_and_cycle_exception_starting_cycle(vm):
 @pytest.mark.asyncio
 async def test_cycle_dual_setpoint_trv(vm):
     """TRV with target_temp_low uses dual-setpoint set_temperature call."""
-    rooms = {"living": {"thermostats": ["climate.trv1"]}}
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1"],
+            "devices": [{"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""}],
+        }
+    }
     settings = {
         "valve_protection_enabled": True,
         "valve_protection_interval_days": 0,
@@ -163,7 +173,12 @@ async def test_cycle_dual_setpoint_trv(vm):
 @pytest.mark.asyncio
 async def test_cycle_single_setpoint_trv_unchanged(vm):
     """Standard TRV without target_temp_low uses single-setpoint call."""
-    rooms = {"living": {"thermostats": ["climate.trv1"]}}
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1"],
+            "devices": [{"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""}],
+        }
+    }
     settings = {
         "valve_protection_enabled": True,
         "valve_protection_interval_days": 0,
@@ -201,6 +216,10 @@ async def test_excluded_entity_not_cycled(vm):
     rooms = {
         "living": {
             "thermostats": ["climate.trv1", "climate.boiler"],
+            "devices": [
+                {"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": "climate.boiler", "type": "trv", "role": "auto", "heating_system_type": ""},
+            ],
             "valve_protection_exclude": ["climate.boiler"],
         }
     }
@@ -230,6 +249,10 @@ async def test_empty_exclude_cycles_all(vm):
     rooms = {
         "living": {
             "thermostats": ["climate.trv1", "climate.trv2"],
+            "devices": [
+                {"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": "climate.trv2", "type": "trv", "role": "auto", "heating_system_type": ""},
+            ],
             "valve_protection_exclude": [],
         }
     }
@@ -259,6 +282,7 @@ async def test_exclude_nonexistent_entity_harmless(vm):
     rooms = {
         "living": {
             "thermostats": ["climate.trv1"],
+            "devices": [{"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""}],
             "valve_protection_exclude": ["climate.doesnt_exist"],
         }
     }
@@ -287,10 +311,18 @@ async def test_exclude_in_one_room_prevents_cycling_from_other(vm):
     rooms = {
         "living": {
             "thermostats": ["climate.boiler", "climate.trv1"],
+            "devices": [
+                {"entity_id": "climate.boiler", "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""},
+            ],
             "valve_protection_exclude": ["climate.boiler"],
         },
         "bedroom": {
             "thermostats": ["climate.boiler", "climate.trv2"],
+            "devices": [
+                {"entity_id": "climate.boiler", "type": "trv", "role": "auto", "heating_system_type": ""},
+                {"entity_id": "climate.trv2", "type": "trv", "role": "auto", "heating_system_type": ""},
+            ],
             "valve_protection_exclude": [],
         },
     }
@@ -313,3 +345,92 @@ async def test_exclude_in_one_room_prevents_cycling_from_other(vm):
     assert "climate.trv1" in vm._cycling
     assert "climate.trv2" in vm._cycling
     assert "climate.boiler" not in vm._cycling
+
+
+# --- async_finish_cycles happy path ---
+
+
+@pytest.mark.asyncio
+async def test_finish_cycles_happy_path(vm):
+    """Finished cycle: turn_off called, cycling cleaned, actuation recorded."""
+    now = time.time()
+    vm._cycling["climate.trv1"] = now - 100  # past cycle duration
+
+    with patch(
+        "custom_components.roommind.managers.valve_manager.async_turn_off_climate",
+        new_callable=AsyncMock,
+    ) as mock_turn_off:
+        await vm.async_finish_cycles()
+
+    mock_turn_off.assert_called_once_with(vm.hass, "climate.trv1", area_id="valve_protection")
+    assert "climate.trv1" not in vm._cycling
+    assert "climate.trv1" in vm._last_actuation
+    assert vm.actuation_dirty is True
+
+
+# --- record_heating updates actuation ---
+
+
+def test_record_heating_updates_actuation(vm):
+    """record_heating sets actuation timestamp and marks dirty."""
+    assert vm.actuation_dirty is False
+    vm.record_heating(["climate.trv1", "climate.trv2"])
+
+    assert "climate.trv1" in vm._last_actuation
+    assert "climate.trv2" in vm._last_actuation
+    assert vm._last_actuation["climate.trv1"] > 0
+    assert vm.actuation_dirty is True
+
+
+# --- load_actuation_data restores state ---
+
+
+def test_load_actuation_data_restores_state(vm):
+    """load_actuation_data populates internal state, retrievable via get_actuation_data."""
+    data = {"climate.trv1": 1000.0, "climate.trv2": 2000.0}
+    vm.load_actuation_data(data)
+
+    result = vm.get_actuation_data()
+    assert result == {"climate.trv1": 1000.0, "climate.trv2": 2000.0}
+    # Verify it's a copy (mutations don't affect internal state)
+    result["climate.trv1"] = 9999.0
+    assert vm._last_actuation["climate.trv1"] == 1000.0
+
+
+# --- stale entry cleanup ---
+
+
+@pytest.mark.asyncio
+async def test_stale_entry_cleanup(vm):
+    """Actuation data for entities not in any room's devices gets cleaned up."""
+    # Pre-load actuation data with a stale entity
+    vm.load_actuation_data(
+        {
+            "climate.trv1": 1000.0,
+            "climate.removed_trv": 500.0,
+        }
+    )
+
+    rooms = {
+        "living": {
+            "thermostats": ["climate.trv1"],
+            "devices": [{"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": ""}],
+        }
+    }
+    settings = {
+        "valve_protection_enabled": True,
+        "valve_protection_interval_days": 999,  # high interval so nothing cycles
+    }
+
+    state = MagicMock()
+    state.attributes = {"hvac_modes": ["heat", "off"]}
+    vm.hass.states.get = MagicMock(return_value=state)
+    vm.hass.services.async_call = AsyncMock()
+
+    await vm.async_check_and_cycle(rooms, settings)
+
+    # Stale entry should be removed
+    assert "climate.removed_trv" not in vm._last_actuation
+    # Valid entry should remain
+    assert "climate.trv1" in vm._last_actuation
+    assert vm.actuation_dirty is True

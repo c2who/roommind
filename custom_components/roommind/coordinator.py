@@ -45,6 +45,7 @@ from .control.mpc_controller import (
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
 from .device import get_area_name as _get_area_name
+from .managers.compressor_group_manager import CompressorGroupManager
 from .managers.cover_orchestrator import CoverOrchestrator
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
@@ -53,6 +54,7 @@ from .managers.residual_heat_tracker import ResidualHeatTracker
 from .managers.valve_manager import ValveManager
 from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
+from .utils.device_utils import get_ac_eids, get_all_entity_ids, get_trv_eids
 from .utils.history_store import HistoryStore
 from .utils.schedule_utils import resolve_schedule_index
 from .utils.sensor_utils import read_sensor_value
@@ -103,6 +105,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         self._cover_manager = CoverManager()
         self._cover_orchestrator = CoverOrchestrator(hass, self._cover_manager, self._model_manager)
+        # Compressor group management (min-run / min-off protection)
+        self._compressor_manager = CompressorGroupManager()
         # Heat source orchestration state (per room)
         self._heat_source_states: dict[str, str] = {}
         # Track which rooms already have entity platform entities registered
@@ -141,6 +145,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self.outdoor_humidity = read_sensor_value(
             self.hass, settings.get("outdoor_humidity_sensor"), "global", "outdoor humidity"
         )
+
+        # Load compressor groups from settings (every cycle, cheap)
+        self._compressor_manager.load_groups(settings.get("compressor_groups", []))
 
         # Load thermal model and valve actuation data from store (once)
         if not self._model_loaded:
@@ -214,6 +221,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "heating_power": rs.get("heating_power", 0),
                             "solar_irradiance": round(self._current_q_solar, 3),
                             "blind_position": rs.get("blind_position"),
+                            "device_setpoint": rs.get("device_setpoint"),
                         },
                     )
                 except Exception:  # noqa: BLE001
@@ -510,7 +518,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Read device temperature limits for dynamic boost targets
         trv_max_temps: list[float] = []
-        for eid in room.get("thermostats", []):
+        for eid in get_trv_eids(room.get("devices", [])):
             st = self.hass.states.get(eid)
             if st and st.attributes.get("max_temp") is not None:
                 trv_max_temps.append(st.attributes["max_temp"])
@@ -518,7 +526,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         ac_min_temps: list[float] = []
         ac_max_temps: list[float] = []
-        for eid in room.get("acs", []):
+        for eid in get_ac_eids(room.get("devices", [])):
             st = self.hass.states.get(eid)
             if st:
                 if st.attributes.get("min_temp") is not None:
@@ -529,7 +537,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         ac_device_max_temp = min(ac_max_temps) if ac_max_temps else None
 
         # Exclude TRVs currently being valve-protection-cycled from normal control
-        cycling_eids = {eid for eid in room.get("thermostats", []) if eid in self._valve_manager._cycling}
+        cycling_eids = {eid for eid in get_trv_eids(room.get("devices", [])) if eid in self._valve_manager._cycling}
 
         # Heat source orchestration: smart routing for rooms with both TRVs and ACs
         heat_source_plan = None
@@ -537,8 +545,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             room.get("heat_source_orchestration", False)
             and mode == MODE_HEATING
             and has_external_sensor
-            and room.get("thermostats")
-            and room.get("acs")
+            and get_trv_eids(room.get("devices", []))
+            and get_ac_eids(room.get("devices", []))
         ):
             heat_source_plan = evaluate_heat_sources(
                 room_config=room,
@@ -557,6 +565,27 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # so re-enabling starts fresh.
             self._heat_source_states.pop(area_id, None)
 
+        # Compressor group constraints
+        all_device_eids = get_all_entity_ids(room.get("devices", []))
+        compressor_forced_on: set[str] = set()
+        compressor_forced_off: set[str] = set()
+
+        if all_device_eids and climate_active and not window_open and not force_off:
+            for eid in all_device_eids:
+                if self._compressor_manager.get_group_for_entity(eid) is None:
+                    continue
+                if mode != MODE_IDLE:
+                    if not self._compressor_manager.check_can_activate(eid):
+                        compressor_forced_off.add(eid)
+                else:
+                    if self._compressor_manager.check_must_stay_active(eid):
+                        compressor_forced_on.add(eid)
+
+            if compressor_forced_off and compressor_forced_off >= set(all_device_eids):
+                mode = MODE_IDLE
+                power_fraction = 0.0
+                compressor_forced_off.clear()
+
         if control_active:
             try:
                 await controller.async_apply(
@@ -569,6 +598,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     ac_heating_boost_target=ac_device_max_temp,
                     cooling_boost_target=device_min_temp,
                     heat_source_plan=heat_source_plan,
+                    compressor_forced_on=compressor_forced_on or None,
+                    compressor_forced_off=compressor_forced_off or None,
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning(
@@ -595,6 +626,28 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
             mode = MODE_IDLE
             power_fraction = 0.0
+            # Update compressor group member states (always, even after failed apply)
+            for eid in all_device_eids:
+                if self._compressor_manager.get_group_for_entity(eid) is None:
+                    continue
+                if eid in cycling_eids:
+                    continue
+                if eid in compressor_forced_off:
+                    self._compressor_manager.update_member(eid, False)
+                elif eid in compressor_forced_on:
+                    # Verify device is actually running before tracking as active.
+                    # If user manually turned it off, respect that.
+                    dev_state = self.hass.states.get(eid)
+                    actually_on = dev_state is not None and dev_state.state not in (
+                        "off",
+                        "unavailable",
+                        "unknown",
+                    )
+                    self._compressor_manager.update_member(eid, actually_on)
+                elif mode != MODE_IDLE:
+                    self._compressor_manager.update_member(eid, True)
+                else:
+                    self._compressor_manager.update_member(eid, False)
         else:
             # Global climate control disabled (learn-only) — do NOT send commands,
             # do NOT touch mode/power_fraction (used for internal tracking).
@@ -646,7 +699,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Track valve actuation during normal heating (skip excluded entities)
         if mode == MODE_HEATING:
             excluded = set(room.get("valve_protection_exclude", []))
-            heating_eids = [eid for eid in room.get("thermostats", []) if eid not in excluded]
+            heating_eids = [eid for eid in get_trv_eids(room.get("devices", [])) if eid not in excluded]
             self._valve_manager.record_heating(heating_eids)
 
         # Determine mode for EKF training: use observed device state when
@@ -808,8 +861,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 has_external_sensor,
                 device_max_temp=device_max_temp,
                 device_min_temp=device_min_temp,
-                has_thermostats=bool(room.get("thermostats")),
-                has_acs=bool(room.get("acs")),
+                has_thermostats=bool(get_trv_eids(room.get("devices", []))),
+                has_acs=bool(get_ac_eids(room.get("devices", []))),
             ),
             "window_open": window_open,
             "raw_window_open": raw_open,
@@ -914,7 +967,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
     def _read_device_temp(self, room: dict) -> float | None:
         """Read current_temperature from the first thermostat or AC entity."""
-        for entity_id in room.get("thermostats", []) + room.get("acs", []):
+        for entity_id in get_all_entity_ids(room.get("devices", [])):
             state = self.hass.states.get(entity_id)
             if state and state.attributes.get("current_temperature") is not None:
                 try:
@@ -936,7 +989,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         """
         dominated: str | None = None
 
-        for eid in room.get("thermostats", []) + room.get("acs", []):
+        for eid in get_all_entity_ids(room.get("devices", [])):
             state = self.hass.states.get(eid)
             if state is None or state.state in ("unavailable", "unknown"):
                 continue
@@ -1050,7 +1103,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         Used to distinguish 'missing attribute' from other reasons
         _observe_device_action returns None (conflicts, unavailable, etc.).
         """
-        for eid in room.get("thermostats", []) + room.get("acs", []):
+        for eid in get_all_entity_ids(room.get("devices", [])):
             state = self.hass.states.get(eid)
             if state is None or state.state in ("unavailable", "unknown", "off"):
                 continue
@@ -1066,7 +1119,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         Used for display and as a fallback for EKF training when hvac_action
         is missing (Managed Mode and learn-only mode).  See #69.
         """
-        for eid in room.get("thermostats", []) + room.get("acs", []):
+        for eid in get_all_entity_ids(room.get("devices", [])):
             state = self.hass.states.get(eid)
             if state is None or state.state in ("unavailable", "unknown", "off"):
                 continue

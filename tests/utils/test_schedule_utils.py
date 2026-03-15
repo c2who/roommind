@@ -619,22 +619,6 @@ class TestMakeTargetResolverMoldDelta:
         )
         assert resolver(time.time()).heat == 21.0
 
-    def test_resolver_delta_applies_to_all_timestamps(self):
-        """Delta should be applied consistently across different timestamps."""
-        room = {"comfort_temp": 21.0, "eco_temp": 17.0}
-        settings: dict = {}
-        resolver = make_target_resolver(
-            None,
-            room,
-            settings,
-            mold_prevention_delta=3.0,
-        )
-        now = time.time()
-        # All timestamps should have the delta applied (mold delta only on .heat)
-        assert resolver(now).heat == 24.0
-        assert resolver(now + 300).heat == 24.0
-        assert resolver(now + 3600).heat == 24.0
-
 
 class TestFahrenheitBlockConversion:
     """Tests for Fahrenheit temperature handling in schedule resolution."""

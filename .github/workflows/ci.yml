@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-asyncio pytest-cov homeassistant voluptuous
+          pip install -r requirements-dev.txt
 
       - name: Run tests with coverage
         run: pytest tests/ -v --cov=custom_components/roommind --cov-report=term --cov-fail-under=95

@@ -369,6 +369,9 @@ PASSIVE_ROOM = {
     "comfort_cool": 25.0,
     "eco_heat": 17.0,
     "eco_cool": 27.0,
+    "devices": [
+        {"entity_id": "climate.room_a_heater", "type": "trv", "role": "auto", "heating_system_type": ""},
+    ],
     "passive_devices": [
         {"entity_id": "climate.room_b_ac", "mode": "auto", "power_fraction": 1.0},
     ],

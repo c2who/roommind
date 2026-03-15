@@ -44,3 +44,4 @@ class TestStoreRoundTrip:
         await real_store.async_save_thermal_data(thermal)
 
         assert real_store._store.async_save.called
+        assert real_store.get_thermal_data() == thermal
