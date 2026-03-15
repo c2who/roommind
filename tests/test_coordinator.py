@@ -869,7 +869,7 @@ class TestRoomMindCoordinator:
 
     @pytest.mark.asyncio
     async def test_window_open_delay_not_reached(self, hass, mock_config_entry):
-        """Test that window open does NOT pause until open_delay is reached."""
+        """Test that window open delay blocks new heating starts."""
         room_with_delay = {
             **SAMPLE_ROOM,
             "window_sensors": ["binary_sensor.living_room_window"],
@@ -889,7 +889,8 @@ class TestRoomMindCoordinator:
         data = await coordinator._async_update_data()
 
         room_state = data["rooms"]["living_room_abc12345"]
-        assert room_state["mode"] == "heating"
+        # New heating blocked during open delay (no previous heating)
+        assert room_state["mode"] == "idle"
         assert room_state["window_open"] is False
 
     @pytest.mark.asyncio
@@ -1007,8 +1008,8 @@ class TestRoomMindCoordinator:
             data = await coordinator._async_update_data()
 
         room_state = data["rooms"]["living_room_abc12345"]
-        # Still heating (delay not reached)
-        assert room_state["mode"] == "heating"
+        # New heating blocked during open delay (no previous heating)
+        assert room_state["mode"] == "idle"
         assert room_state["window_open"] is False
 
         # EKF accumulator must be cleared (not carried over into next cycle)
@@ -1142,16 +1143,16 @@ class TestRoomMindCoordinator:
 
         coordinator = _create_coordinator(hass, mock_config_entry)
 
-        # Window opens
+        # Window opens — new heating blocked during open delay
         window_state = MagicMock()
         window_state.state = "on"
         mock_states["binary_sensor.living_room_window"] = window_state
         data = await coordinator._async_update_data()
         room_state = data["rooms"]["living_room_abc12345"]
-        assert room_state["mode"] == "heating"
+        assert room_state["mode"] == "idle"
         assert "living_room_abc12345" in coordinator._window_manager._open_since
 
-        # Window closes before delay reached
+        # Window closes before delay reached — heating resumes
         window_state.state = "off"
         data = await coordinator._async_update_data()
         room_state = data["rooms"]["living_room_abc12345"]

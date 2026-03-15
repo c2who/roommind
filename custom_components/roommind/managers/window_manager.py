@@ -48,6 +48,10 @@ class WindowManager:
 
         return self._paused.get(area_id, False)
 
+    def in_open_delay(self, area_id: str) -> bool:
+        """Return True if window is physically open but open_delay has not elapsed."""
+        return area_id in self._open_since and not self._paused.get(area_id, False)
+
     def remove_room(self, area_id: str) -> None:
         """Clean up state for a removed room."""
         self._open_since.pop(area_id, None)

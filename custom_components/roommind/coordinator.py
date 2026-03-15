@@ -478,6 +478,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if window_open:
             mode = MODE_IDLE
             power_fraction = 0.0
+        elif self._window_manager.in_open_delay(area_id):
+            # Window physically open but delay not elapsed.
+            # Block new starts and mode switches, but allow MPC to stop naturally.
+            prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
+            if prev_mode == MODE_IDLE and mode != MODE_IDLE:
+                mode = MODE_IDLE
+                power_fraction = 0.0
+            elif prev_mode != MODE_IDLE and mode != MODE_IDLE and mode != prev_mode:
+                mode = prev_mode
 
         # observed_mode/observed_pf: only populated when climate control is off
         observed_mode: str | None = None
