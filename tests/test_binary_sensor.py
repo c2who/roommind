@@ -9,6 +9,7 @@ import pytest
 from custom_components.roommind.binary_sensor import (
     RoomMindCoverPausedSensor,
     RoomMindCoverShadingSensor,
+    RoomMindHeatingDemandSensor,
     _create_room_binary_sensors,
     async_setup_entry,
 )
@@ -108,21 +109,22 @@ async def test_async_setup_entry_creates_entities_for_rooms_with_covers():
 
     # Callback stored on coordinator
     assert coordinator.async_add_binary_sensor_entities is async_add_entities
-    # living_room has 2 covers → 1 paused + 2 shading = 3 entities
+    # 1 hub-level heating demand + living_room: 1 paused + 2 shading = 4 entities
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 3
-    assert isinstance(entities[0], RoomMindCoverPausedSensor)
-    assert isinstance(entities[1], RoomMindCoverShadingSensor)
+    assert len(entities) == 4
+    assert isinstance(entities[0], RoomMindHeatingDemandSensor)
+    assert isinstance(entities[1], RoomMindCoverPausedSensor)
     assert isinstance(entities[2], RoomMindCoverShadingSensor)
+    assert isinstance(entities[3], RoomMindCoverShadingSensor)
     # Area tracked
     assert "living_room" in coordinator._binary_sensor_entity_areas
     assert "bedroom" not in coordinator._binary_sensor_entity_areas
 
 
 @pytest.mark.asyncio
-async def test_async_setup_entry_no_covers_no_entities():
-    """async_setup_entry does not call async_add_entities when no rooms have covers."""
+async def test_async_setup_entry_no_covers_only_hub_sensor():
+    """async_setup_entry creates only the hub heating demand sensor when no rooms have covers."""
     coordinator = MagicMock()
     coordinator._binary_sensor_entity_areas = set()
 
@@ -139,7 +141,54 @@ async def test_async_setup_entry_no_covers_no_entities():
 
     await async_setup_entry(hass, entry, async_add_entities)
 
-    async_add_entities.assert_not_called()
+    async_add_entities.assert_called_once()
+    entities = async_add_entities.call_args[0][0]
+    assert len(entities) == 1
+    assert isinstance(entities[0], RoomMindHeatingDemandSensor)
+
+
+# ---- RoomMindHeatingDemandSensor tests ----
+
+
+def test_heating_demand_on(mock_coordinator):
+    """Heating demand sensor ON when coordinator reports demand."""
+    mock_coordinator.data = {
+        "heating_demand": True,
+        "rooms_heating_now": ["living_room"],
+        "rooms_heating_forecast": [],
+        "rooms": {},
+    }
+    sensor = RoomMindHeatingDemandSensor(mock_coordinator)
+    assert sensor.is_on is True
+    assert sensor.icon == "mdi:radiator"
+    assert sensor.extra_state_attributes == {
+        "rooms_heating_now": ["living_room"],
+        "rooms_heating_forecast": [],
+    }
+
+
+def test_heating_demand_off(mock_coordinator):
+    """Heating demand sensor OFF when no demand."""
+    mock_coordinator.data = {
+        "heating_demand": False,
+        "rooms_heating_now": [],
+        "rooms_heating_forecast": [],
+        "rooms": {},
+    }
+    sensor = RoomMindHeatingDemandSensor(mock_coordinator)
+    assert sensor.is_on is False
+    assert sensor.icon == "mdi:radiator-off"
+
+
+def test_heating_demand_none_data(mock_coordinator):
+    """Heating demand sensor OFF when coordinator data is None."""
+    mock_coordinator.data = None
+    sensor = RoomMindHeatingDemandSensor(mock_coordinator)
+    assert sensor.is_on is False
+    assert sensor.extra_state_attributes == {
+        "rooms_heating_now": [],
+        "rooms_heating_forecast": [],
+    }
 
 
 # ---- RoomMindCoverShadingSensor tests ----

@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_ECO_HEAT,
     DOMAIN,
     HEATING_BOOST_TARGET,
+    HEATING_DEMAND_OFF_DELAY,
     HISTORY_ROTATE_CYCLES,
     HISTORY_WRITE_CYCLES,
     MAX_PREDICTION_DELTA,
@@ -116,6 +117,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._switch_entity_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
         self._climate_entity_areas: set[str] = set()
+        # Heating demand aggregation (turn-off delay hysteresis)
+        # None = demand currently active; 0.0 = never been active (expired sentinel)
+        self._heating_demand_off_since: float | None = 0.0
         # Entity platform callbacks, set by platform async_setup_entry
         self.async_add_entities: Any = None
         self.async_add_switch_entities: Any = None
@@ -299,8 +303,41 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             await store.async_save_settings({"valve_last_actuation": self._valve_manager._last_actuation})
             self._valve_manager.actuation_dirty = False
 
+        # Aggregate heating demand across all rooms (current + forecast)
+        raw_demand = any(
+            rs.get("mode") == MODE_HEATING for rs in room_states.values()
+        ) or any(
+            any(step.get("action") == MODE_HEATING for step in rs.get("forecast", []))
+            for rs in room_states.values()
+        )
+
+        now = time.monotonic()
+        if raw_demand:
+            self._heating_demand_off_since = None  # demand active
+            heating_demand = True
+        elif self._heating_demand_off_since is None:
+            # Demand just dropped — start hold-on timer
+            self._heating_demand_off_since = now
+            heating_demand = True
+        else:
+            elapsed = now - self._heating_demand_off_since
+            heating_demand = elapsed < HEATING_DEMAND_OFF_DELAY
+
+        rooms_heating_now = [
+            aid for aid, rs in room_states.items() if rs.get("mode") == MODE_HEATING
+        ]
+        rooms_heating_forecast = [
+            aid for aid, rs in room_states.items()
+            if any(step.get("action") == MODE_HEATING for step in rs.get("forecast", []))
+        ]
+
         self.rooms = room_states
-        return {"rooms": room_states}
+        return {
+            "rooms": room_states,
+            "heating_demand": heating_demand,
+            "rooms_heating_now": rooms_heating_now,
+            "rooms_heating_forecast": rooms_heating_forecast,
+        }
 
     async def _async_process_room(self, room: dict, settings: dict, outdoor_forecast: list[dict]) -> dict:
         """Process a single room: read sensor, evaluate schedule, apply control."""
@@ -1389,7 +1426,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         always_valid = ("_target_temp", "_mode", "_forecast", "_climate")
         cover_only = ("_cover_auto", "_cover_paused")
         # Global entities (not per-room) that should never be cleaned up
-        global_uids = {f"{DOMAIN}_vacation"}
+        global_uids = {f"{DOMAIN}_vacation", f"{DOMAIN}_heating_demand"}
 
         to_remove: list[str] = []
         for entity_entry in registry.entities.values():

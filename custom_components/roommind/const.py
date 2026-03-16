@@ -142,6 +142,9 @@ HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (
 DEFAULT_COMPRESSOR_MIN_RUN_MINUTES = 15
 DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
 
+# Heating demand aggregation
+HEATING_DEMAND_OFF_DELAY = 300  # seconds (5 min) — hold demand ON after last room stops heating
+
 
 # Room enabled default
 ROOM_ENABLED_DEFAULT = True

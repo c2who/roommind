@@ -12,7 +12,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import RoomMindCoordinator
-from .device import get_area_name, roommind_device_info
+from .device import get_area_name, roommind_device_info, roommind_hub_device_info
 
 
 def _create_room_binary_sensors(
@@ -42,13 +42,49 @@ async def async_setup_entry(
     store = hass.data[DOMAIN]["store"]
     coordinator.async_add_binary_sensor_entities = async_add_entities
     rooms = store.get_rooms()
-    entities: list[BinarySensorEntity] = []
+    entities: list[BinarySensorEntity] = [
+        RoomMindHeatingDemandSensor(coordinator),
+    ]
     for area_id, room in rooms.items():
         if bool(room.get("covers")):
             entities.extend(_create_room_binary_sensors(coordinator, area_id, room))
             coordinator._binary_sensor_entity_areas.add(area_id)
-    if entities:
-        async_add_entities(entities)
+    async_add_entities(entities)
+
+
+class RoomMindHeatingDemandSensor(CoordinatorEntity, BinarySensorEntity):
+    """Binary sensor: ON when any room currently heats or forecasts heating soon."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: RoomMindCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_heating_demand"
+        self._attr_name = "Heating Demand"
+        self.entity_id = f"binary_sensor.{DOMAIN}_heating_demand"
+        self._attr_device_info = roommind_hub_device_info()
+
+    @property
+    def icon(self) -> str:
+        """Return icon based on demand state."""
+        return "mdi:radiator" if self.is_on else "mdi:radiator-off"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if aggregate heating demand is active."""
+        if self.coordinator.data is None:
+            return False
+        return bool(self.coordinator.data.get("heating_demand", False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return rooms contributing to demand."""
+        if self.coordinator.data is None:
+            return {"rooms_heating_now": [], "rooms_heating_forecast": []}
+        return {
+            "rooms_heating_now": self.coordinator.data.get("rooms_heating_now", []),
+            "rooms_heating_forecast": self.coordinator.data.get("rooms_heating_forecast", []),
+        }
 
 
 class RoomMindCoverPausedSensor(CoordinatorEntity, BinarySensorEntity):

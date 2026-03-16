@@ -52,10 +52,14 @@ class TestCoverageGaps:
         entry_other.entity_id = "sensor.other_thing"
 
         mock_registry = MagicMock()
-        # Global entity (not per-room) -- should be kept
+        # Global entities (not per-room) -- should be kept
         entry_vacation = MagicMock()
         entry_vacation.unique_id = f"{DOMAIN}_vacation"
         entry_vacation.entity_id = "switch.roommind_vacation"
+
+        entry_heating_demand = MagicMock()
+        entry_heating_demand.unique_id = f"{DOMAIN}_heating_demand"
+        entry_heating_demand.entity_id = "binary_sensor.roommind_heating_demand"
 
         mock_registry.entities.values.return_value = [
             entry_valid_temp,
@@ -65,6 +69,7 @@ class TestCoverageGaps:
             entry_orphaned_room,
             entry_other,
             entry_vacation,
+            entry_heating_demand,
         ]
 
         with patch(
