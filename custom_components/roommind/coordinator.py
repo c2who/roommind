@@ -122,6 +122,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self.async_add_climate_entities: Any = None
         self.async_add_binary_sensor_entities: Any = None
 
+    def _replace_model_manager(self, new: RoomModelManager) -> None:
+        """Replace the model manager and propagate to all dependents."""
+        self._model_manager = new
+        self._ekf_training._model_manager = new
+        self._cover_orchestrator._model_manager = new
+
     async def _async_update_data(self) -> dict:
         """Fetch and compute state for all rooms.
 
@@ -153,9 +159,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         if not self._model_loaded:
             thermal_data = store.get_thermal_data()
             if thermal_data:
-                self._model_manager = RoomModelManager.from_dict(thermal_data)
-                self._ekf_training._model_manager = self._model_manager
-                self._cover_orchestrator._model_manager = self._model_manager
+                self._replace_model_manager(RoomModelManager.from_dict(thermal_data))
             self._valve_manager.load_actuation_data(settings.get("valve_last_actuation", {}))
             self._model_loaded = True
 

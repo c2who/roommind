@@ -547,6 +547,17 @@ class MPCController:
         min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
 
+    def _below_min_run_floor(self, mode: str) -> bool:
+        """Return True if less than 50% of the minimum run time has elapsed.
+
+        Used to enforce an unconditional hold period before hysteresis or
+        model-based early exit is allowed.
+        """
+        if self.previous_mode != mode or self._mode_on_since is None:
+            return False
+        min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
+        return (time.time() - self._mode_on_since) < min_run_seconds * 0.5
+
     def _should_early_exit_min_run(
         self,
         mode: str,
@@ -559,12 +570,26 @@ class MPCController:
         Only called when _within_min_run() is True, to allow early exit when
         external heat sources (solar, residual thermal mass) are already driving
         the room past target.
+
+        Guards:
+        - Model must be MPC-ready (enough data + low uncertainty).
+        - At least 50% of min-run must have elapsed before early exit is considered.
+        - Margin scales with remaining time to prevent premature exits on transient spikes.
         """
         if self._mode_on_since is None:
             return False
 
+        # Don't trust model predictions during learning phase
+        can_heat, can_cool = self._get_can_heat_cool()
         model = self._model_manager.get_model(self._area_id)
         T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
+        Q_check = model.Q_heat if can_heat else (-model.Q_cool if can_cool else 0.0)
+        pred_std = self._model_manager.get_prediction_std(
+            self._area_id, Q_check, current_temp, T_out, PLAN_DT_MINUTES,
+            q_solar=self.q_solar, q_residual=self.q_residual,
+        )
+        if pred_std >= MPC_MAX_PREDICTION_STD or not self._has_enough_data(can_heat, can_cool):
+            return False
 
         # Compute remaining min-run time in minutes
         min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
@@ -573,8 +598,13 @@ class MPCController:
         if remaining_minutes <= 0:
             return True  # min run already elapsed
 
+        # Must have elapsed at least 50% of min-run before early exit is considered
+        if elapsed < min_run_seconds * 0.5:
+            return False
+
         # Predict idle drift over remaining time
-        margin = 0.15
+        # Margin scales with remaining time: harder to clear early, easy near the end
+        margin = 0.15 + 0.01 * remaining_minutes
         predicted = model.predict(
             current_temp,
             T_out,
@@ -593,8 +623,8 @@ class MPCController:
 
         if should_exit:
             _LOGGER.debug(
-                "[%s] Early exit min-run: predicted=%.1f target=%.1f remaining=%.0fmin mode=%s",
-                self._area_id, predicted, target, remaining_minutes, mode,
+                "[%s] Early exit min-run: predicted=%.1f target=%.1f margin=%.2f remaining=%.0fmin mode=%s",
+                self._area_id, predicted, target, margin, remaining_minutes, mode,
             )
         return should_exit
 
@@ -730,15 +760,21 @@ class MPCController:
         if self.previous_mode == MODE_HEATING and can_heat and heat_target is not None:
             if current_temp < heat_target:
                 return MODE_HEATING
-            if self._within_min_run(MODE_HEATING) and current_temp < heat_target + BANGBANG_HEAT_HYSTERESIS:
-                return MODE_HEATING
+            if self._within_min_run(MODE_HEATING):
+                if self._below_min_run_floor(MODE_HEATING):
+                    return MODE_HEATING  # unconditional hold during first 50%
+                if current_temp < heat_target + BANGBANG_HEAT_HYSTERESIS:
+                    return MODE_HEATING
             return MODE_IDLE
 
         if self.previous_mode == MODE_COOLING and can_cool and cool_target is not None:
             if current_temp > cool_target:
                 return MODE_COOLING
-            if self._within_min_run(MODE_COOLING) and current_temp > cool_target - BANGBANG_COOL_HYSTERESIS:
-                return MODE_COOLING
+            if self._within_min_run(MODE_COOLING):
+                if self._below_min_run_floor(MODE_COOLING):
+                    return MODE_COOLING  # unconditional hold during first 50%
+                if current_temp > cool_target - BANGBANG_COOL_HYSTERESIS:
+                    return MODE_COOLING
             return MODE_IDLE
 
         # From idle: threshold to start

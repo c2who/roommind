@@ -822,6 +822,13 @@ def _make_coordinator_with_model(ws_hass):
     mock_coordinator._cover_orchestrator = MagicMock()
     mock_coordinator._history_store = MagicMock()
     mock_coordinator._history_store.remove_room = MagicMock()
+
+    def _replace_model_manager(new):
+        mock_coordinator._model_manager = new
+        mock_coordinator._ekf_training._model_manager = new
+        mock_coordinator._cover_orchestrator._model_manager = new
+
+    mock_coordinator._replace_model_manager = _replace_model_manager
     ws_hass.data[DOMAIN]["coordinator"] = mock_coordinator
     return mock_coordinator
 

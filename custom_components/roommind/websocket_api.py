@@ -755,9 +755,7 @@ async def websocket_thermal_reset_all(
     room_ids: list[str] = []
     if coordinator:
         room_ids = list(coordinator._model_manager._estimators.keys())
-        coordinator._model_manager = RoomModelManager()
-        coordinator._ekf_training._model_manager = coordinator._model_manager
-        coordinator._cover_orchestrator._model_manager = coordinator._model_manager
+        coordinator._replace_model_manager(RoomModelManager())
         coordinator._ekf_training.last_temps.clear()
         coordinator._residual_tracker.clear_all()
 
