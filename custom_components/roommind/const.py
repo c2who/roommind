@@ -143,7 +143,7 @@ DEFAULT_COMPRESSOR_MIN_RUN_MINUTES = 15
 DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
 
 # Heating demand aggregation
-HEATING_DEMAND_OFF_DELAY = 300  # seconds (5 min) — hold demand ON after last room stops heating
+HEATING_DEMAND_OFF_DELAY = 60  # seconds — short anti-flicker holdoff when forecast is clear
 
 
 # Room enabled default

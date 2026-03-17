@@ -117,9 +117,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._switch_entity_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
         self._climate_entity_areas: set[str] = set()
-        # Heating demand aggregation (turn-off delay hysteresis)
-        # None = demand currently active; 0.0 = never been active (expired sentinel)
-        self._heating_demand_off_since: float | None = 0.0
+        # Heating demand aggregation (forecast-aware state machine)
+        self._heating_demand_was_active: bool = False
+        self._heating_demand_off_since: float | None = None
         # Entity platform callbacks, set by platform async_setup_entry
         self.async_add_entities: Any = None
         self.async_add_switch_entities: Any = None
@@ -303,25 +303,39 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             await store.async_save_settings({"valve_last_actuation": self._valve_manager._last_actuation})
             self._valve_manager.actuation_dirty = False
 
-        # Aggregate heating demand across all rooms (current + forecast)
-        raw_demand = any(
+        # Aggregate heating demand across all rooms (forecast-aware state machine)
+        any_heating_now = any(
             rs.get("mode") == MODE_HEATING for rs in room_states.values()
-        ) or any(
+        )
+        forecast_has_heating = any(
             any(step.get("action") == MODE_HEATING for step in rs.get("forecast", []))
             for rs in room_states.values()
         )
 
         now = time.monotonic()
-        if raw_demand:
-            self._heating_demand_off_since = None  # demand active
+        if any_heating_now:
+            # Any thermostat actively heating → demand on
             heating_demand = True
-        elif self._heating_demand_off_since is None:
-            # Demand just dropped — start hold-on timer
-            self._heating_demand_off_since = now
+            self._heating_demand_was_active = True
+            self._heating_demand_off_since = None
+        elif self._heating_demand_was_active and forecast_has_heating:
+            # Was heating, stopped, but forecast says more heating coming → keep on
             heating_demand = True
-        else:
+            self._heating_demand_off_since = None
+        elif self._heating_demand_was_active:
+            # Was heating, stopped, no forecast heating → turn off with short holdoff
+            if self._heating_demand_off_since is None:
+                self._heating_demand_off_since = now
             elapsed = now - self._heating_demand_off_since
-            heating_demand = elapsed < HEATING_DEMAND_OFF_DELAY
+            if elapsed < HEATING_DEMAND_OFF_DELAY:
+                heating_demand = True
+            else:
+                heating_demand = False
+                self._heating_demand_was_active = False
+                self._heating_demand_off_since = None
+        else:
+            # Never was heating / fully off → stay off (forecast alone won't start demand)
+            heating_demand = False
 
         rooms_heating_now = [
             aid for aid, rs in room_states.items() if rs.get("mode") == MODE_HEATING

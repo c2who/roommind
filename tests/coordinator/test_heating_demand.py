@@ -48,8 +48,8 @@ async def test_heating_demand_false_when_all_idle(hass, mock_config_entry):
 
 @pytest.mark.asyncio
 async def test_heating_demand_holdoff_after_heating_stops(hass, mock_config_entry):
-    """Demand stays True for HEATING_DEMAND_OFF_DELAY after last room stops heating."""
-    room = {**SAMPLE_ROOM, "schedules": []}  # no schedule → uses comfort_temp directly
+    """When heating stops and no forecast, demand turns off after short holdoff."""
+    room = {**SAMPLE_ROOM, "schedules": []}
     store = _make_store_mock({"living_room_abc12345": room})
     hass.data = {"roommind": {"store": store}}
     hass.services.async_call = AsyncMock()
@@ -60,30 +60,31 @@ async def test_heating_demand_holdoff_after_heating_stops(hass, mock_config_entr
     hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0"))
     data = await coordinator._async_update_data()
     assert data["heating_demand"] is True
-    assert coordinator._heating_demand_off_since is None  # demand active
+    assert coordinator._heating_demand_was_active is True
 
     # Force mode to idle by setting previous modes and clearing min-run
     coordinator._previous_modes["living_room_abc12345"] = MODE_IDLE
     coordinator._mode_on_since.pop("living_room_abc12345", None)
 
-    # Second cycle: room idle (temp well above comfort)
+    # Second cycle: room idle (temp well above comfort), no forecast heating
     hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="25.0"))
     data = await coordinator._async_update_data()
     assert data["rooms"]["living_room_abc12345"]["mode"] == MODE_IDLE
-    # Demand should still be True (hold-on timer just started)
+    # Demand should still be True (short holdoff just started)
     assert data["heating_demand"] is True
     assert coordinator._heating_demand_off_since is not None
 
-    # Simulate time passing beyond the delay
+    # Simulate time passing beyond the holdoff delay
     coordinator._heating_demand_off_since = time.monotonic() - HEATING_DEMAND_OFF_DELAY - 1
     data = await coordinator._async_update_data()
-    # Now demand should be False (timer expired)
+    # Now demand should be False (holdoff expired)
     assert data["heating_demand"] is False
+    assert coordinator._heating_demand_was_active is False
 
 
 @pytest.mark.asyncio
-async def test_heating_demand_from_forecast(hass, mock_config_entry):
-    """Demand is True when no room currently heats but forecast contains heating."""
+async def test_heating_demand_from_forecast_alone_is_false(hass, mock_config_entry):
+    """Forecast alone (no prior heating) does NOT start demand."""
     room = {**SAMPLE_ROOM, "schedules": []}
     store = _make_store_mock({"living_room_abc12345": room})
     hass.data = {"roommind": {"store": store}}
@@ -105,5 +106,81 @@ async def test_heating_demand_from_forecast(hass, mock_config_entry):
         data = await coordinator._async_update_data()
 
     assert data["rooms"]["living_room_abc12345"]["mode"] == MODE_IDLE
-    assert data["heating_demand"] is True
+    # Forecast alone must NOT start demand
+    assert data["heating_demand"] is False
     assert "living_room_abc12345" in data["rooms_heating_forecast"]
+
+
+@pytest.mark.asyncio
+async def test_heating_demand_kept_by_forecast_after_heating(hass, mock_config_entry):
+    """Demand stays True when heating was active, stops, but forecast has heating."""
+    room = {**SAMPLE_ROOM, "schedules": []}
+    store = _make_store_mock({"living_room_abc12345": room})
+    hass.data = {"roommind": {"store": store}}
+    hass.services.async_call = AsyncMock()
+
+    coordinator = _create_coordinator(hass, mock_config_entry)
+
+    # First cycle: heating active
+    hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0"))
+    data = await coordinator._async_update_data()
+    assert data["heating_demand"] is True
+    assert coordinator._heating_demand_was_active is True
+
+    # Force mode to idle
+    coordinator._previous_modes["living_room_abc12345"] = MODE_IDLE
+    coordinator._mode_on_since.pop("living_room_abc12345", None)
+
+    # Second cycle: room idle but forecast has heating → demand stays on
+    async def fake_process_room(room_cfg, settings, outdoor_forecast):
+        return {
+            "area_id": "living_room_abc12345",
+            "mode": MODE_IDLE,
+            "forecast": [{"ts": time.time() + 300, "temp": 20.5, "action": MODE_HEATING}],
+        }
+
+    with patch.object(coordinator, "_async_process_room", side_effect=fake_process_room):
+        data = await coordinator._async_update_data()
+
+    assert data["rooms"]["living_room_abc12345"]["mode"] == MODE_IDLE
+    assert data["heating_demand"] is True
+    assert coordinator._heating_demand_off_since is None  # no holdoff needed
+
+
+@pytest.mark.asyncio
+async def test_heating_demand_stops_when_forecast_clear(hass, mock_config_entry):
+    """Demand turns off (after holdoff) when heating stops and forecast has no heating."""
+    room = {**SAMPLE_ROOM, "schedules": []}
+    store = _make_store_mock({"living_room_abc12345": room})
+    hass.data = {"roommind": {"store": store}}
+    hass.services.async_call = AsyncMock()
+
+    coordinator = _create_coordinator(hass, mock_config_entry)
+
+    # First cycle: heating active
+    hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0"))
+    data = await coordinator._async_update_data()
+    assert data["heating_demand"] is True
+
+    # Force mode to idle
+    coordinator._previous_modes["living_room_abc12345"] = MODE_IDLE
+    coordinator._mode_on_since.pop("living_room_abc12345", None)
+
+    # Second cycle: idle, no forecast heating → holdoff starts
+    async def fake_process_room(room_cfg, settings, outdoor_forecast):
+        return {
+            "area_id": "living_room_abc12345",
+            "mode": MODE_IDLE,
+            "forecast": [{"ts": time.time() + 300, "temp": 22.0, "action": MODE_IDLE}],
+        }
+
+    with patch.object(coordinator, "_async_process_room", side_effect=fake_process_room):
+        data = await coordinator._async_update_data()
+    assert data["heating_demand"] is True  # holdoff active
+
+    # Expire the holdoff
+    coordinator._heating_demand_off_since = time.monotonic() - HEATING_DEMAND_OFF_DELAY - 1
+    with patch.object(coordinator, "_async_process_room", side_effect=fake_process_room):
+        data = await coordinator._async_update_data()
+    assert data["heating_demand"] is False
+    assert coordinator._heating_demand_was_active is False
