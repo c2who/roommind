@@ -62,6 +62,8 @@ export class RoomMindPanel extends LitElement {
   private _routeApplied = false;
   private _saveStatusTimeout?: ReturnType<typeof setTimeout>;
   private _areaInfosCache: AreaInfo[] = [];
+  private _boundVisibilityHandler?: () => void;
+  private _boundConnectionReady?: () => void;
 
   static styles = css`
     :host {
@@ -217,12 +219,14 @@ export class RoomMindPanel extends LitElement {
       height: 28px;
       background: var(--divider-color, #444);
       margin: 0 4px;
+      flex-shrink: 0;
     }
 
     .stats-bar {
       display: flex;
       align-items: center;
-      gap: 24px;
+      flex-wrap: wrap;
+      gap: 12px 24px;
       margin-bottom: 20px;
       padding: 12px 16px;
     }
@@ -320,6 +324,22 @@ export class RoomMindPanel extends LitElement {
       this._applyRoute();
       this._routeApplied = true;
     }
+    // Visibility handler survives disconnectedCallback (intentionally not removed).
+    // HA's ha-panel-custom has a bug: after disconnect it clears _setProperties
+    // but doesn't re-create the panel element on reconnect if the config hasn't
+    // changed. This leaves a blank panel. Reload recovers from this state.
+    if (!this._boundVisibilityHandler) {
+      this._boundVisibilityHandler = () => {
+        if (document.hidden) return;
+        if (!this.isConnected) {
+          window.location.reload();
+          return;
+        }
+        this._loadRooms();
+        this.requestUpdate();
+      };
+      document.addEventListener("visibilitychange", this._boundVisibilityHandler);
+    }
   }
 
   disconnectedCallback() {
@@ -330,10 +350,17 @@ export class RoomMindPanel extends LitElement {
     }
     if (this._saveStatusTimeout) clearTimeout(this._saveStatusTimeout);
     this.removeEventListener("save-status", this._onSaveStatus as EventListener);
+    // NOTE: _boundVisibilityHandler intentionally NOT removed here.
+    // It must survive disconnect to detect when tab becomes visible again
+    // and trigger re-navigation if HA removed our element during idle.
+    if (this._boundConnectionReady) {
+      this.hass?.connection?.removeEventListener("ready", this._boundConnectionReady);
+      this._boundConnectionReady = undefined;
+    }
   }
 
   render() {
-    if (!this._elementsLoaded) return html``;
+    if (!this._elementsLoaded || !this.hass) return html``;
 
     const l = this.hass.language;
     const inDetail = !!this._selectedAreaId;
@@ -693,6 +720,7 @@ export class RoomMindPanel extends LitElement {
   }
 
   private async _loadRooms() {
+    if (!this.hass) return;
     try {
       const result = await this.hass.callWS<{
         rooms: Record<string, RoomConfig>;
@@ -926,6 +954,13 @@ export class RoomMindPanel extends LitElement {
   updated(changedProps: Map<string, unknown>) {
     if (changedProps.has("hass") && this.hass && !this._roomsLoaded) {
       this._loadRooms();
+    }
+    if (changedProps.has("hass") && this.hass?.connection && !this._boundConnectionReady) {
+      this._boundConnectionReady = () => {
+        this._loadRooms();
+        this.requestUpdate();
+      };
+      this.hass.connection.addEventListener("ready", this._boundConnectionReady);
     }
   }
 

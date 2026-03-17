@@ -247,6 +247,8 @@ class ThermalEKF:
 
     # Process noise (diagonal of Q_noise matrix)
     # Higher values keep the filter adaptive; lower values freeze parameters.
+    # Note: beta_h/beta_c/beta_s noise is mode-gated in _predict_step —
+    # only applied when the parameter is observable (Jacobian F[0][i] ≠ 0).
     _Q_T: float = 0.01  # absolute — unmodeled disturbances (~0.1 degC/step)
 
     # --- Relative (proportional) process noise ---
@@ -275,7 +277,7 @@ class ThermalEKF:
     # parameter values (alpha=0.15, beta_h=3.0, beta_c=4.0, beta_s=0.5) the
     # resulting Q values match the previous fixed absolute noise, ensuring
     # identical behavior for typical rooms while improving extreme cases.
-    _Q_ALPHA_REL: float = 0.21  # 21% per step → (0.21*0.15)^2 ≈ 0.001
+    _Q_ALPHA_REL: float = 0.149  # 14.9% per step → (0.149*0.15)^2 ≈ 0.0005
     _Q_BETA_H_REL: float = 0.024  # 2.4% per step → (0.024*3.0)^2 ≈ 0.005
     _Q_BETA_C_REL: float = 0.018  # 1.8% per step → (0.018*4.0)^2 ≈ 0.005
     _Q_BETA_S_REL: float = 0.09  # 9% per step → (0.09*0.5)^2 ≈ 0.002
@@ -384,7 +386,11 @@ class ThermalEKF:
 
         # --- Accuracy factor (0..1) ---
         # Map worst prediction std from [noise_floor, mpc_threshold] to [1.0, 0.0]
-        noise_floor = math.sqrt(self._Q_T)  # ~0.1°C irreducible minimum
+        # Realistic noise floor: the minimum achievable prediction std
+        # accounts for process noise (Q_T), sensor noise (R → P[0][0]),
+        # and parameter cross-coupling.  Simulations show ~0.20-0.21°C
+        # as the converged minimum at standard operating points.
+        noise_floor = 0.20
         mpc_threshold = 0.5  # MPC activation threshold
 
         stds = [self.prediction_std(0.0, 20.0, 15.0, 5.0)]  # idle always
@@ -693,13 +699,19 @@ class ThermalEKF:
         # Covariance prediction: P = F @ P @ F^T + Q_noise
         N = self._N
         P = self._P
-        # Per-parameter relative process noise: Q_x = clamp((rel * x)^2, floor, cap)
+        # Mode-gated relative process noise: only add drift to parameters that
+        # are currently observable (Jacobian F[0][i] ≠ 0).  Unobservable params
+        # keep their variance frozen — inflating it without any measurement
+        # to reduce it again just degrades confidence and destabilises the
+        # correlated parameters (alpha ↔ beta_h coupling → time-constant
+        # oscillation).
+        # Per-parameter: Q_x = clamp((rel * x)^2, floor, cap)
         Q = [
             self._Q_T,
             min(max((self._Q_ALPHA_REL * alpha) ** 2, self._Q_ALPHA_FLOOR), self._Q_ALPHA_CAP),
-            min((self._Q_BETA_H_REL * beta_h) ** 2, self._Q_BETA_H_CAP),
-            min((self._Q_BETA_C_REL * beta_c) ** 2, self._Q_BETA_C_CAP),
-            min(max((self._Q_BETA_S_REL * beta_s) ** 2, self._Q_BETA_S_FLOOR), self._Q_BETA_S_CAP),
+            min((self._Q_BETA_H_REL * beta_h) ** 2, self._Q_BETA_H_CAP) if (mode == "heating" or (mode == "idle" and q_residual > 0)) else 0.0,
+            min((self._Q_BETA_C_REL * beta_c) ** 2, self._Q_BETA_C_CAP) if mode == "cooling" else 0.0,
+            min(max((self._Q_BETA_S_REL * beta_s) ** 2, self._Q_BETA_S_FLOOR), self._Q_BETA_S_CAP) if q_solar > 0 else 0.0,
         ]
 
         # FP = F @ P

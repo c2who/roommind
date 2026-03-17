@@ -215,6 +215,7 @@ class RoomMindStore:
                 "covers_night_close": config.get("covers_night_close", False),
                 "covers_night_position": config.get("covers_night_position", 0),
                 "covers_sensor_only": config.get("covers_sensor_only", False),
+                "ignore_presence": config.get("ignore_presence", False),
                 "is_outdoor": config.get("is_outdoor", False),
                 "valve_protection_exclude": config.get("valve_protection_exclude", []),
                 "heat_source_orchestration": config.get("heat_source_orchestration", False),

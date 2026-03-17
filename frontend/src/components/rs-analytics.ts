@@ -2,7 +2,7 @@
  * rs-analytics – Analytics tab orchestrator.
  * Delegates rendering to rs-analytics-toolbar, rs-analytics-chart, rs-analytics-model.
  */
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, RoomConfig, AnalyticsData } from "../types";
 import { localize } from "../utils/localize";
@@ -99,12 +99,15 @@ export class RsAnalytics extends LitElement {
                 .rangeEnd=${this._rangeEnd}
                 .chartAnchor=${this._chartAnchor}
                 .language=${l}
+                .isOutdoor=${this.rooms[this._selectedRoom]?.is_outdoor ?? false}
               ></rs-analytics-chart>
-              <rs-analytics-model
-                .hass=${this.hass}
-                .data=${this._data}
-                .language=${l}
-              ></rs-analytics-model>
+              ${!this.rooms[this._selectedRoom]?.is_outdoor
+                ? html` <rs-analytics-model
+                    .hass=${this.hass}
+                    .data=${this._data}
+                    .language=${l}
+                  ></rs-analytics-model>`
+                : nothing}
             `
         : html`
             <div class="no-data">

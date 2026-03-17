@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from custom_components.roommind.utils.device_utils import (
     VALID_DEVICE_TYPES,
     VALID_HEATING_SYSTEM_TYPES,
@@ -14,6 +16,7 @@ from custom_components.roommind.utils.device_utils import (
     get_idle_action,
     get_room_heating_system_type,
     get_trv_eids,
+    has_reliable_hvac_modes,
     is_ac_type,
     is_trv_type,
     legacy_to_devices,
@@ -396,3 +399,74 @@ def test_get_idle_action_configured():
     action, fan_mode = get_idle_action(devices, "climate.ac1")
     assert action == "fan_only"
     assert fan_mode == "auto"
+
+
+# ---------------------------------------------------------------------------
+# has_reliable_hvac_modes
+# ---------------------------------------------------------------------------
+
+
+class TestHasReliableHvacModes:
+    """Unit tests for has_reliable_hvac_modes."""
+
+    def test_none_state(self):
+        assert has_reliable_hvac_modes(None) is False
+
+    def test_device_on_always_reliable(self):
+        """Non-off state is always considered reliable."""
+        state = MagicMock()
+        state.state = "heat"
+        state.attributes = {"hvac_modes": ["heat"]}
+        assert has_reliable_hvac_modes(state) is True
+
+    def test_device_off_with_active_modes_reliable(self):
+        """Off device with heat+cool in modes is reliable."""
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": ["off", "heat", "cool"]}
+        assert has_reliable_hvac_modes(state) is True
+
+    def test_device_off_cool_only_reliable(self):
+        """Off device with 'cool' is reliable (genuinely cooling-only AC)."""
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": ["off", "cool"]}
+        assert has_reliable_hvac_modes(state) is True
+
+    def test_device_off_no_active_modes_unreliable(self):
+        """Off device with only 'off' and 'fan_only' is unreliable (#100)."""
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": ["off", "fan_only"]}
+        assert has_reliable_hvac_modes(state) is False
+
+    def test_device_off_empty_modes_unreliable(self):
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": []}
+        assert has_reliable_hvac_modes(state) is False
+
+    def test_device_off_no_modes_attr_unreliable(self):
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {}
+        assert has_reliable_hvac_modes(state) is False
+
+    def test_device_off_only_off_unreliable(self):
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": ["off"]}
+        assert has_reliable_hvac_modes(state) is False
+
+    def test_device_off_with_auto_reliable(self):
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": ["off", "auto"]}
+        assert has_reliable_hvac_modes(state) is True
+
+    def test_device_off_modes_none_unreliable(self):
+        """hvac_modes=None should not crash (defensive against bad integrations)."""
+        state = MagicMock()
+        state.state = "off"
+        state.attributes = {"hvac_modes": None}
+        assert has_reliable_hvac_modes(state) is False

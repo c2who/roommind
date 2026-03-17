@@ -6,6 +6,7 @@ Pure utility module with NO dependencies on HA or other RoomMind modules.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +24,26 @@ HST_PRIORITY = {"underfloor": 2, "radiator": 1, "": 0}
 IDLE_ACTION_OFF = "off"
 IDLE_ACTION_FAN_ONLY = "fan_only"
 DEFAULT_IDLE_FAN_MODE = "low"
+IDLE_ACTION_SETBACK = "setback"
+DEFAULT_IDLE_SETBACK_OFFSET = 2.0
+
+# Active HVAC modes that indicate real device capabilities.
+_ACTIVE_HVAC_MODES = {"heat", "cool", "heat_cool", "auto"}
+
+
+def has_reliable_hvac_modes(state: Any) -> bool:
+    """Check if a device's hvac_modes attribute is trustworthy.
+
+    Some integrations report only limited modes like ``["off", "fan_only"]``
+    when the device is off, hiding its actual capabilities (see #100).
+    Returns *False* when modes are likely incomplete.
+    """
+    if state is None:
+        return False
+    if state.state != "off":
+        return True  # Only off-state can have incomplete modes
+    modes = set(state.attributes.get("hvac_modes") or [])
+    return bool(modes & _ACTIVE_HVAC_MODES)
 
 
 def legacy_to_devices(

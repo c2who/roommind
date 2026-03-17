@@ -78,12 +78,14 @@ _ROOM_SAVE_FIELDS = (
     "covers_night_close",
     "covers_night_position",
     "covers_sensor_only",
+    "ignore_presence",
     "is_outdoor",
     "heat_source_orchestration",
     "heat_source_primary_delta",
     "heat_source_outdoor_threshold",
     "heat_source_ac_min_outdoor",
     "room_enabled",
+    "valve_protection_exclude",
 )
 
 _SETTINGS_SAVE_FIELDS = (
@@ -243,7 +245,7 @@ async def websocket_list_rooms(
                 vol.Required("type"): vol.In(["trv", "ac"]),
                 vol.Optional("role", default="auto"): vol.In(["primary", "secondary", "auto"]),
                 vol.Optional("heating_system_type", default=""): vol.In(["", "radiator", "underfloor"]),
-                vol.Optional("idle_action", default="off"): vol.In(["off", "fan_only"]),
+                vol.Optional("idle_action", default="off"): vol.In(["off", "fan_only", "setback"]),
                 vol.Optional("idle_fan_mode", default="low"): str,
             }
         ],
@@ -289,6 +291,7 @@ async def websocket_list_rooms(
         vol.Optional("covers_night_close"): bool,
         vol.Optional("covers_night_position"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
         vol.Optional("covers_sensor_only"): bool,
+        vol.Optional("ignore_presence"): bool,
         vol.Optional("is_outdoor"): bool,
         vol.Optional("valve_protection_exclude"): [str],
         vol.Optional("heat_source_orchestration"): bool,

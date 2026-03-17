@@ -14,13 +14,14 @@ export interface ChartBuildContext {
   rangeStart: number;
   rangeEnd: number;
   forecast?: AnalyticsDataPoint[];
+  isOutdoor?: boolean;
 }
 
 export function buildChartSeries(
   points: AnalyticsDataPoint[],
   ctx: ChartBuildContext,
 ): Array<Record<string, unknown>> {
-  const { hass, language: l, chartAnchor, forecast } = ctx;
+  const { hass, language: l, chartAnchor, forecast, isOutdoor } = ctx;
   const d = (c: number) => toDisplay(c, hass);
 
   const roomData: Array<[number, number]> = [];
@@ -31,15 +32,15 @@ export function buildChartSeries(
   for (const p of points) {
     const ts = p.ts * 1000;
     if (p.room_temp !== null) roomData.push([ts, d(p.room_temp)]);
-    if (p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
-    if (p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
+    if (!isOutdoor && p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
+    if (!isOutdoor && p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
     if (p.outdoor_temp !== null) outdoorData.push([ts, d(p.outdoor_temp)]);
   }
 
   for (const p of forecast ?? []) {
     const ts = p.ts * 1000;
-    if (p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
-    if (p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
+    if (!isOutdoor && p.target_temp !== null) targetData.push([ts, d(p.target_temp)]);
+    if (!isOutdoor && p.predicted_temp !== null) predictedData.push([ts, d(p.predicted_temp)]);
   }
 
   const series: Array<Record<string, unknown>> = [
@@ -54,7 +55,10 @@ export function buildChartSeries(
       lineStyle: { width: 2 },
       yAxisIndex: 0,
     },
-    {
+  ];
+
+  if (!isOutdoor) {
+    series.push({
       id: "target_temp",
       type: "line",
       name: localize("analytics.target", l),
@@ -64,8 +68,8 @@ export function buildChartSeries(
       smooth: false,
       lineStyle: { width: 2, type: "dashed" },
       yAxisIndex: 0,
-    },
-  ];
+    });
+  }
 
   if (predictedData.length > 0) {
     series.push({

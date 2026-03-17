@@ -67,7 +67,7 @@ export interface DeviceConfig {
   type: DeviceType;
   role: DeviceRole;
   heating_system_type?: string;
-  idle_action?: "off" | "fan_only"; // default "off"
+  idle_action?: "off" | "fan_only" | "setback"; // default "off"
   idle_fan_mode?: string; // default "low"
 }
 
@@ -116,6 +116,7 @@ export interface RoomConfig {
   covers_night_close?: boolean;
   covers_night_position?: number;
   covers_sensor_only?: boolean;
+  ignore_presence?: boolean;
   is_outdoor?: boolean;
   valve_protection_exclude?: string[];
   heat_source_orchestration?: boolean;
@@ -162,6 +163,11 @@ export interface GlobalSettings {
 }
 
 // HA types for panel integration
+export interface HassConnection {
+  addEventListener(event: string, callback: () => void): void;
+  removeEventListener(event: string, callback: () => void): void;
+}
+
 export interface HomeAssistant {
   callWS: <T>(msg: Record<string, unknown>) => Promise<T>;
   callService: (domain: string, service: string, data?: Record<string, unknown>) => Promise<void>;
@@ -172,6 +178,7 @@ export interface HomeAssistant {
   devices: Record<string, HassDeviceRegistryEntry>;
   language: string;
   config: { unit_system: { temperature: string } };
+  connection?: HassConnection;
 }
 
 export interface HassArea {

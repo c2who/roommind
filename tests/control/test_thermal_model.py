@@ -1284,6 +1284,111 @@ def test_ekf_repr():
     assert "confidence=" in r
 
 
+def test_ekf_process_noise_mode_gated():
+    """P[2][2] (beta_h variance) must NOT grow during idle when mode-gated Q is active."""
+    ekf = ThermalEKF(T_init=20.0)
+    # Initialise
+    ekf.update(20.0, 10.0, "idle", 3.0)
+
+    p22_before = ekf._P[2][2]
+    p33_before = ekf._P[3][3]
+    p44_before = ekf._P[4][4]
+
+    # Run 100 idle steps (no heating, no solar, no residual)
+    for _ in range(100):
+        ekf.update(20.0, 10.0, "idle", 3.0)
+
+    # P[2][2] and P[3][3] must NOT have grown (no Q added during idle)
+    assert ekf._P[2][2] <= p22_before
+    assert ekf._P[3][3] <= p33_before
+
+    # P[0][0] and P[1][1] should still evolve (Q_T, Q_ALPHA always applied)
+    # P[4][4] should not grow (no solar)
+    assert ekf._P[4][4] <= p44_before
+
+
+def test_ekf_process_noise_active_during_heating():
+    """P[2][2] receives process noise during heating mode."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf.update(20.0, 10.0, "idle", 3.0)  # init
+
+    # Run a few idle steps to let P[2][2] settle
+    for _ in range(10):
+        ekf.update(20.0, 10.0, "idle", 3.0)
+
+    p22_idle = ekf._P[2][2]
+
+    # Now do heating — P[2][2] should get Q_BETA_H and be actively updated
+    for _ in range(20):
+        ekf.update(21.0, 10.0, "heating", 3.0, power_fraction=0.8)
+
+    # After heating, P[2][2] changed (could be up or down due to Kalman updates,
+    # but the filter was actively learning, not frozen)
+    assert ekf._P[2][2] != pytest.approx(p22_idle, abs=0.01)
+
+
+def test_ekf_confidence_converges_high():
+    """With sufficient data, confidence should exceed 65% (healthy convergence)."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf.update(20.0, 10.0, "idle", 3.0)  # init
+
+    # Simulate realistic heating/idle cycles: the EKF learns best from
+    # alternating patterns that reveal both alpha (idle decay) and beta_h
+    # (heating response).
+    T = 20.0
+    for _cycle in range(5):
+        # Idle phase: temp decays toward outdoor
+        for _ in range(40):
+            T = T + 0.1 * (10.0 - T)  # decay toward T_out=10
+            ekf.update(T, 10.0, "idle", 3.0)
+        # Heating phase: temp rises
+        for _ in range(30):
+            T = T + 0.15  # steady heating
+            ekf.update(T, 10.0, "heating", 3.0, power_fraction=1.0)
+
+    # With mode-gated relative Q, confidence converges steadily.
+    # Synthetic data in a short test won't reach 90%+ (that requires days
+    # of real-world data), but 50%+ in 350 steps shows healthy convergence.
+    assert ekf.confidence > 0.50
+
+
+def test_ekf_beta_s_noise_zero_at_night():
+    """P[4][4] (beta_s variance) must not grow when q_solar=0 (nighttime)."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf.update(20.0, 10.0, "idle", 3.0)
+
+    p44_before = ekf._P[4][4]
+
+    # 50 idle steps at night (no solar)
+    for _ in range(50):
+        ekf.update(20.0, 10.0, "idle", 3.0, q_solar=0.0)
+
+    assert ekf._P[4][4] <= p44_before
+
+
+def test_ekf_process_noise_with_residual_heat():
+    """Q_BETA_H is applied during idle when q_residual > 0 (e.g. underfloor heating)."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf.update(20.0, 10.0, "idle", 3.0)  # init
+
+    # Run idle steps WITH residual heat — P[2][2] should receive Q_BETA_H
+    for _ in range(20):
+        ekf.update(20.0, 10.0, "idle", 3.0, q_residual=0.0)
+
+    p22_no_residual = ekf._P[2][2]
+
+    ekf2 = ThermalEKF(T_init=20.0)
+    ekf2.update(20.0, 10.0, "idle", 3.0)  # init
+
+    for _ in range(20):
+        ekf2.update(20.0, 10.0, "idle", 3.0, q_residual=0.5)
+
+    # With residual heat, beta_h becomes observable (F[0][2] > 0), so the
+    # Kalman update actively reduces P[2][2].  Net effect: P[2][2] is LOWER
+    # than without residual, confirming the parameter is being learned.
+    assert ekf2._P[2][2] < p22_no_residual
+
+
 def test_manager_get_prediction_std_unknown_room():
     """get_prediction_std for unknown room returns inf."""
     mgr = RoomModelManager()

@@ -20,6 +20,7 @@ export class RsAnalyticsChart extends LitElement {
   @property({ type: Number }) public rangeEnd = 0;
   @property({ type: Number }) public chartAnchor = 0;
   @property({ type: String }) public language = "en";
+  @property({ type: Boolean }) public isOutdoor = false;
 
   @state() private _hiddenSeries = new Set(["outdoor_temp"]);
   @state() private _chartInfoExpanded = false;
@@ -36,6 +37,7 @@ export class RsAnalyticsChart extends LitElement {
       rangeStart: this.rangeStart,
       rangeEnd: this.rangeEnd,
       forecast: this.data?.forecast,
+      isOutdoor: this.isOutdoor,
     };
     const allSeries = points.length > 0 ? buildChartSeries(points, chartCtx) : [];
 

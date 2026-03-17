@@ -2591,3 +2591,96 @@ async def test_apply_idle_forced_on_managed_mode():
     temp_calls = [c for c in calls if c[0][2].get("entity_id") == "climate.living_trv" and c[0][1] == "set_temperature"]
     assert len(temp_calls) == 1
     assert temp_calls[0][0][2]["temperature"] == 21.0
+
+
+# ---------------------------------------------------------------------------
+# Unreliable hvac_modes (#100): devices off with incomplete modes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_heating_ac_unreliable_modes_sends_heat():
+    """AC off with only off+fan_only should still receive 'heat' command (#100)."""
+    _last_commands.clear()
+    hass = build_hass()
+    ac_state = MagicMock()
+    ac_state.state = "off"
+    ac_state.attributes = {"hvac_modes": ["off", "fan_only"], "temperature": 16.0, "min_temp": 5, "max_temp": 35}
+    hass.states.get = MagicMock(return_value=ac_state)
+
+    room = make_room(thermostats=[], acs=["climate.ac"])
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    await ctrl.async_apply("heating", 21.0)
+
+    calls = hass.services.async_call.call_args_list
+    hvac_calls = [c for c in calls if c[0][1] == "set_hvac_mode"]
+    assert len(hvac_calls) >= 1
+    assert hvac_calls[0][0][2]["hvac_mode"] == "heat"
+
+
+@pytest.mark.asyncio
+async def test_apply_heating_ac_reliable_no_heat_turns_off():
+    """AC off with reliable modes (cool only) should be turned off when heating."""
+    _last_commands.clear()
+    hass = build_hass()
+    ac_state = MagicMock()
+    ac_state.state = "off"
+    ac_state.attributes = {"hvac_modes": ["off", "cool"], "temperature": 23.0, "min_temp": 16, "max_temp": 30}
+    hass.states.get = MagicMock(return_value=ac_state)
+
+    room = make_room(thermostats=[], acs=["climate.ac"])
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    await ctrl.async_apply("heating", 21.0)
+
+    calls = hass.services.async_call.call_args_list
+    # Cool-only AC cannot heat — should be turned off (or no heat command sent)
+    hvac_calls = [c for c in calls if c[0][1] == "set_hvac_mode"]
+    heat_calls = [c for c in hvac_calls if c[0][2].get("hvac_mode") == "heat"]
+    assert len(heat_calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_managed_mode_ac_unreliable_modes():
+    """Managed mode: AC off with unreliable modes should get heat command (#100)."""
+    _last_commands.clear()
+    hass = build_hass()
+    ac_state = MagicMock()
+    ac_state.state = "off"
+    ac_state.attributes = {
+        "hvac_modes": ["off", "fan_only"],
+        "current_temperature": 18.0,
+        "temperature": 16.0,
+        "min_temp": 5,
+        "max_temp": 35,
+    }
+    hass.states.get = MagicMock(return_value=ac_state)
+
+    room = make_room(thermostats=[], acs=["climate.ac"], temperature_sensor="")
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=False,
+    )
+    await ctrl.async_apply("heating", TargetTemps(heat=21.0, cool=24.0))
+
+    calls = hass.services.async_call.call_args_list
+    hvac_calls = [c for c in calls if c[0][1] == "set_hvac_mode"]
+    assert len(hvac_calls) >= 1
+    assert hvac_calls[0][0][2]["hvac_mode"] == "heat"

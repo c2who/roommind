@@ -27,7 +27,7 @@ from ..const import (
     HEAT_SOURCE_SECONDARY_POWER_SCALE,
     MODE_HEATING,
 )
-from ..utils.device_utils import get_ac_eids, get_trv_eids
+from ..utils.device_utils import get_ac_eids, get_trv_eids, has_reliable_hvac_modes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,7 +69,10 @@ def _ac_can_heat(hass: HomeAssistant, entity_id: str) -> bool:
     if state.state in ("unavailable", "unknown"):
         return False
     modes = state.attributes.get("hvac_modes", [])
-    return "heat" in modes or "heat_cool" in modes or "auto" in modes
+    if "heat" in modes or "heat_cool" in modes or "auto" in modes:
+        return True
+    # Modes unreliable when off with no active modes — assume it can heat.
+    return not has_reliable_hvac_modes(state)
 
 
 def evaluate_heat_sources(

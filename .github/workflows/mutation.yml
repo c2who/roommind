@@ -1,17 +1,15 @@
 name: Mutation Testing
 
 on:
-  schedule:
-    - cron: "0 3 * * *"  # Every night at 03:00 UTC
-  workflow_dispatch:       # Manual trigger via GitHub UI
+  workflow_dispatch:
 
 jobs:
   mutation-test:
     name: Mutation Testing
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     permissions:
       contents: read
-      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -24,50 +22,73 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-          pip install mutmut>=3.5
+          pip install "mutmut>=3.5"
 
       - name: Restore mutmut cache
         uses: actions/cache@v4
         with:
-          path: .mutmut-cache
+          path: mutants/
           key: mutmut-${{ hashFiles('custom_components/**/*.py') }}
           restore-keys: |
             mutmut-
 
       - name: Run mutation testing
-        run: mutmut run
-        timeout-minutes: 120
+        run: |
+          mutmut run || EXIT=$?
+          if [ "${EXIT:-0}" -ge 2 ]; then
+            echo "::error::mutmut failed with exit code $EXIT"
+            exit $EXIT
+          fi
 
-      - name: Generate report
+      - name: Post summary
         if: always()
         run: |
-          echo "# Mutation Testing Report" > mutation-report.md
-          echo "" >> mutation-report.md
-          echo "**Date:** $(date -u '+%Y-%m-%d %H:%M UTC')" >> mutation-report.md
-          echo "" >> mutation-report.md
-          echo '```' >> mutation-report.md
-          mutmut results >> mutation-report.md 2>&1 || true
-          echo '```' >> mutation-report.md
-          echo "" >> mutation-report.md
-          echo "## Survived Mutants" >> mutation-report.md
-          echo "" >> mutation-report.md
-          echo "These mutants were NOT caught by tests:" >> mutation-report.md
-          echo "" >> mutation-report.md
-          echo '```' >> mutation-report.md
-          mutmut show survived >> mutation-report.md 2>&1 || true
-          echo '```' >> mutation-report.md
+          # Parse the last progress line from the run log for overall stats
+          # Format: ⠴ 12408/12408  🎉 8107 🫥 26  ⏰ 1754  🤔 0  🙁 2521  🔇 0  🧙 0
+          mutmut results --all > /tmp/mutmut-all.txt 2>&1 || true
+          mutmut results > /tmp/mutmut-survived.txt 2>&1 || true
+
+          TOTAL=$(wc -l < /tmp/mutmut-all.txt | tr -d ' ')
+          SURVIVED=$(grep -c "survived" /tmp/mutmut-survived.txt 2>/dev/null || echo "0")
+          TIMEOUT=$(grep -c "timeout" /tmp/mutmut-all.txt 2>/dev/null || echo "0")
+          NO_TESTS=$(grep -c "no tests" /tmp/mutmut-all.txt 2>/dev/null || echo "0")
+          KILLED=$((TOTAL - SURVIVED - TIMEOUT - NO_TESTS))
+          if [ "$TOTAL" -gt 0 ]; then
+            KILL_RATE=$((KILLED * 100 / TOTAL))
+          else
+            KILL_RATE=0
+          fi
+
+          echo "## Mutation Testing Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count | % |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|------:|--:|" >> $GITHUB_STEP_SUMMARY
+          echo "| Killed | $KILLED | ${KILL_RATE}% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Survived | $SURVIVED | |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timeout | $TIMEOUT | |" >> $GITHUB_STEP_SUMMARY
+          echo "| No tests | $NO_TESTS | |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | **$TOTAL** | |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Survived mutants grouped by file
+          echo "### Survived by file" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep "survived" /tmp/mutmut-survived.txt 2>/dev/null \
+            | sed 's/:.*//' \
+            | sed 's/\.x[ǁ_].*//; s/\.x__.*//; s/\.x_/\./' \
+            | sort | uniq -c | sort -rn >> $GITHUB_STEP_SUMMARY || echo "  (none)" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Generate artifact
+        if: always()
+        run: |
+          mutmut results > mutation-report.txt 2>&1 || true
 
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mutation-report
-          path: mutation-report.md
+          path: mutation-report.txt
           retention-days: 30
-
-      - name: Post summary to job
-        if: always()
-        run: |
-          echo "## Mutation Testing Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          mutmut results >> $GITHUB_STEP_SUMMARY 2>&1 || true

@@ -435,7 +435,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         schedule_entity_id = get_active_schedule_entity(self.hass, room)
         schedule_blocks = await read_schedule_blocks(self.hass, schedule_entity_id) if schedule_entity_id else None
-        presence_away = self._is_presence_away(room, settings)
+        presence_away = not room.get("ignore_presence", False) and self._is_presence_away(room, settings)
         target_resolver = make_target_resolver(
             schedule_blocks,
             room,
@@ -562,7 +562,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         for eid in get_trv_eids(room.get("devices", [])):
             st = self.hass.states.get(eid)
             if st and st.attributes.get("max_temp") is not None:
-                trv_max_temps.append(st.attributes["max_temp"])
+                trv_max_temps.append(ha_temp_to_celsius(self.hass, st.attributes["max_temp"]))
         device_max_temp = min(trv_max_temps) if trv_max_temps else None
 
         ac_min_temps: list[float] = []
@@ -571,9 +571,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             st = self.hass.states.get(eid)
             if st:
                 if st.attributes.get("min_temp") is not None:
-                    ac_min_temps.append(st.attributes["min_temp"])
+                    ac_min_temps.append(ha_temp_to_celsius(self.hass, st.attributes["min_temp"]))
                 if st.attributes.get("max_temp") is not None:
-                    ac_max_temps.append(st.attributes["max_temp"])
+                    ac_max_temps.append(ha_temp_to_celsius(self.hass, st.attributes["max_temp"]))
         device_min_temp = max(ac_min_temps) if ac_min_temps else None
         ac_device_max_temp = min(ac_max_temps) if ac_max_temps else None
 
@@ -1255,8 +1255,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     )
                 )
 
-        # 2.5 Presence-based eco or off
-        if self._is_presence_away(room, settings):
+        # 2.5 Presence-based eco or off (skip if room ignores presence)
+        if not room.get("ignore_presence", False) and self._is_presence_away(room, settings):
             action = settings.get("presence_away_action", "eco")
             self._last_resolve_reason[area_id] = "presence_away"
             if action == "off":
