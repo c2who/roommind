@@ -28,10 +28,12 @@ from ..const import (
     TargetTemps,
 )
 from ..utils.device_utils import (
+    CONTROL_TYPE_RELAY,
     DEFAULT_IDLE_SETBACK_OFFSET,
     IDLE_ACTION_FAN_ONLY,
     IDLE_ACTION_SETBACK,
     get_ac_eids,
+    get_control_type,
     get_idle_action,
     get_trv_eids,
     has_reliable_hvac_modes,
@@ -1301,19 +1303,6 @@ class MPCController:
             return
 
         if mode == MODE_HEATING:
-            # Proportional TRV setpoint for Full Control mode
-            if self.has_external_sensor and current_temp is not None:
-                trv_target = round(
-                    current_temp + power_fraction * (trv_heat_boost - current_temp),
-                    1,
-                )
-                # Floor: never below target (TRV must always aim to heat toward target)
-                trv_target = max(effective_target, trv_target)
-                # Ceiling: never above boost target
-                trv_target = min(trv_heat_boost, trv_target)
-            else:
-                trv_target = trv_heat_boost if self.has_external_sensor else effective_target
-            ha_trv = celsius_to_ha_temp(self.hass, trv_target)
             entity_modes = self._entity_modes
             for eid in thermostats:
                 if eid in _forced_off:
@@ -1321,20 +1310,23 @@ class MPCController:
                     continue
                 if entity_modes.get(eid, "auto") == "cool_only":
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
+                    continue
+                # Per-device setpoint: relay devices get boost, proportional get interpolated
+                if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
+                    trv_target = trv_heat_boost
+                elif self.has_external_sensor and current_temp is not None:
+                    trv_target = round(
+                        current_temp + power_fraction * (trv_heat_boost - current_temp),
+                        1,
+                    )
+                    trv_target = max(effective_target, trv_target)
+                    trv_target = min(trv_heat_boost, trv_target)
                 else:
-                    await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
-                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_trv}, temp_intent="heat")
+                    trv_target = trv_heat_boost if self.has_external_sensor else effective_target
+                ha_trv = celsius_to_ha_temp(self.hass, trv_target)
+                await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
+                await self._call("set_temperature", {"entity_id": eid, "temperature": ha_trv}, temp_intent="heat")
             # ACs: proportional setpoint in Full Control, actual target otherwise
-            if self.has_external_sensor and current_temp is not None:
-                ac_heat_target = round(
-                    current_temp + power_fraction * (ac_heat_boost - current_temp),
-                    1,
-                )
-                ac_heat_target = max(effective_target, ac_heat_target)
-                ac_heat_target = min(ac_heat_boost, ac_heat_target)
-            else:
-                ac_heat_target = effective_target
-            ha_ac_target = celsius_to_ha_temp(self.hass, ac_heat_target)
             for eid in self.acs:
                 if eid in _forced_off:
                     await async_idle_device(self.hass, eid, self._devices, area_id=self._area_id, targets=targets)
@@ -1342,6 +1334,19 @@ class MPCController:
                 if not _entity_allowed_heat(self.hass, eid, entity_modes):
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
                     continue
+                # Per-device setpoint
+                if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
+                    ac_heat_target = ac_heat_boost
+                elif self.has_external_sensor and current_temp is not None:
+                    ac_heat_target = round(
+                        current_temp + power_fraction * (ac_heat_boost - current_temp),
+                        1,
+                    )
+                    ac_heat_target = max(effective_target, ac_heat_target)
+                    ac_heat_target = min(ac_heat_boost, ac_heat_target)
+                else:
+                    ac_heat_target = effective_target
+                ha_ac_target = celsius_to_ha_temp(self.hass, ac_heat_target)
                 ac_state = self.hass.states.get(eid)
                 ac_modes = _effective_ac_modes(ac_state)
                 if "heat" in ac_modes:

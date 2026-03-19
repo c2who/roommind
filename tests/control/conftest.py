@@ -24,10 +24,28 @@ def make_room(**overrides):
     room.update(overrides)
     # Build devices from thermostats/acs for consistency
     hst = room.get("heating_system_type", "")
+    device_overrides = room.pop("device_overrides", {})  # {entity_id: {key: val}}
     room["devices"] = [
-        {"entity_id": eid, "type": "trv", "role": "auto", "heating_system_type": hst}
+        {
+            "entity_id": eid,
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": hst,
+            "control_type": "proportional",
+            **device_overrides.get(eid, {}),
+        }
         for eid in room.get("thermostats", [])
-    ] + [{"entity_id": eid, "type": "ac", "role": "auto", "heating_system_type": ""} for eid in room.get("acs", [])]
+    ] + [
+        {
+            "entity_id": eid,
+            "type": "ac",
+            "role": "auto",
+            "heating_system_type": "",
+            "control_type": "proportional",
+            **device_overrides.get(eid, {}),
+        }
+        for eid in room.get("acs", [])
+    ]
     return room
 
 
