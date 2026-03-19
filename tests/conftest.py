@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from homeassistant.util import dt as dt_util
 
 from custom_components.roommind.control.mpc_controller import clear_command_cache
 from custom_components.roommind.store import RoomMindStore
+
+
+@pytest.fixture(autouse=True)
+def _set_utc_timezone():
+    """Set HA default timezone to UTC so schedule resolution is deterministic."""
+    dt_util.set_default_time_zone(datetime.UTC)
+    yield
+    dt_util.set_default_time_zone(datetime.UTC)
 
 
 @pytest.fixture(autouse=True)

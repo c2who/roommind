@@ -7,6 +7,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from homeassistant.util import dt as dt_util
+
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
@@ -53,7 +55,7 @@ def resolve_target_at_time(
     # 3. Schedule blocks
     if schedule_blocks is None:
         return comfort_temp
-    dt = datetime.fromtimestamp(ts)
+    dt = datetime.fromtimestamp(ts, tz=dt_util.get_default_time_zone())
     day_name = dt.strftime("%A").lower()
     current_time = dt.time()
     day_blocks = schedule_blocks.get(day_name, [])
@@ -114,7 +116,7 @@ def resolve_targets_at_time(
     # 3. Schedule blocks
     if schedule_blocks is None:
         return TargetTemps(heat=comfort_heat, cool=comfort_cool)
-    dt = datetime.fromtimestamp(ts)
+    dt = datetime.fromtimestamp(ts, tz=dt_util.get_default_time_zone())
     day_name = dt.strftime("%A").lower()
     current_time = dt.time()
     day_blocks = schedule_blocks.get(day_name, [])
