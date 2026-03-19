@@ -166,3 +166,46 @@ async def test_relay_ac_cooling_sends_cool_boost():
     assert len(set_temp_calls) == 1
     # Relay: should get cool boost (16.0), not proportional
     assert set_temp_calls[0][0][2]["temperature"] == 16.0
+
+
+@pytest.mark.asyncio
+async def test_mixed_relay_trv_proportional_ac_heating():
+    """Room with relay TRV + proportional AC: each gets correct setpoint."""
+    hass = build_hass()
+    # AC needs hvac_modes to resolve heat mode
+    ac_state = MagicMock()
+    ac_state.state = "heat"
+    ac_state.attributes = {
+        "hvac_modes": ["off", "heat", "cool"],
+        "min_temp": 16.0,
+        "max_temp": 30.0,
+    }
+    hass.states.get = lambda eid: ac_state if eid == "climate.ac" else None
+
+    room = make_room(
+        thermostats=["climate.trv_relay"],
+        acs=["climate.ac"],
+        device_overrides={
+            "climate.trv_relay": {"control_type": "relay"},
+            # climate.ac defaults to proportional
+        },
+    )
+    ctrl = MPCController(
+        hass, room, model_manager=RoomModelManager(),
+        outdoor_temp=5.0, settings={}, has_external_sensor=True,
+    )
+    targets = TargetTemps(heat=21.0, cool=25.0)
+    await ctrl.async_apply(
+        "heating", targets, power_fraction=0.5, current_temp=19.0,
+        heating_boost_target=30.0, ac_heating_boost_target=30.0,
+    )
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = [
+        c for c in calls
+        if c[0][0] == "climate" and c[0][1] == "set_temperature"
+    ]
+    temps_by_entity = {c[0][2]["entity_id"]: c[0][2]["temperature"] for c in set_temp_calls}
+    # Relay TRV: boost
+    assert temps_by_entity["climate.trv_relay"] == 30.0
+    # Proportional AC: 19.0 + 0.5 * (30.0 - 19.0) = 24.5
+    assert temps_by_entity["climate.ac"] == 24.5
