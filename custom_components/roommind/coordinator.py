@@ -688,28 +688,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
             mode = MODE_IDLE
             power_fraction = 0.0
-            # Update compressor group member states (always, even after failed apply)
-            for eid in all_device_eids:
-                if self._compressor_manager.get_group_for_entity(eid) is None:
-                    continue
-                if eid in cycling_eids:
-                    continue
-                if eid in compressor_forced_off:
-                    self._compressor_manager.update_member(eid, False)
-                elif eid in compressor_forced_on:
-                    # Verify device is actually running before tracking as active.
-                    # If user manually turned it off, respect that.
-                    dev_state = self.hass.states.get(eid)
-                    actually_on = dev_state is not None and dev_state.state not in (
-                        "off",
-                        "unavailable",
-                        "unknown",
-                    )
-                    self._compressor_manager.update_member(eid, actually_on)
-                elif mode != MODE_IDLE:
-                    self._compressor_manager.update_member(eid, True)
-                else:
-                    self._compressor_manager.update_member(eid, False)
         else:
             # Global climate control disabled (learn-only) — do NOT send commands,
             # do NOT touch mode/power_fraction (used for internal tracking).
@@ -726,6 +704,29 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 )
             mode = MODE_IDLE
             power_fraction = 0.0
+
+        # Update compressor group member states (always, regardless of control path)
+        for eid in all_device_eids:
+            if self._compressor_manager.get_group_for_entity(eid) is None:
+                continue
+            if eid in cycling_eids:
+                continue
+            if eid in compressor_forced_off:
+                self._compressor_manager.update_member(eid, False)
+            elif eid in compressor_forced_on:
+                # Verify device is actually running before tracking as active.
+                # If user manually turned it off, respect that.
+                dev_state = self.hass.states.get(eid)
+                actually_on = dev_state is not None and dev_state.state not in (
+                    "off",
+                    "unavailable",
+                    "unknown",
+                )
+                self._compressor_manager.update_member(eid, actually_on)
+            elif mode != MODE_IDLE:
+                self._compressor_manager.update_member(eid, True)
+            else:
+                self._compressor_manager.update_member(eid, False)
 
         # For Managed Mode rooms, observe actual device state for display + training.
         # The controller's mode is "intent" (device told to heat), but the device
