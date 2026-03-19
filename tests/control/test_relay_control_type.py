@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from custom_components.roommind.const import TargetTemps
+from custom_components.roommind.control.mpc_controller import MPCController, _last_commands
+from custom_components.roommind.control.thermal_model import RoomModelManager
+from custom_components.roommind.managers.heat_source_orchestrator import DeviceCommand, HeatSourcePlan
 from custom_components.roommind.utils.device_utils import (
-    get_control_type,
-    legacy_to_devices,
     CONTROL_TYPE_PROPORTIONAL,
     CONTROL_TYPE_RELAY,
+    get_control_type,
+    legacy_to_devices,
 )
+
+from .conftest import build_hass, make_room
 
 
 def test_get_control_type_returns_relay():
@@ -30,15 +38,6 @@ def test_get_control_type_unknown_entity():
 def test_legacy_to_devices_sets_proportional_default():
     devices = legacy_to_devices(["climate.trv"], ["climate.ac"])
     assert all(d["control_type"] == "proportional" for d in devices)
-
-
-from unittest.mock import AsyncMock, MagicMock
-
-from custom_components.roommind.const import TargetTemps
-from custom_components.roommind.control.mpc_controller import MPCController, _last_commands
-from custom_components.roommind.control.thermal_model import RoomModelManager
-
-from .conftest import build_hass, make_room
 
 
 @pytest.fixture(autouse=True)
@@ -96,9 +95,6 @@ async def test_proportional_trv_heating_sends_proportional_setpoint():
     assert len(set_temp_calls) == 1
     # Proportional: 19.0 + 0.5 * (30.0 - 19.0) = 24.5, floored at target 21.0
     assert set_temp_calls[0][0][2]["temperature"] == 24.5
-
-
-from custom_components.roommind.managers.heat_source_orchestrator import HeatSourcePlan, DeviceCommand
 
 
 @pytest.mark.asyncio
