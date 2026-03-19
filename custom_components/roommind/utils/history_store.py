@@ -46,11 +46,10 @@ class HistoryStore:
         self._ensure_dir()
         ts = timestamp or time.time()
         path = self._detail_path(area_id)
-        file_exists = os.path.isfile(path)
 
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
-            if not file_exists:
+            if f.tell() == 0:
                 writer.writeheader()
             writer.writerow(
                 {
@@ -211,10 +210,9 @@ class HistoryStore:
     def _append_history(self, area_id: str, rows: list[dict]) -> None:
         self._ensure_dir()
         path = self._history_path(area_id)
-        file_exists = os.path.isfile(path)
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
-            if not file_exists:
+            if f.tell() == 0:
                 writer.writeheader()
             writer.writerows(rows)
 
