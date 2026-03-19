@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -85,6 +85,8 @@ class RoomMindTargetTemperatureSensor(_RoomMindBaseSensor):
     """Sensor showing the target temperature for a RoomMind room."""
 
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _data_key = "target_temp"
 
     def __init__(self, coordinator: RoomMindCoordinator, area_id: str) -> None:
