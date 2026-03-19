@@ -436,7 +436,10 @@ class ThermalEKF:
 
         dt_h = dt_minutes / 60.0
         alpha = self._x[1]
-        u = self._mode_to_u(mode)
+        beta_h, beta_s = self._x[2], self._x[4]
+        u_hvac = self._mode_to_u(mode)
+        u_residual = beta_h * q_residual if mode == "idle" and q_residual > 0 else 0.0
+        u = u_hvac + beta_s * q_solar + u_residual
         F = self._compute_jacobian(T_room, alpha, u, T_outdoor, dt_h, mode, q_solar=q_solar, q_residual=q_residual)
 
         # P_pred = F @ P @ F^T + Q_noise (only need element [0][0])
