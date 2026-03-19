@@ -971,6 +971,16 @@ export class RsDeviceSection extends LitElement {
             <ha-select
               .label=${localize("devices.control_type", this.hass.language)}
               .value=${device.control_type ?? "proportional"}
+              .options=${[
+                {
+                  value: "proportional",
+                  label: localize("devices.control_type_proportional", this.hass.language),
+                },
+                {
+                  value: "relay",
+                  label: localize("devices.control_type_relay", this.hass.language),
+                },
+              ]}
               @selected=${(e: Event) => this._onControlTypeChange(entityId, getSelectValue(e)!)}
               @closed=${(e: Event) => e.stopPropagation()}
               fixedMenuPosition
