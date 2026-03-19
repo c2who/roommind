@@ -614,7 +614,7 @@ class MPCController:
             current_temp or 20.0,
             T_out,
             PLAN_DT_MINUTES,
-            q_solar=self.q_solar,
+            q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
         )
         if pred_std < MPC_MAX_PREDICTION_STD and self._has_enough_data(can_heat, can_cool):
@@ -774,8 +774,6 @@ class MPCController:
             fallback_c = targets.cool if targets.cool is not None else current_temp
             heat_target_series = [fallback_h] * horizon_blocks
             cool_target_series = [fallback_c] * horizon_blocks
-
-        from .residual_heat import get_min_run_blocks
 
         min_run = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES)
 
@@ -981,8 +979,12 @@ class MPCController:
             dt_minutes=PLAN_DT_MINUTES,
             cloud_series=cloud_per_block,
         )
-        # MPC uses unshaded solar to avoid oscillation feedback loop:
-        # covers deployed → low solar prediction → retract → high solar → deploy
+        # Apply current shading factor so MPC sees the same effective solar
+        # the EKF learned from.  The shading factor is a *measured* value
+        # (current cover positions), not a prediction — using it here keeps
+        # the optimizer consistent with the learned beta_s.
+        if self._shading_factor < 1.0:
+            series = [s * self._shading_factor for s in series]
         return series
 
     @property

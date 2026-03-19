@@ -72,6 +72,8 @@ class _RoomMindBaseSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> float | str | None:
         """Return the sensor value from the coordinator data."""
+        if self.coordinator.data is None:
+            return None
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if room:
             val = room.get(self._data_key)
@@ -100,6 +102,8 @@ class RoomMindModeSensor(_RoomMindBaseSensor):
     @property
     def native_value(self) -> str | None:
         """Return the current mode, defaulting to 'idle'."""
+        if self.coordinator.data is None:
+            return "idle"
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if room:
             val = room.get("mode", "idle")
@@ -126,6 +130,8 @@ class RoomMindForecastSensor(_RoomMindBaseSensor):
     @property
     def native_value(self) -> str | None:
         """Return a human-readable forecast summary."""
+        if self.coordinator.data is None:
+            return "learning"
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if not room:
             return "learning"
@@ -140,6 +146,8 @@ class RoomMindForecastSensor(_RoomMindBaseSensor):
     @property
     def icon(self) -> str:
         """Return a dynamic icon based on the current forecast action."""
+        if self.coordinator.data is None:
+            return "mdi:school-outline"
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if not room:
             return "mdi:school-outline"
@@ -155,6 +163,8 @@ class RoomMindForecastSensor(_RoomMindBaseSensor):
     @property
     def extra_state_attributes(self) -> dict:
         """Return forecast data and derived scalar attributes."""
+        if self.coordinator.data is None:
+            return {}
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if not room:
             return {}
