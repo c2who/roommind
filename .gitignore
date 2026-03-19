@@ -221,7 +221,9 @@ custom_components/roommind/frontend/roommind-panel.js
 .mcp.json
 CLAUDE.md
 ROADMAP.md
+tasks/lessons.md
 
 # Worktrees
 .worktrees/
 
+deploy_local.sh
