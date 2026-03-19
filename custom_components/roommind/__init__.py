@@ -96,19 +96,22 @@ def _migrate_storage_sync(storage_dir: Path) -> None:
             _LOGGER.info("Migrated history directory to 'roommind_history'")
         else:
             # Both exist — merge old CSVs into new (append old data before new)
-            for old_csv in old_history.iterdir():
-                new_csv = new_history / old_csv.name
-                if new_csv.exists():
-                    old_lines = old_csv.read_text().splitlines()
-                    new_lines = new_csv.read_text().splitlines()
-                    # old_lines[0] is header, old_lines[1:] is data
-                    # new_lines[0] is header, new_lines[1:] is new data
-                    merged = old_lines + new_lines[1:]
-                    new_csv.write_text("\n".join(merged) + "\n")
-                else:
-                    old_csv.rename(new_csv)
-            shutil.rmtree(old_history)
-            _LOGGER.info("Merged old history into 'roommind_history'")
+            try:
+                for old_csv in old_history.iterdir():
+                    new_csv = new_history / old_csv.name
+                    if new_csv.exists():
+                        old_lines = old_csv.read_text().splitlines()
+                        new_lines = new_csv.read_text().splitlines()
+                        # old_lines[0] is header, old_lines[1:] is data
+                        # new_lines[0] is header, new_lines[1:] is new data
+                        merged = old_lines + new_lines[1:]
+                        new_csv.write_text("\n".join(merged) + "\n")
+                    else:
+                        old_csv.rename(new_csv)
+                shutil.rmtree(old_history)
+                _LOGGER.info("Merged old history into 'roommind_history'")
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Failed to merge old history directory")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
