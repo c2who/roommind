@@ -1367,16 +1367,6 @@ class MPCController:
                 else:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
         elif mode == MODE_COOLING:
-            if self.has_external_sensor and current_temp is not None:
-                ac_cool_target = round(
-                    current_temp - power_fraction * (current_temp - ac_cool_boost),
-                    1,
-                )
-                ac_cool_target = max(ac_cool_boost, ac_cool_target)
-                ac_cool_target = min(effective_target, ac_cool_target)
-            else:
-                ac_cool_target = effective_target
-            ha_target = celsius_to_ha_temp(self.hass, ac_cool_target)
             entity_modes = self._entity_modes
             for eid in self.acs:
                 if eid in _forced_off:
@@ -1385,6 +1375,19 @@ class MPCController:
                 if not _entity_allowed_cool(self.hass, eid, entity_modes):
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
                     continue
+                # Per-device setpoint
+                if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
+                    ac_cool_target = ac_cool_boost
+                elif self.has_external_sensor and current_temp is not None:
+                    ac_cool_target = round(
+                        current_temp - power_fraction * (current_temp - ac_cool_boost),
+                        1,
+                    )
+                    ac_cool_target = max(ac_cool_boost, ac_cool_target)
+                    ac_cool_target = min(effective_target, ac_cool_target)
+                else:
+                    ac_cool_target = effective_target
+                ha_target = celsius_to_ha_temp(self.hass, ac_cool_target)
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "cool"})
                 await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target}, temp_intent="cool")
             for eid in thermostats:

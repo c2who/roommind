@@ -96,3 +96,30 @@ async def test_proportional_trv_heating_sends_proportional_setpoint():
     assert len(set_temp_calls) == 1
     # Proportional: 19.0 + 0.5 * (30.0 - 19.0) = 24.5, floored at target 21.0
     assert set_temp_calls[0][0][2]["temperature"] == 24.5
+
+
+@pytest.mark.asyncio
+async def test_relay_ac_cooling_sends_cool_boost():
+    """Relay AC in cooling should receive cool boost target."""
+    hass = build_hass()
+    room = make_room(
+        thermostats=[], acs=["climate.ac"],
+        device_overrides={"climate.ac": {"control_type": "relay"}},
+    )
+    ctrl = MPCController(
+        hass, room, model_manager=RoomModelManager(),
+        outdoor_temp=35.0, settings={}, has_external_sensor=True,
+    )
+    targets = TargetTemps(heat=21.0, cool=25.0)
+    await ctrl.async_apply(
+        "cooling", targets, power_fraction=0.5, current_temp=27.0,
+        cooling_boost_target=16.0,
+    )
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = [
+        c for c in calls
+        if c[0][0] == "climate" and c[0][1] == "set_temperature"
+    ]
+    assert len(set_temp_calls) == 1
+    # Relay: should get cool boost (16.0), not proportional
+    assert set_temp_calls[0][0][2]["temperature"] == 16.0
