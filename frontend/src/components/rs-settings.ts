@@ -62,6 +62,7 @@ export class RsSettings extends LitElement {
   @state() private _moldPreventionEnabled = false;
   @state() private _moldPreventionIntensity: "light" | "medium" | "strong" = "medium";
   @state() private _moldPreventionNotify = false;
+  @state() private _moldPreventionNotifyTargets: NotificationTarget[] = [];
   @state() private _compressorGroups: CompressorGroup[] = [];
   @state() private _boostAppliedAt: Record<string, number> = {};
   @state() private _loaded = false;
@@ -118,6 +119,7 @@ export class RsSettings extends LitElement {
       this._moldPreventionEnabled = s.mold_prevention_enabled ?? false;
       this._moldPreventionIntensity = s.mold_prevention_intensity ?? "medium";
       this._moldPreventionNotify = s.mold_prevention_notify_enabled ?? false;
+      this._moldPreventionNotifyTargets = s.mold_prevention_notify_targets ?? [];
       this._compressorGroups = s.compressor_groups ?? [];
       this._boostAppliedAt = s.boost_applied_at ?? {};
     } catch (err) {
@@ -358,7 +360,10 @@ export class RsSettings extends LitElement {
         mold_prevention_intensity: this._moldPreventionIntensity,
         mold_prevention_notify_enabled: this._moldPreventionNotify,
         mold_prevention_notify_targets: this._moldPreventionNotify
-          ? this._moldNotificationTargets.filter((t) => t.entity_id)
+          ? (this._moldPreventionNotifyTargets.length > 0
+              ? this._moldPreventionNotifyTargets
+              : this._moldNotificationTargets
+            ).filter((t) => t.entity_id)
           : [],
       });
       fireSaveStatus(this, "saved");
