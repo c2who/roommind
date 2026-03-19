@@ -179,6 +179,9 @@
   "devices.idle_action_fan_only": "Fan only",
   "devices.idle_action_setback": "Setback",
   "devices.idle_fan_mode": "Fan speed",
+  "devices.control_type": "Control type",
+  "devices.control_type_proportional": "Proportional",
+  "devices.control_type_relay": "Relay (on/off)",
   "devices.valve_protection_excluded": "Excluded from valve protection",
   "devices.valve_protection_exclude_hint": "This entity will not be cycled by valve protection (e.g. virtual boiler entities)",
 

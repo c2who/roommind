@@ -179,6 +179,9 @@
   "devices.idle_action_fan_only": "Nur Ventilator",
   "devices.idle_action_setback": "Absenkung",
   "devices.idle_fan_mode": "Lüftergeschwindigkeit",
+  "devices.control_type": "Steuerungsart",
+  "devices.control_type_proportional": "Proportional",
+  "devices.control_type_relay": "Relais (ein/aus)",
   "devices.valve_protection_excluded": "Vom Ventilschutz ausgenommen",
   "devices.valve_protection_exclude_hint": "Dieses Gerät wird nicht vom Ventilschutz bewegt (z.B. virtuelle Kessel-Entitäten)",
 
