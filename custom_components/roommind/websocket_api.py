@@ -720,6 +720,11 @@ async def websocket_thermal_reset(
     """Reset thermal model and history for a single room."""
     store = hass.data[DOMAIN]["store"]
     area_id = msg["area_id"]
+
+    if store.get_room(area_id) is None:
+        connection.send_error(msg["id"], "not_found", f"Room '{area_id}' not found")
+        return
+
     coordinator = _get_coordinator(hass)
 
     # Clear learned model and residual heat tracking
@@ -755,9 +760,8 @@ async def websocket_thermal_reset_all(
     coordinator = _get_coordinator(hass)
 
     # Clear all learned models — replace entire manager for clean state
-    room_ids: list[str] = []
+    room_ids = list(store.get_rooms().keys())
     if coordinator:
-        room_ids = list(coordinator._model_manager._estimators.keys())
         coordinator._replace_model_manager(RoomModelManager())
         coordinator._ekf_training.last_temps.clear()
         coordinator._residual_tracker.clear_all()

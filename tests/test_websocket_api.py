@@ -837,6 +837,8 @@ def _make_coordinator_with_model(ws_hass):
 async def test_thermal_reset_room(ws_hass, store, connection):
     """Resetting one room clears its model but keeps others."""
     await store.async_load()
+    await store.async_save_room("room_a", {"area_id": "room_a"})
+    await store.async_save_room("room_b", {"area_id": "room_b"})
     await store.async_save_thermal_data({"room_a": {"n_samples": 10}, "room_b": {"n_samples": 5}})
 
     coordinator = _make_coordinator_with_model(ws_hass)
@@ -861,6 +863,8 @@ async def test_thermal_reset_room(ws_hass, store, connection):
 async def test_thermal_reset_all(ws_hass, store, connection):
     """Resetting all rooms clears all models and history."""
     await store.async_load()
+    await store.async_save_room("room_a", {"area_id": "room_a"})
+    await store.async_save_room("room_b", {"area_id": "room_b"})
     await store.async_save_thermal_data({"room_a": {"n_samples": 10}, "room_b": {"n_samples": 5}})
 
     coordinator = _make_coordinator_with_model(ws_hass)
@@ -882,7 +886,7 @@ async def test_thermal_reset_all(ws_hass, store, connection):
 
 @pytest.mark.asyncio
 async def test_thermal_reset_nonexistent_room(ws_hass, store, connection):
-    """Resetting a room that has no model data still succeeds (idempotent)."""
+    """Resetting a nonexistent room returns an error."""
     await store.async_load()
 
     _make_coordinator_with_model(ws_hass)
@@ -890,7 +894,7 @@ async def test_thermal_reset_nonexistent_room(ws_hass, store, connection):
     msg = {"id": 22, "type": "roommind/thermal/reset", "area_id": "nonexistent"}
     await _thermal_reset(ws_hass, connection, msg)
 
-    connection.send_result.assert_called_once_with(22, {"success": True})
+    connection.send_error.assert_called_once_with(22, "not_found", "Room 'nonexistent' not found")
 
 
 # --- Mold risk settings tests ---
