@@ -1230,7 +1230,9 @@ class MPCController:
                     continue
                 if cmd.active:
                     if cmd.device_type == "thermostat":
-                        if self.has_external_sensor and current_temp is not None:
+                        if get_control_type(self._devices, cmd.entity_id) == CONTROL_TYPE_RELAY:
+                            t = trv_heat_boost
+                        elif self.has_external_sensor and current_temp is not None:
                             t = round(
                                 current_temp + cmd.power_fraction * (trv_heat_boost - current_temp),
                                 1,
@@ -1247,7 +1249,9 @@ class MPCController:
                             temp_intent="heat",
                         )
                     else:  # ac
-                        if self.has_external_sensor and current_temp is not None:
+                        if get_control_type(self._devices, cmd.entity_id) == CONTROL_TYPE_RELAY:
+                            t = ac_heat_boost
+                        elif self.has_external_sensor and current_temp is not None:
                             t = round(
                                 current_temp + cmd.power_fraction * (ac_heat_boost - current_temp),
                                 1,

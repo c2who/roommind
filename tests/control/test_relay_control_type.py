@@ -98,6 +98,49 @@ async def test_proportional_trv_heating_sends_proportional_setpoint():
     assert set_temp_calls[0][0][2]["temperature"] == 24.5
 
 
+from custom_components.roommind.managers.heat_source_orchestrator import HeatSourcePlan, DeviceCommand
+
+
+@pytest.mark.asyncio
+async def test_relay_trv_orchestrator_sends_boost_target():
+    """Relay TRV via heat source orchestrator should get boost target."""
+    hass = build_hass()
+    room = make_room(
+        device_overrides={"climate.living_trv": {"control_type": "relay"}},
+    )
+    ctrl = MPCController(
+        hass, room, model_manager=RoomModelManager(),
+        outdoor_temp=5.0, settings={}, has_external_sensor=True,
+    )
+    plan = HeatSourcePlan(
+        commands=[
+            DeviceCommand(
+                entity_id="climate.living_trv",
+                role="primary",
+                device_type="thermostat",
+                active=True,
+                power_fraction=0.5,
+                reason="test",
+            ),
+        ],
+        active_sources="primary",
+        reason="test",
+    )
+    targets = TargetTemps(heat=21.0, cool=25.0)
+    await ctrl.async_apply(
+        "heating", targets, current_temp=19.0,
+        heating_boost_target=30.0, heat_source_plan=plan,
+    )
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = [
+        c for c in calls
+        if c[0][0] == "climate" and c[0][1] == "set_temperature"
+    ]
+    assert len(set_temp_calls) == 1
+    # Relay: boost target, not proportional
+    assert set_temp_calls[0][0][2]["temperature"] == 30.0
+
+
 @pytest.mark.asyncio
 async def test_relay_ac_cooling_sends_cool_boost():
     """Relay AC in cooling should receive cool boost target."""
