@@ -743,8 +743,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 managed_display_pf = 1.0 if managed_display_mode != MODE_IDLE else 0.0
 
         # --- Cover/blind automatic control ---
-        has_override = room.get("override_temp") is not None and (
-            room.get("override_until") is None or room.get("override_until", 0) > time.time()
+        _ov_temp = room.get("override_temp")
+        _ov_heat = room.get("override_heat")
+        _ov_cool = room.get("override_cool")
+        _ov_until = room.get("override_until")
+        has_override = (_ov_temp is not None or (_ov_heat is not None and _ov_cool is not None)) and (
+            _ov_until is None or _ov_until > time.time()
         )
         cover_result = await self._cover_orchestrator.async_process(
             area_id=area_id,
@@ -1419,6 +1423,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._last_resolve_reason.pop(area_id, None)
         self._ekf_training.remove_room(area_id)
         self._pending_predictions.pop(area_id, None)
+        self._prediction_forecasts.pop(area_id, None)
         self._residual_tracker.remove_room(area_id)
         self._cover_orchestrator.remove_room(area_id)
         self._entity_areas.discard(area_id)
