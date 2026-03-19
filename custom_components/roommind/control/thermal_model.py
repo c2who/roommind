@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 import math
 
+from ..const import MIN_ACTIVE_UPDATES, MIN_IDLE_UPDATES
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -365,17 +367,17 @@ class ThermalEKF:
             return 0.0
 
         # --- Data factor (0..1) ---
-        # Mirrors MPC data gates: MIN_IDLE_UPDATES=60, MIN_ACTIVE_UPDATES=20.
-        # Each update covers ~3 min (EKF_UPDATE_MIN_DT), so thresholds
-        # correspond to ~3 h idle + ~1 h active real time.
-        idle_frac = min(self._n_idle / 60.0, 1.0)
+        # Mirrors MPC data gates from const.py.  Each update covers ~3 min
+        # (EKF_UPDATE_MIN_DT), so thresholds correspond to ~3 h idle + ~1 h
+        # active real time.
+        idle_frac = min(self._n_idle / float(MIN_IDLE_UPDATES), 1.0)
 
         # Active data: average across modes that this room can use
         active_fracs: list[float] = []
         if self._n_heating >= 2:
-            active_fracs.append(min(self._n_heating / 20.0, 1.0))
+            active_fracs.append(min(self._n_heating / float(MIN_ACTIVE_UPDATES), 1.0))
         if self._n_cooling >= 2:
-            active_fracs.append(min(self._n_cooling / 20.0, 1.0))
+            active_fracs.append(min(self._n_cooling / float(MIN_ACTIVE_UPDATES), 1.0))
         if active_fracs:
             active_frac = sum(active_fracs) / len(active_fracs)
         else:

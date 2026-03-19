@@ -59,6 +59,8 @@ HEATING_BOOST_TARGET = 30  # Fallback TRV heating boost (used when entity max_te
 AC_HEATING_BOOST_TARGET = 30  # Fallback AC heating boost (used when entity max_temp unavailable)
 AC_COOLING_BOOST_TARGET = 16  # Fallback AC cooling boost (used when entity min_temp unavailable)
 MIN_POWER_FRACTION = 0.15  # Minimum non-zero power fraction (prevents TRV dead zone)
+MIN_IDLE_UPDATES = 60  # ~3 h of idle data at 3-min EKF intervals
+MIN_ACTIVE_UPDATES = 20  # ~1 h of heating or cooling data
 
 # Update interval in seconds
 UPDATE_INTERVAL = 30

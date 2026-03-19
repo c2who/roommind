@@ -20,6 +20,8 @@ from ..const import (
     DEFAULT_OUTDOOR_COOLING_MIN,
     DEFAULT_OUTDOOR_HEATING_MAX,
     HEATING_BOOST_TARGET,
+    MIN_ACTIVE_UPDATES,
+    MIN_IDLE_UPDATES,
     MODE_COOLING,
     MODE_HEATING,
     MODE_IDLE,
@@ -392,12 +394,6 @@ PLAN_DT_MINUTES = 5
 MIN_HORIZON_HOURS = 2
 HORIZON_MULTIPLIER = 2.5
 DEFAULT_OUTDOOR_TEMP_FALLBACK = 10.0
-
-# Minimum sample counts before MPC is allowed.
-# Each EKF update covers ~3 min (EKF_UPDATE_MIN_DT), so these correspond
-# to real-time requirements of ~3 h idle + ~1 h active-mode data.
-MIN_IDLE_UPDATES = 60  # ~3 h of idle data at 3-min EKF intervals
-MIN_ACTIVE_UPDATES = 20  # ~1 h of heating or cooling data
 
 
 def _entity_allowed_heat(hass: HomeAssistant, entity_id: str, entity_modes: dict) -> bool:
