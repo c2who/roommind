@@ -514,22 +514,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             mode = MODE_IDLE
             power_fraction = 0.0
 
-        # Store MPC prediction forecast for analytics
-        if controller.last_plan and len(controller.last_plan.temperatures) > 1:
-            plan = controller.last_plan
-            now_ts = time.time()
-            dt_s = plan.dt_minutes * 60
-            self._prediction_forecasts[area_id] = [
-                {
-                    "ts": round(now_ts + (i + 1) * dt_s, 1),
-                    "temp": round(plan.temperatures[i + 1], 2),
-                    "action": plan.actions[i],
-                }
-                for i in range(len(plan.actions))
-            ]
-        else:
-            self._prediction_forecasts.pop(area_id, None)
-
         # Pause climate control when any window/door is open (with configurable delays)
         raw_open = self._is_window_open(room)
         window_open = self._window_manager.update(
@@ -550,6 +534,29 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 power_fraction = 0.0
             elif prev_mode != MODE_IDLE and mode != MODE_IDLE and mode != prev_mode:
                 mode = prev_mode
+
+        # Store MPC prediction forecast for analytics.
+        # Placed after all guards (force_off, window_open) so the forecast
+        # reflects the final decision, not just the raw optimizer plan.
+        if controller.last_plan and len(controller.last_plan.temperatures) > 1:
+            plan = controller.last_plan
+            # Patch first action to match the final mode when guards overrode it
+            if mode == MODE_IDLE and plan.actions and plan.actions[0] != MODE_IDLE:
+                plan.actions[0] = MODE_IDLE
+                if plan.power_fractions:
+                    plan.power_fractions[0] = 0.0
+            now_ts = time.time()
+            dt_s = plan.dt_minutes * 60
+            self._prediction_forecasts[area_id] = [
+                {
+                    "ts": round(now_ts + (i + 1) * dt_s, 1),
+                    "temp": round(plan.temperatures[i + 1], 2),
+                    "action": plan.actions[i],
+                }
+                for i in range(len(plan.actions))
+            ]
+        else:
+            self._prediction_forecasts.pop(area_id, None)
 
         # observed_mode/observed_pf: only populated when climate control is off
         observed_mode: str | None = None

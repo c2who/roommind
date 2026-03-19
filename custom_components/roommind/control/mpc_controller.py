@@ -829,6 +829,9 @@ class MPCController:
                 )
                 action = MODE_IDLE
                 power_fraction = 0.0
+                plan.actions[0] = MODE_IDLE
+                if plan.power_fractions:
+                    plan.power_fractions[0] = 0.0
         elif near_cool and action == MODE_COOLING and current_temp <= min(near_cool):
             if not self._within_min_run(MODE_COOLING) or self._should_early_exit_min_run(
                 MODE_COOLING, current_temp, min(near_cool)
@@ -839,6 +842,9 @@ class MPCController:
                 )
                 action = MODE_IDLE
                 power_fraction = 0.0
+                plan.actions[0] = MODE_IDLE
+                if plan.power_fractions:
+                    plan.power_fractions[0] = 0.0
 
         return action, power_fraction
 
