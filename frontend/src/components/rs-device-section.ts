@@ -500,11 +500,16 @@ export class RsDeviceSection extends LitElement {
       : mode === "cool_only"
         ? localize("devices.entity_mode_cool_only", this.hass.language)
         : null;
+    const device = this.devices.find((d) => d.entity_id === entityId);
+    const relayBadge = device?.control_type === "relay"
+      ? localize("devices.control_type_relay", this.hass.language)
+      : null;
 
     return html`
       <div class="view-row">
         <span class="view-name entity-link" @click=${() => openEntityInfo(this, entityId)}>${friendlyName}</span>
         ${modeBadge ? html`<span class="mode-badge">${modeBadge}</span>` : nothing}
+        ${relayBadge ? html`<span class="mode-badge">${relayBadge}</span>` : nothing}
         ${currentTemp != null ? html`<span class="view-value">${currentTemp.toFixed(1)}\u00B0</span>` : nothing}
       </div>
     `;
@@ -958,6 +963,28 @@ export class RsDeviceSection extends LitElement {
             </div>
           `
         : nothing}
+      ${(() => {
+        const device = this.devices.find((d) => d.entity_id === entityId);
+        if (!isSelected || !device) return nothing;
+        return html`
+          <div class="idle-action-row">
+            <ha-select
+              .label=${localize("devices.control_type", this.hass.language)}
+              .value=${device.control_type ?? "proportional"}
+              @selected=${(e: Event) => this._onControlTypeChange(entityId, getSelectValue(e)!)}
+              @closed=${(e: Event) => e.stopPropagation()}
+              fixedMenuPosition
+            >
+              <ha-list-item value="proportional"
+                >${localize("devices.control_type_proportional", this.hass.language)}</ha-list-item
+              >
+              <ha-list-item value="relay"
+                >${localize("devices.control_type_relay", this.hass.language)}</ha-list-item
+              >
+            </ha-select>
+          </div>
+        `;
+      })()}
     `;
   }
 
@@ -1148,6 +1175,15 @@ export class RsDeviceSection extends LitElement {
   private _onIdleFanModeChange(entityId: string, fanMode: string): void {
     const newDevices = this.devices.map((d) =>
       d.entity_id === entityId ? { ...d, idle_fan_mode: fanMode } : d,
+    );
+    this._fireDeviceChanged(newDevices);
+  }
+
+  private _onControlTypeChange(entityId: string, controlType: string): void {
+    const newDevices = this.devices.map((d) =>
+      d.entity_id === entityId
+        ? { ...d, control_type: controlType as "proportional" | "relay" }
+        : d,
     );
     this._fireDeviceChanged(newDevices);
   }
