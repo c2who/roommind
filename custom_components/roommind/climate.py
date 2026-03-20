@@ -85,7 +85,7 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
     )
-    _attr_preset_modes = ["none", "boost", "eco"]
+    _attr_preset_modes = ["none", "boost", "eco", "individual"]
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.1
     _attr_min_temp = 10.0
@@ -149,6 +149,9 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
     @property
     def target_temperature(self) -> float | None:
         """Return single target temperature (used in HEAT/COOL mode)."""
+        room = self._get_room()
+        if room and room.get("climate_mode", CLIMATE_MODE_AUTO) == CLIMATE_MODE_AUTO:
+            return None
         live = self._get_live()
         val = live.get("target_temp")
         return float(val) if isinstance(val, (int, float)) else None
@@ -184,6 +187,8 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
             return "boost"
         if override_type == OVERRIDE_ECO:
             return "eco"
+        if override_type == OVERRIDE_CUSTOM:
+            return "individual"
         return "none"
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -257,6 +262,34 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
                     "override_type": None,
                 },
             )
+        elif preset_mode == "individual":
+            live = self._get_live()
+            climate_mode = room.get("climate_mode", CLIMATE_MODE_AUTO)
+            if climate_mode == CLIMATE_MODE_AUTO:
+                heat_target = live.get("heat_target") or live.get("target_temp")
+                cool_target = live.get("cool_target") or live.get("target_temp")
+                await store.async_update_room(
+                    self._area_id,
+                    {
+                        "override_temp": heat_target,
+                        "override_heat": heat_target,
+                        "override_cool": cool_target,
+                        "override_until": None,
+                        "override_type": OVERRIDE_CUSTOM,
+                    },
+                )
+            else:
+                target = live.get("target_temp")
+                await store.async_update_room(
+                    self._area_id,
+                    {
+                        "override_temp": target,
+                        "override_heat": None,
+                        "override_cool": None,
+                        "override_until": None,
+                        "override_type": OVERRIDE_CUSTOM,
+                    },
+                )
         elif preset_mode in ("boost", "eco"):
             climate_mode = room.get("climate_mode", CLIMATE_MODE_AUTO)
 

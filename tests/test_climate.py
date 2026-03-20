@@ -218,12 +218,12 @@ def test_preset_mode_eco(mock_coordinator):
     assert entity.preset_mode == "eco"
 
 
-def test_preset_mode_none_for_custom_override(mock_coordinator):
-    """preset_mode returns 'none' for custom overrides."""
+def test_preset_mode_individual_for_custom_override(mock_coordinator):
+    """preset_mode returns 'individual' for custom overrides."""
     coordinator, store = mock_coordinator
     coordinator.data = {"rooms": {"living_room": {"override_active": True, "override_type": "custom"}}}
     entity = RoomMindClimate(coordinator, "living_room")
-    assert entity.preset_mode == "none"
+    assert entity.preset_mode == "individual"
 
 
 # --- set_hvac_mode ---
