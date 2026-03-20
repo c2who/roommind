@@ -31,10 +31,11 @@ class TestCoverageGaps:
         room = {"area_id": "bedroom_abc", "covers": ["cover.blind1"]}
         await coordinator.async_room_added(room)
 
-        mock_add_switch.assert_called_once()
+        assert mock_add_switch.call_count == 2
         mock_add_binary.assert_called_once()
         assert "bedroom_abc" in coordinator._switch_entity_areas
         assert "bedroom_abc" in coordinator._binary_sensor_entity_areas
+        assert "bedroom_abc" in coordinator._climate_control_switch_areas
 
     @pytest.mark.asyncio
     async def test_async_room_added_with_covers_no_duplicate(self, hass, mock_config_entry):
@@ -49,7 +50,7 @@ class TestCoverageGaps:
         await coordinator.async_room_added(room)
         await coordinator.async_room_added(room)
 
-        coordinator.async_add_switch_entities.assert_called_once()
+        assert coordinator.async_add_switch_entities.call_count == 2
         coordinator.async_add_binary_sensor_entities.assert_called_once()
 
     @pytest.mark.asyncio
@@ -64,8 +65,10 @@ class TestCoverageGaps:
         room = {"area_id": "bedroom_abc"}
         await coordinator.async_room_added(room)
 
-        coordinator.async_add_switch_entities.assert_not_called()
+        coordinator.async_add_switch_entities.assert_called_once()
         coordinator.async_add_binary_sensor_entities.assert_not_called()
+        assert "bedroom_abc" in coordinator._climate_control_switch_areas
+        assert "bedroom_abc" not in coordinator._switch_entity_areas
 
     @pytest.mark.asyncio
     async def test_is_mpc_active_exception_in_cover_logic(self, hass, mock_config_entry):

@@ -26,6 +26,7 @@ async def test_save_room_creates_new(store):
     assert room["schedule_selector_entity"] == ""
     assert room["comfort_temp"] == DEFAULT_COMFORT_TEMP
     assert room["eco_temp"] == DEFAULT_ECO_TEMP
+    assert room["climate_control_enabled"] is True
 
 
 @pytest.mark.asyncio

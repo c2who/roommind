@@ -505,7 +505,7 @@ export class RsAreaCard extends LitElement {
             : nothing}
         </span>
       </div>
-      ${!this.climateControlActive
+      ${!this.climateControlActive || this.config?.climate_control_enabled === false
         ? html`<div class="uncontrolled-hint">
             ${localize("card.not_controlled", this.hass.language)}
           </div>`

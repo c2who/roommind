@@ -1389,6 +1389,51 @@ def test_ekf_process_noise_with_residual_heat():
     assert ekf2._P[2][2] < p22_no_residual
 
 
+def test_ekf_q_alpha_scaled_for_small_alpha():
+    """Process noise for alpha uses relative scaling: (Q_ALPHA_REL * alpha)^2 with floor."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf._x[1] = 0.007
+    ekf._initialized = True
+    ekf._P = [[0.001 if i == j else 0.0 for j in range(5)] for i in range(5)]
+    p11_before = ekf._P[1][1]
+
+    ekf._predict_step(10.0, "idle", 0.05)
+
+    p11_growth = ekf._P[1][1] - p11_before
+    raw = (ThermalEKF._Q_ALPHA_REL * 0.007) ** 2
+    expected_q = max(raw, ThermalEKF._Q_ALPHA_FLOOR)
+    assert p11_growth == pytest.approx(expected_q, abs=1e-8)
+
+
+def test_ekf_q_alpha_relative_at_default():
+    """Process noise for alpha scales with value at default alpha."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf._initialized = True
+    ekf._P = [[0.001 if i == j else 0.0 for j in range(5)] for i in range(5)]
+    alpha = ekf._x[1]
+    p11_before = ekf._P[1][1]
+
+    ekf._predict_step(10.0, "idle", 0.05)
+
+    p11_growth = ekf._P[1][1] - p11_before
+    expected_q = min(max((ThermalEKF._Q_ALPHA_REL * alpha) ** 2, ThermalEKF._Q_ALPHA_FLOOR), ThermalEKF._Q_ALPHA_CAP)
+    assert p11_growth == pytest.approx(expected_q, abs=1e-8)
+
+
+def test_ekf_q_alpha_capped_for_large_alpha():
+    """Process noise for alpha is capped at Q_ALPHA_CAP for large alpha values."""
+    ekf = ThermalEKF(T_init=20.0)
+    ekf._x[1] = 1.0
+    ekf._initialized = True
+    ekf._P = [[0.001 if i == j else 0.0 for j in range(5)] for i in range(5)]
+    p11_before = ekf._P[1][1]
+
+    ekf._predict_step(10.0, "idle", 0.05)
+
+    p11_growth = ekf._P[1][1] - p11_before
+    assert p11_growth == pytest.approx(ThermalEKF._Q_ALPHA_CAP, abs=1e-7)
+
+
 def test_manager_get_prediction_std_unknown_room():
     """get_prediction_std for unknown room returns inf."""
     mgr = RoomModelManager()

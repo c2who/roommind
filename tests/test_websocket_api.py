@@ -1697,6 +1697,27 @@ async def test_save_room_valve_protection_exclude_roundtrip(ws_hass, store, conn
     assert stored["valve_protection_exclude"] == ["climate.boiler"]
 
 
+@pytest.mark.asyncio
+async def test_save_room_with_climate_control_enabled(ws_hass, store, connection):
+    """Round-trip: climate_control_enabled persists through WS save."""
+    await store.async_load()
+
+    msg = {
+        "id": 10,
+        "type": "roommind/rooms/save",
+        "area_id": "bedroom",
+        "climate_control_enabled": False,
+    }
+    await _save_room(ws_hass, connection, msg)
+
+    connection.send_result.assert_called_once()
+    room = connection.send_result.call_args[0][1]["room"]
+    assert room["climate_control_enabled"] is False
+
+    stored = store.get_room("bedroom")
+    assert stored["climate_control_enabled"] is False
+
+
 def test_save_room_cover_deploy_threshold_rejects_negative():
     """covers_deploy_threshold rejects negative values."""
     import voluptuous as vol

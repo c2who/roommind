@@ -46,6 +46,8 @@
   "room.confirm_delete": "Remove RoomMind configuration for \"{name}\"?",
   "room.error_save_fallback": "Failed to save configuration",
   "room.error_delete_fallback": "Failed to delete configuration",
+  "room.climate_control_toggle": "Climate control",
+  "room.climate_control_hint": "When disabled, RoomMind will not control devices in this room",
   "room.outdoor_toggle": "Outdoor area",
   "room.outdoor_hint": "Disables climate control, mold detection, and model training. Sensor monitoring continues.",
   "room.alias.placeholder": "Custom display name",

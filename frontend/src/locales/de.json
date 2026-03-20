@@ -46,6 +46,8 @@
   "room.confirm_delete": "RoomMind-Konfiguration für \"{name}\" entfernen?",
   "room.error_save_fallback": "Konfiguration konnte nicht gespeichert werden",
   "room.error_delete_fallback": "Konfiguration konnte nicht gelöscht werden",
+  "room.climate_control_toggle": "Klimasteuerung",
+  "room.climate_control_hint": "Wenn deaktiviert, steuert RoomMind keine Geräte in diesem Raum",
   "room.outdoor_toggle": "Außenbereich",
   "room.outdoor_hint": "Deaktiviert Klimasteuerung, Schimmelerkennung und Modell-Training. Sensorüberwachung läuft weiter.",
   "room.alias.placeholder": "Eigener Anzeigename",

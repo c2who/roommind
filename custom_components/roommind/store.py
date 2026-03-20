@@ -17,7 +17,6 @@ from .const import (
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
     DOMAIN,
-    ROOM_ENABLED_DEFAULT,
 )
 from .utils.device_utils import (
     devices_to_legacy,
@@ -226,7 +225,7 @@ class RoomMindStore:
                 "heat_source_ac_min_outdoor": config.get(
                     "heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR
                 ),
-                "room_enabled": config.get("room_enabled", ROOM_ENABLED_DEFAULT),
+                "climate_control_enabled": config.get("climate_control_enabled", True),
             }
             # Directional device sync for new rooms
             if "devices" in config and config["devices"]:

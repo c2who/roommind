@@ -75,6 +75,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _ignorePresence = false;
   @state() private _isOutdoor = false;
   @state() private _valveProtectionExclude: Set<string> = new Set();
+  @state() private _climateControlEnabled = true;
   @state() private _heatSourceOrchestration = false;
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
@@ -111,7 +112,8 @@ export class RsRoomDetail extends LitElement {
       }
     }
 
-    .outdoor-toggle-card {
+    .outdoor-toggle-card,
+    .climate-control-toggle-card {
       padding: 12px 16px;
     }
 
@@ -351,6 +353,7 @@ export class RsRoomDetail extends LitElement {
       this._ignorePresence = this.config.ignore_presence ?? false;
       this._isOutdoor = this.config.is_outdoor ?? false;
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
+      this._climateControlEnabled = this.config.climate_control_enabled ?? true;
       this._heatSourceOrchestration = this.config.heat_source_orchestration ?? false;
       this._heatSourcePrimaryDelta = this.config.heat_source_primary_delta ?? 1.5;
       this._heatSourceOutdoorThreshold = this.config.heat_source_outdoor_threshold ?? 5.0;
@@ -387,6 +390,7 @@ export class RsRoomDetail extends LitElement {
       this._ignorePresence = false;
       this._isOutdoor = false;
       this._valveProtectionExclude = new Set();
+      this._climateControlEnabled = true;
       this._heatSourceOrchestration = false;
       this._heatSourcePrimaryDelta = 1.5;
       this._heatSourceOutdoorThreshold = 5.0;
@@ -441,12 +445,21 @@ export class RsRoomDetail extends LitElement {
             .config=${this.config}
             .isOutdoor=${this._isOutdoor}
             .overrideInfo=${this._getEffectiveOverride()}
-            .climateControlActive=${this.climateControlActive}
+            .climateControlActive=${this.climateControlActive && this._climateControlEnabled}
             @display-name-changed=${this._onDisplayNameChanged}
           ></rs-hero-status>
 
           ${!this._isOutdoor
             ? html`
+                <ha-card class="climate-control-toggle-card">
+                  <rs-toggle-row
+                    .label=${localize("room.climate_control_toggle", this.hass.language)}
+                    .hint=${localize("room.climate_control_hint", this.hass.language)}
+                    .checked=${this._climateControlEnabled}
+                    @toggle-changed=${this._onClimateControlToggle}
+                  ></rs-toggle-row>
+                </ha-card>
+
                 <rs-section-card
                   icon="mdi:cog"
                   .heading=${localize("room.section.climate_mode", this.hass.language)}
@@ -886,6 +899,11 @@ export class RsRoomDetail extends LitElement {
 
   // ---- Outdoor toggle ----
 
+  private _onClimateControlToggle(e: CustomEvent) {
+    this._climateControlEnabled = e.detail;
+    this._autoSave();
+  }
+
   private _onOutdoorToggle(e: CustomEvent<boolean>) {
     this._isOutdoor = e.detail;
     this._autoSave();
@@ -931,6 +949,7 @@ export class RsRoomDetail extends LitElement {
         entity_modes: this._entityModes,
         passive_devices: this._passiveDevices,
         covers: [...this._selectedCovers],
+        climate_control_enabled: this._climateControlEnabled,
         covers_auto_enabled: this._coversAutoEnabled,
         covers_deploy_threshold: this._coversDeployThreshold,
         covers_min_position: this._coversMinPosition,

@@ -60,7 +60,7 @@ def test_name(mock_coordinator):
 def test_hvac_mode_heat_cool_when_auto(mock_coordinator):
     """hvac_mode returns HEAT_COOL when climate_mode is auto."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True, "climate_mode": "auto"}
+    store.get_room.return_value = {"climate_control_enabled": True, "climate_mode": "auto"}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_mode == HVACMode.HEAT_COOL
 
@@ -68,7 +68,7 @@ def test_hvac_mode_heat_cool_when_auto(mock_coordinator):
 def test_hvac_mode_heat_when_heat_only(mock_coordinator):
     """hvac_mode returns HEAT when climate_mode is heat_only."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True, "climate_mode": "heat_only"}
+    store.get_room.return_value = {"climate_control_enabled": True, "climate_mode": "heat_only"}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_mode == HVACMode.HEAT
 
@@ -76,15 +76,15 @@ def test_hvac_mode_heat_when_heat_only(mock_coordinator):
 def test_hvac_mode_cool_when_cool_only(mock_coordinator):
     """hvac_mode returns COOL when climate_mode is cool_only."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True, "climate_mode": "cool_only"}
+    store.get_room.return_value = {"climate_control_enabled": True, "climate_mode": "cool_only"}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_mode == HVACMode.COOL
 
 
 def test_hvac_mode_off_when_disabled(mock_coordinator):
-    """hvac_mode returns OFF when room_enabled is False."""
+    """hvac_mode returns OFF when climate_control_enabled is False."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": False, "climate_mode": "auto"}
+    store.get_room.return_value = {"climate_control_enabled": False, "climate_mode": "auto"}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_mode == HVACMode.OFF
 
@@ -98,7 +98,7 @@ def test_hvac_mode_off_when_room_missing(mock_coordinator):
 
 
 def test_hvac_mode_defaults_enabled(mock_coordinator):
-    """hvac_mode defaults to HEAT_COOL when room_enabled not set."""
+    """hvac_mode defaults to HEAT_COOL when climate_control_enabled not set."""
     coordinator, store = mock_coordinator
     store.get_room.return_value = {"climate_mode": "auto"}
     entity = RoomMindClimate(coordinator, "living_room")
@@ -111,7 +111,7 @@ def test_hvac_mode_defaults_enabled(mock_coordinator):
 def test_hvac_action_heating(mock_coordinator):
     """hvac_action returns HEATING when coordinator mode is heating."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     coordinator.data = {"rooms": {"living_room": {"mode": "heating"}}}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_action == HVACAction.HEATING
@@ -120,7 +120,7 @@ def test_hvac_action_heating(mock_coordinator):
 def test_hvac_action_cooling(mock_coordinator):
     """hvac_action returns COOLING when coordinator mode is cooling."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     coordinator.data = {"rooms": {"living_room": {"mode": "cooling"}}}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_action == HVACAction.COOLING
@@ -129,7 +129,7 @@ def test_hvac_action_cooling(mock_coordinator):
 def test_hvac_action_idle(mock_coordinator):
     """hvac_action returns IDLE when coordinator mode is idle."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     coordinator.data = {"rooms": {"living_room": {"mode": "idle"}}}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_action == HVACAction.IDLE
@@ -138,7 +138,7 @@ def test_hvac_action_idle(mock_coordinator):
 def test_hvac_action_off_when_disabled(mock_coordinator):
     """hvac_action returns OFF when room is disabled."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": False}
+    store.get_room.return_value = {"climate_control_enabled": False}
     coordinator.data = {"rooms": {"living_room": {"mode": "heating"}}}
     entity = RoomMindClimate(coordinator, "living_room")
     assert entity.hvac_action == HVACAction.OFF
@@ -236,7 +236,7 @@ async def test_set_hvac_mode_off(mock_coordinator):
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_hvac_mode(HVACMode.OFF)
-    store.async_update_room.assert_awaited_once_with("living_room", {"room_enabled": False})
+    store.async_update_room.assert_awaited_once_with("living_room", {"climate_control_enabled": False})
     coordinator.async_request_refresh.assert_awaited_once()
 
 
@@ -248,7 +248,7 @@ async def test_set_hvac_mode_heat(mock_coordinator):
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_hvac_mode(HVACMode.HEAT)
     store.async_update_room.assert_awaited_once_with(
-        "living_room", {"room_enabled": True, "climate_mode": "heat_only"}
+        "living_room", {"climate_control_enabled": True, "climate_mode": "heat_only"}
     )
 
 
@@ -260,7 +260,7 @@ async def test_set_hvac_mode_cool(mock_coordinator):
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_hvac_mode(HVACMode.COOL)
     store.async_update_room.assert_awaited_once_with(
-        "living_room", {"room_enabled": True, "climate_mode": "cool_only"}
+        "living_room", {"climate_control_enabled": True, "climate_mode": "cool_only"}
     )
 
 
@@ -272,7 +272,7 @@ async def test_set_hvac_mode_heat_cool(mock_coordinator):
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_hvac_mode(HVACMode.HEAT_COOL)
     store.async_update_room.assert_awaited_once_with(
-        "living_room", {"room_enabled": True, "climate_mode": "auto"}
+        "living_room", {"climate_control_enabled": True, "climate_mode": "auto"}
     )
 
 
@@ -283,7 +283,7 @@ async def test_set_hvac_mode_heat_cool(mock_coordinator):
 async def test_set_temperature_single(mock_coordinator):
     """set_temperature with single temp sets custom override."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_temperature(temperature=22.0)
@@ -304,7 +304,7 @@ async def test_set_temperature_single(mock_coordinator):
 async def test_set_temperature_dual(mock_coordinator):
     """set_temperature with dual temps sets dual override."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_temperature(target_temp_low=20.0, target_temp_high=25.0)
@@ -324,7 +324,7 @@ async def test_set_temperature_dual(mock_coordinator):
 async def test_set_temperature_noop_when_disabled(mock_coordinator):
     """set_temperature does nothing when room is disabled."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": False}
+    store.get_room.return_value = {"climate_control_enabled": False}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_temperature(temperature=22.0)
@@ -335,7 +335,7 @@ async def test_set_temperature_noop_when_disabled(mock_coordinator):
 async def test_set_temperature_noop_no_temp_kwarg(mock_coordinator):
     """set_temperature does nothing when no temperature kwarg is given."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_temperature()
@@ -349,7 +349,7 @@ async def test_set_temperature_noop_no_temp_kwarg(mock_coordinator):
 async def test_set_preset_none_clears_override(mock_coordinator):
     """Setting preset to 'none' clears all override fields."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True, "climate_mode": "auto"}
+    store.get_room.return_value = {"climate_control_enabled": True, "climate_mode": "auto"}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_set_preset_mode("none")
@@ -370,7 +370,7 @@ async def test_set_preset_boost_auto_mode(mock_coordinator):
     """Boost preset in auto mode sets dual-target override."""
     coordinator, store = mock_coordinator
     store.get_room.return_value = {
-        "room_enabled": True,
+        "climate_control_enabled": True,
         "climate_mode": "auto",
         "comfort_heat": 22.0,
         "comfort_cool": 25.0,
@@ -395,7 +395,7 @@ async def test_set_preset_eco_auto_mode(mock_coordinator):
     """Eco preset in auto mode sets dual-target override."""
     coordinator, store = mock_coordinator
     store.get_room.return_value = {
-        "room_enabled": True,
+        "climate_control_enabled": True,
         "climate_mode": "auto",
         "eco_heat": 18.0,
         "eco_cool": 27.0,
@@ -420,7 +420,7 @@ async def test_set_preset_boost_heat_only(mock_coordinator):
     """Boost preset in heat_only mode sets single-target override."""
     coordinator, store = mock_coordinator
     store.get_room.return_value = {
-        "room_enabled": True,
+        "climate_control_enabled": True,
         "climate_mode": "heat_only",
         "comfort_heat": 22.0,
     }
@@ -444,7 +444,7 @@ async def test_set_preset_eco_cool_only(mock_coordinator):
     """Eco preset in cool_only mode sets single-target override with cool temp."""
     coordinator, store = mock_coordinator
     store.get_room.return_value = {
-        "room_enabled": True,
+        "climate_control_enabled": True,
         "climate_mode": "cool_only",
         "eco_cool": 28.0,
     }
@@ -473,25 +473,25 @@ async def test_turn_off(mock_coordinator):
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_turn_off()
-    store.async_update_room.assert_awaited_once_with("living_room", {"room_enabled": False})
+    store.async_update_room.assert_awaited_once_with("living_room", {"climate_control_enabled": False})
 
 
 @pytest.mark.asyncio
 async def test_turn_on_when_disabled(mock_coordinator):
     """turn_on enables the room when it was disabled."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": False}
+    store.get_room.return_value = {"climate_control_enabled": False}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_turn_on()
-    store.async_update_room.assert_awaited_once_with("living_room", {"room_enabled": True})
+    store.async_update_room.assert_awaited_once_with("living_room", {"climate_control_enabled": True})
 
 
 @pytest.mark.asyncio
 async def test_turn_on_when_already_enabled(mock_coordinator):
     """turn_on is a no-op when room is already enabled."""
     coordinator, store = mock_coordinator
-    store.get_room.return_value = {"room_enabled": True}
+    store.get_room.return_value = {"climate_control_enabled": True}
     store.async_update_room = AsyncMock()
     entity = RoomMindClimate(coordinator, "living_room")
     await entity.async_turn_on()

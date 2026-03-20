@@ -30,7 +30,6 @@ from .const import (
     MODE_DISABLED,
     MODE_HEATING,
     MODE_IDLE,
-    ROOM_ENABLED_DEFAULT,
     SCHEDULE_STATE_ON,
     THERMAL_SAVE_CYCLES,
     UPDATE_INTERVAL,
@@ -115,6 +114,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Min-run enforcement: timestamp when current non-idle mode started
         self._mode_on_since: dict[str, float] = {}
         self._switch_entity_areas: set[str] = set()
+        self._climate_control_switch_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
         self._climate_entity_areas: set[str] = set()
         # Heating demand aggregation (forecast-aware state machine)
@@ -562,14 +562,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         observed_mode: str | None = None
         observed_pf = 0.0
 
-        climate_active = settings.get("climate_control_active", True)
-        room_enabled = room.get("room_enabled", ROOM_ENABLED_DEFAULT)
-        control_active = climate_active and room_enabled
+        climate_active = settings.get("climate_control_active", True) and room.get(
+            "climate_control_enabled", True
+        )
 
         # --- Residual heat transition tracking ---
         # Only track when climate control is active — RoomMind-initiated heating
         # transitions don't exist when control is disabled.
-        if control_active and system_type:
+        if climate_active and system_type:
             self._residual_tracker.update(
                 area_id,
                 mode,
@@ -648,7 +648,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 power_fraction = 0.0
                 compressor_forced_off.clear()
 
-        if control_active:
+        if climate_active:
             try:
                 await controller.async_apply(
                     mode,
@@ -669,25 +669,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     area_id,
                     exc_info=True,
                 )
-        elif not room_enabled:
-            # Room disabled via climate entity OFF — actively idle devices,
-            # then observe for EKF training.
-            try:
-                await controller.async_apply(
-                    MODE_IDLE,
-                    targets,
-                    power_fraction=0.0,
-                    current_temp=current_temp,
-                )
-            except Exception:  # noqa: BLE001
-                _LOGGER.debug("Room '%s': idle command failed (room disabled)", area_id)
-            observed_mode, observed_pf = self._observe_device_action(room)
-            if observed_mode is None and self._devices_lack_hvac_action(room):
-                inferred = self._infer_device_mode(room)
-                observed_mode = inferred
-                observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
-            mode = MODE_IDLE
-            power_fraction = 0.0
         else:
             # Global climate control disabled (learn-only) — do NOT send commands,
             # do NOT touch mode/power_fraction (used for internal tracking).
@@ -733,7 +714,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # self-regulates and may be idle at setpoint.  See #69.
         managed_display_mode: str | None = None
         managed_display_pf = 0.0
-        if control_active and not has_external_sensor:
+        if climate_active and not has_external_sensor:
             obs_mode, obs_pf = self._observe_device_action(room)
             if obs_mode is not None:
                 managed_display_mode = obs_mode
@@ -771,7 +752,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Determine mode for EKF training: use observed device state when
         # RoomMind doesn't directly control the device (see #36, #69).
-        if control_active:
+        if climate_active:
             if has_external_sensor:
                 # Full Control: controller's commanded mode is truth
                 ekf_mode: str | None = mode
@@ -839,10 +820,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Compute display mode: show actual device state when RoomMind doesn't
         # directly control the device, without affecting internal tracking
         # (residual heat, valve actuation, _previous_modes).  See #36, #69.
-        if not room_enabled:
+        if not room.get("climate_control_enabled", True):
             display_mode = MODE_DISABLED
             display_pf = 0.0
-        elif control_active:
+        elif climate_active:
             if has_external_sensor:
                 # Full Control: controller's mode is authoritative, but cross-check
                 # actual device state when MPC says IDLE — a device that ignores OFF
@@ -957,7 +938,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ),
             "cover_forced_reason": (cover_result.forced_reason if (cover_eids or covers_sensor_only) else ""),
             "active_cover_schedule_index": (cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1),
-            "room_enabled": room_enabled,
+            "climate_control_enabled": room.get("climate_control_enabled", True),
             "forecast": self._prediction_forecasts.get(area_id, []),
             "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
@@ -1372,6 +1353,16 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self.async_add_climate_entities(_create_room_climates(self, area_id))
             self._climate_entity_areas.add(area_id)
 
+        if (
+            area_id not in self._climate_control_switch_areas
+            and hasattr(self, "async_add_switch_entities")
+            and self.async_add_switch_entities
+        ):
+            from .switch import RoomMindClimateControlSwitch
+
+            self.async_add_switch_entities([RoomMindClimateControlSwitch(self, area_id)])
+            self._climate_control_switch_areas.add(area_id)
+
         # Cover entities: only create when covers are configured.
         # Not removed on save — cleanup_orphaned_entities() handles that at startup
         # so brief config changes don't break user automations.
@@ -1429,6 +1420,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._entity_areas.discard(area_id)
         self._mode_on_since.pop(area_id, None)
         self._switch_entity_areas.discard(area_id)
+        self._climate_control_switch_areas.discard(area_id)
         self._binary_sensor_entity_areas.discard(area_id)
         self._climate_entity_areas.discard(area_id)
         self._model_manager.remove_room(area_id)
@@ -1450,7 +1442,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         registry = er.async_get(self.hass)
 
         # Known valid suffixes for each condition
-        always_valid = ("_target_temp", "_mode", "_forecast", "_climate")
+        always_valid = ("_target_temp", "_mode", "_forecast", "_climate", "_override", "_climate_control")
         cover_only = ("_cover_auto", "_cover_paused")
         # Global entities (not per-room) that should never be cleaned up
         global_uids = {f"{DOMAIN}_vacation", f"{DOMAIN}_heating_demand"}

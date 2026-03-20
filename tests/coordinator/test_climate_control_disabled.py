@@ -567,3 +567,108 @@ class TestCoverageGaps:
             "living_room_abc12345",
         )
         assert n_idle > 0, "Learn-only mode should use inferred idle when hvac_action is missing"
+
+
+class TestPerRoomClimateControlDisabled:
+    """Tests for per-room climate_control_enabled=False."""
+
+    @pytest.mark.asyncio
+    async def test_per_room_disabled_no_service_calls(self, hass, mock_config_entry):
+        room = {**SAMPLE_ROOM, "climate_control_enabled": False}
+        store = _make_store_mock({"living_room_abc12345": room})
+        store.get_settings.return_value = {"climate_control_active": True}
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0", humidity="55.0"))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
+
+        climate_calls = [c for c in hass.services.async_call.call_args_list if c[0][0] == "climate"]
+        assert climate_calls == []
+
+    @pytest.mark.asyncio
+    async def test_per_room_disabled_mode_idle(self, hass, mock_config_entry):
+        room = {**SAMPLE_ROOM, "climate_control_enabled": False}
+        store = _make_store_mock({"living_room_abc12345": room})
+        store.get_settings.return_value = {"climate_control_active": True}
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0", humidity="55.0"))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+
+    @pytest.mark.asyncio
+    async def test_per_room_disabled_other_room_still_active(self, hass, mock_config_entry):
+        disabled_room = {**SAMPLE_ROOM, "climate_control_enabled": False}
+        enabled_room = {
+            **SAMPLE_ROOM,
+            "area_id": "bedroom_xyz",
+            "thermostats": ["climate.bedroom"],
+            "devices": [{"entity_id": "climate.bedroom", "type": "trv", "role": "auto", "heating_system_type": ""}],
+            "temperature_sensor": "sensor.bedroom_temp",
+            "humidity_sensor": "sensor.bedroom_humidity",
+            "schedules": [{"entity_id": "schedule.bedroom_heating"}],
+        }
+        store = _make_store_mock(
+            {
+                "living_room_abc12345": disabled_room,
+                "bedroom_xyz": enabled_room,
+            }
+        )
+        store.get_settings.return_value = {"climate_control_active": True}
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(
+            side_effect=make_mock_states_get(
+                temp="18.0",
+                humidity="55.0",
+                extra={
+                    "sensor.bedroom_temp": ("18.0", {}),
+                    "sensor.bedroom_humidity": ("55.0", {}),
+                    "schedule.bedroom_heating": ("on", {}),
+                    "climate.bedroom": (
+                        "heat",
+                        {"hvac_modes": ["off", "heat"], "max_temp": 30, "min_temp": 5, "target_temp_step": 0.5},
+                    ),
+                },
+            )
+        )
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+        assert data["rooms"]["bedroom_xyz"]["mode"] == "heating"
+
+    @pytest.mark.asyncio
+    async def test_per_room_disabled_combined_with_global_disabled(self, hass, mock_config_entry):
+        room = {**SAMPLE_ROOM, "climate_control_enabled": False}
+        store = _make_store_mock({"living_room_abc12345": room})
+        store.get_settings.return_value = {"climate_control_active": False}
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0", humidity="55.0"))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+        climate_calls = [c for c in hass.services.async_call.call_args_list if c[0][0] == "climate"]
+        assert climate_calls == []
+
+    @pytest.mark.asyncio
+    async def test_per_room_disabled_default_true(self, hass, mock_config_entry):
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        store.get_settings.return_value = {"climate_control_active": True}
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0", humidity="55.0"))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "heating"

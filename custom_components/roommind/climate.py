@@ -30,7 +30,6 @@ from .const import (
     OVERRIDE_BOOST,
     OVERRIDE_CUSTOM,
     OVERRIDE_ECO,
-    ROOM_ENABLED_DEFAULT,
 )
 from .coordinator import RoomMindCoordinator
 from .device import get_area_name, roommind_device_info
@@ -117,12 +116,11 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
 
     @property
     def hvac_mode(self) -> HVACMode:
-        """Return current HVAC mode based on room_enabled and climate_mode."""
+        """Return current HVAC mode based on climate_control_enabled and climate_mode."""
         room = self._get_room()
         if not room:
             return HVACMode.OFF
-        room_enabled = room.get("room_enabled", ROOM_ENABLED_DEFAULT)
-        if not room_enabled:
+        if not room.get("climate_control_enabled", True):
             return HVACMode.OFF
         climate_mode = room.get("climate_mode", CLIMATE_MODE_AUTO)
         return _CLIMATE_MODE_TO_HVAC.get(climate_mode, HVACMode.HEAT_COOL)
@@ -131,7 +129,7 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
     def hvac_action(self) -> HVACAction:
         """Return current HVAC action from coordinator data."""
         room = self._get_room()
-        if not room or not room.get("room_enabled", ROOM_ENABLED_DEFAULT):
+        if not room or not room.get("climate_control_enabled", True):
             return HVACAction.OFF
         live = self._get_live()
         mode = live.get("mode", "idle")
@@ -192,19 +190,19 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
         """Set HVAC mode: OFF disables room, HEAT/COOL/HEAT_COOL sets climate_mode."""
         store = self.coordinator.hass.data[DOMAIN]["store"]
         if hvac_mode == HVACMode.OFF:
-            await store.async_update_room(self._area_id, {"room_enabled": False})
+            await store.async_update_room(self._area_id, {"climate_control_enabled": False})
         else:
             climate_mode = _HVAC_TO_CLIMATE_MODE.get(hvac_mode, CLIMATE_MODE_AUTO)
             await store.async_update_room(
                 self._area_id,
-                {"room_enabled": True, "climate_mode": climate_mode},
+                {"climate_control_enabled": True, "climate_mode": climate_mode},
             )
         await self.coordinator.async_request_refresh()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature via override."""
         room = self._get_room()
-        if not room or not room.get("room_enabled", ROOM_ENABLED_DEFAULT):
+        if not room or not room.get("climate_control_enabled", True):
             return
 
         store = self.coordinator.hass.data[DOMAIN]["store"]
@@ -310,13 +308,13 @@ class RoomMindClimate(CoordinatorEntity, ClimateEntity):
     async def async_turn_on(self) -> None:
         """Turn on room control (restore last climate_mode)."""
         room = self._get_room()
-        if room and not room.get("room_enabled", ROOM_ENABLED_DEFAULT):
+        if room and not room.get("climate_control_enabled", True):
             store = self.coordinator.hass.data[DOMAIN]["store"]
-            await store.async_update_room(self._area_id, {"room_enabled": True})
+            await store.async_update_room(self._area_id, {"climate_control_enabled": True})
             await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         """Turn off room control."""
         store = self.coordinator.hass.data[DOMAIN]["store"]
-        await store.async_update_room(self._area_id, {"room_enabled": False})
+        await store.async_update_room(self._area_id, {"climate_control_enabled": False})
         await self.coordinator.async_request_refresh()

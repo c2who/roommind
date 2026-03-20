@@ -6,7 +6,7 @@ from typing import NamedTuple
 from homeassistant.const import Platform
 
 DOMAIN = "roommind"
-VERSION = "1.5.1"
+VERSION = "1.5.2-beta.1"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -147,9 +147,6 @@ DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
 # Heating demand aggregation
 HEATING_DEMAND_OFF_DELAY = 60  # seconds — short anti-flicker holdoff when forecast is clear
 
-
-# Room enabled default
-ROOM_ENABLED_DEFAULT = True
 
 # Far-future sentinel: vacation active indefinitely (year 2999)
 VACATION_SENTINEL_UNTIL = 32503680000.0
