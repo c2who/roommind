@@ -105,6 +105,13 @@ class EkfTrainingManager:
             self._accumulated_dt.pop(area_id, None)
             self._accumulated_mode.pop(area_id, None)
             self._accumulated_pf.pop(area_id, None)
+            # Track temperature during open-delay dead zone to prevent
+            # stale _x[0] when normal learning resumes.  Without this,
+            # the first post-window EKF update sees a massive innovation
+            # (predicted vs actual temp) and corrupts alpha/tau.
+            self._model_manager.update_window_open(
+                area_id, current_temp, T_outdoor, dt_minutes,
+            )
         elif ekf_mode is None:
             self.flush(
                 area_id,
