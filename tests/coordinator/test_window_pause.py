@@ -263,12 +263,13 @@ class TestRoomMindCoordinator:
         assert room_state["window_open"] is False
 
     @pytest.mark.asyncio
-    async def test_window_open_delay_skips_ekf_training(self, hass, mock_config_entry):
-        """EKF training must be skipped while window is open but open_delay has not elapsed.
+    async def test_window_open_delay_tracks_temperature(self, hass, mock_config_entry):
+        """During open_delay, EKF parameters must not be trained but temperature
+        state (_x[0]) must be tracked via update_window_open().
 
-        During the delay the temperature drops due to the open window while
-        the coordinator still heats normally.  Training the EKF on this data
-        would corrupt the thermal model parameters.
+        Without temperature tracking, when the window closes before open_delay
+        elapses, the stale _x[0] causes a massive innovation on the first normal
+        EKF update, corrupting alpha/tau.
         """
         room_with_delay = {
             **SAMPLE_ROOM,
@@ -304,8 +305,8 @@ class TestRoomMindCoordinator:
         assert "living_room_abc12345" not in coordinator._ekf_training._accumulated_mode
         assert "living_room_abc12345" not in coordinator._ekf_training._accumulated_pf
 
-        # k_window must not be learned during the delay period
-        mock_win_update.assert_not_called()
+        # update_window_open must be called to track temperature state
+        mock_win_update.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_window_open_skips_k_window_with_residual_heat(self, hass, mock_config_entry):
