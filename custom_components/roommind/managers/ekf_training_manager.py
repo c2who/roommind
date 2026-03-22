@@ -73,25 +73,7 @@ class EkfTrainingManager:
         Contains the full training decision tree: window open, raw open
         (within delay), unobservable mode, or normal accumulation.
         """
-        if window_open:
-            self.flush(
-                area_id,
-                current_temp,
-                T_outdoor,
-                can_heat,
-                can_cool,
-                q_solar,
-                q_residual=q_residual,
-                shading_factor=shading_factor,
-            )
-            if q_residual == 0.0:
-                self._model_manager.update_window_open(
-                    area_id,
-                    current_temp,
-                    T_outdoor,
-                    dt_minutes,
-                )
-        elif raw_open:
+        if window_open or raw_open:
             self.flush(
                 area_id,
                 current_temp,
@@ -105,12 +87,12 @@ class EkfTrainingManager:
             self._accumulated_dt.pop(area_id, None)
             self._accumulated_mode.pop(area_id, None)
             self._accumulated_pf.pop(area_id, None)
-            # Track temperature during open-delay dead zone to prevent
-            # stale _x[0] when normal learning resumes.  Without this,
-            # the first post-window EKF update sees a massive innovation
-            # (predicted vs actual temp) and corrupts alpha/tau.
+            # Always track temperature state to prevent stale _x[0]
+            # when normal learning resumes.  Only learn k_window when
+            # the signal is clean (no residual heat).
             self._model_manager.update_window_open(
                 area_id, current_temp, T_outdoor, dt_minutes,
+                learn_k_window=(q_residual == 0.0),
             )
         elif ekf_mode is None:
             self.flush(

@@ -307,6 +307,8 @@ class TestRoomMindCoordinator:
 
         # update_window_open must be called to track temperature state
         mock_win_update.assert_called_once()
+        _, kwargs = mock_win_update.call_args
+        assert kwargs.get("learn_k_window") is True
 
     @pytest.mark.asyncio
     async def test_window_open_skips_k_window_with_residual_heat(self, hass, mock_config_entry):
@@ -348,8 +350,11 @@ class TestRoomMindCoordinator:
         ) as mock_win_update:
             await coordinator._async_update_data()
 
-        # k_window should NOT be learned because q_residual > 0
-        mock_win_update.assert_not_called()
+        # update_window_open must be called (temperature tracking) but
+        # k_window must NOT be learned because q_residual > 0
+        mock_win_update.assert_called_once()
+        _, kwargs = mock_win_update.call_args
+        assert kwargs.get("learn_k_window") is False
 
     @pytest.mark.asyncio
     async def test_window_open_learns_k_window_without_residual_heat(self, hass, mock_config_entry):
@@ -379,6 +384,8 @@ class TestRoomMindCoordinator:
 
         # k_window should be learned (no residual heat, no delay)
         mock_win_update.assert_called_once()
+        _, kwargs = mock_win_update.call_args
+        assert kwargs.get("learn_k_window") is True
 
     @pytest.mark.asyncio
     async def test_zero_delays_instant_behavior(self, hass, mock_config_entry):
