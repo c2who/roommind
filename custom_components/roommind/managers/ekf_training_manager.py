@@ -91,7 +91,10 @@ class EkfTrainingManager:
             # when normal learning resumes.  Only learn k_window when
             # the signal is clean (no residual heat).
             self._model_manager.update_window_open(
-                area_id, current_temp, T_outdoor, dt_minutes,
+                area_id,
+                current_temp,
+                T_outdoor,
+                dt_minutes,
                 learn_k_window=(q_residual == 0.0),
             )
         elif ekf_mode is None:
