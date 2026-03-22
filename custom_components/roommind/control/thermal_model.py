@@ -724,9 +724,13 @@ class ThermalEKF:
         Q = [
             self._Q_T,
             min(max((self._Q_ALPHA_REL * alpha) ** 2, self._Q_ALPHA_FLOOR), self._Q_ALPHA_CAP),
-            min((self._Q_BETA_H_REL * beta_h) ** 2, self._Q_BETA_H_CAP) if (mode == "heating" or (mode == "idle" and q_residual > 0)) else 0.0,
+            min((self._Q_BETA_H_REL * beta_h) ** 2, self._Q_BETA_H_CAP)
+            if (mode == "heating" or (mode == "idle" and q_residual > 0))
+            else 0.0,
             min((self._Q_BETA_C_REL * beta_c) ** 2, self._Q_BETA_C_CAP) if mode == "cooling" else 0.0,
-            min(max((self._Q_BETA_S_REL * beta_s) ** 2, self._Q_BETA_S_FLOOR), self._Q_BETA_S_CAP) if q_solar > 0 else 0.0,
+            min(max((self._Q_BETA_S_REL * beta_s) ** 2, self._Q_BETA_S_FLOOR), self._Q_BETA_S_CAP)
+            if q_solar > 0
+            else 0.0,
         ]
 
         # FP = F @ P

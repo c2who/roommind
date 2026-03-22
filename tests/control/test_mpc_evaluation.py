@@ -612,7 +612,10 @@ def test_early_exit_cooling_mode():
     room = make_room()
     # 35 min elapsed, remaining = 25 min, margin = 0.15 + 0.01 * 25 = 0.40
     ctrl = _make_mpc_ready_ctrl(
-        hass, room, mode_on_since=time.time() - 2100, previous_mode=MODE_COOLING,
+        hass,
+        room,
+        mode_on_since=time.time() - 2100,
+        previous_mode=MODE_COOLING,
     )
     # Override predict: predicted=21.0, target=24.0 → 21.0 <= 24.0 - 0.40 → should exit
     mgr = ctrl._model_manager

@@ -43,14 +43,18 @@ class WindowManager:
 
             already_in_close_delay = area_id in self._closed_since
             brief_threshold = open_delay * 0.1
-            needs_close_delay = was_paused or already_in_close_delay or (
-                was_in_open_delay and open_duration >= brief_threshold and close_delay > 0
+            needs_close_delay = (
+                was_paused
+                or already_in_close_delay
+                or (was_in_open_delay and open_duration >= brief_threshold and close_delay > 0)
             )
 
             if was_in_open_delay and not needs_close_delay:
                 _LOGGER.debug(
                     "[%s] Window closed after brief open (%ds < %ds threshold) -> no close delay",
-                    area_id, int(open_duration), int(brief_threshold),
+                    area_id,
+                    int(open_duration),
+                    int(brief_threshold),
                 )
 
             if needs_close_delay:
@@ -59,7 +63,10 @@ class WindowManager:
                     if not was_paused:
                         _LOGGER.info(
                             "[%s] Window closed after %ds open (>%ds threshold) -> close delay %ds started",
-                            area_id, int(open_duration), int(brief_threshold), close_delay,
+                            area_id,
+                            int(open_duration),
+                            int(brief_threshold),
+                            close_delay,
                         )
                 if now - self._closed_since[area_id] >= close_delay:
                     self._paused[area_id] = False

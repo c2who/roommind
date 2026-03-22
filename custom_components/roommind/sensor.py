@@ -203,7 +203,11 @@ class RoomMindForecastSensor(_RoomMindBaseSensor):
         """Find the predicted temperature closest to a future time offset."""
         if not forecast:
             return None
-        target_ts = forecast[0]["ts"] - (forecast[1]["ts"] - forecast[0]["ts"]) + offset_seconds if len(forecast) >= 2 else forecast[0]["ts"] + offset_seconds
+        target_ts = (
+            forecast[0]["ts"] - (forecast[1]["ts"] - forecast[0]["ts"]) + offset_seconds
+            if len(forecast) >= 2
+            else forecast[0]["ts"] + offset_seconds
+        )
         # The first block's ts is already offset from "now" by one dt,
         # so compute now from the forecast timestamps
         if len(forecast) >= 2:

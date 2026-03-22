@@ -84,7 +84,11 @@ class MoldManager:
         if risk_level != prev_risk:
             _LOGGER.info(
                 "[%s] Mold risk: %s -> %s (humidity=%.0f%% surface_rh=%.0f%%)",
-                area_id, prev_risk, risk_level, current_humidity, surface_rh or 0,
+                area_id,
+                prev_risk,
+                risk_level,
+                current_humidity,
+                surface_rh or 0,
             )
             self._prev_risk[area_id] = risk_level
 
@@ -148,7 +152,9 @@ class MoldManager:
                     self._prevention_active[area_id] = True
                     _LOGGER.info(
                         "[%s] Mold prevention activated (delta=+%.1f, intensity=%s)",
-                        area_id, result.prevention_delta, intensity,
+                        area_id,
+                        result.prevention_delta,
+                        intensity,
                     )
                     if (
                         settings.get("mold_prevention_notify_enabled")
@@ -185,7 +191,8 @@ class MoldManager:
                     self._prevention_active[area_id] = False
                     _LOGGER.info(
                         "[%s] Mold prevention deactivated (surface_rh=%.0f%%)",
-                        area_id, surface_rh,
+                        area_id,
+                        surface_rh,
                     )
                     dismiss_mold_notification(
                         self.hass,

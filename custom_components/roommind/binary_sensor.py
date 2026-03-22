@@ -121,9 +121,7 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(
-        self, coordinator: RoomMindCoordinator, area_id: str, cover_entity_id: str
-    ) -> None:
+    def __init__(self, coordinator: RoomMindCoordinator, area_id: str, cover_entity_id: str) -> None:
         super().__init__(coordinator)
         self._area_id = area_id
         self._cover_entity_id = cover_entity_id

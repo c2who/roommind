@@ -701,8 +701,13 @@ class MPCController:
         T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
         Q_check = model.Q_heat if can_heat else (-model.Q_cool if can_cool else 0.0)
         pred_std = self._model_manager.get_prediction_std(
-            self._area_id, Q_check, current_temp, T_out, PLAN_DT_MINUTES,
-            q_solar=self.q_solar, q_residual=self.q_residual,
+            self._area_id,
+            Q_check,
+            current_temp,
+            T_out,
+            PLAN_DT_MINUTES,
+            q_solar=self.q_solar,
+            q_residual=self.q_residual,
         )
         if pred_std >= MPC_MAX_PREDICTION_STD or not self._has_enough_data(can_heat, can_cool):
             return False
@@ -740,7 +745,12 @@ class MPCController:
         if should_exit:
             _LOGGER.debug(
                 "[%s] Early exit min-run: predicted=%.1f target=%.1f margin=%.2f remaining=%.0fmin mode=%s",
-                self._area_id, predicted, target, margin, remaining_minutes, mode,
+                self._area_id,
+                predicted,
+                target,
+                margin,
+                remaining_minutes,
+                mode,
             )
         return should_exit
 
@@ -840,7 +850,9 @@ class MPCController:
             ):
                 _LOGGER.debug(
                     "[%s] Safety guard: overrode HEATING to IDLE (temp %.1f >= max target %.1f)",
-                    self._area_id, current_temp, max(near_heat),
+                    self._area_id,
+                    current_temp,
+                    max(near_heat),
                 )
                 action = MODE_IDLE
                 power_fraction = 0.0
@@ -853,7 +865,9 @@ class MPCController:
             ):
                 _LOGGER.debug(
                     "[%s] Safety guard: overrode COOLING to IDLE (temp %.1f <= min target %.1f)",
-                    self._area_id, current_temp, min(near_cool),
+                    self._area_id,
+                    current_temp,
+                    min(near_cool),
                 )
                 action = MODE_IDLE
                 power_fraction = 0.0

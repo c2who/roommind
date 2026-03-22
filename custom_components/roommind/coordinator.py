@@ -309,12 +309,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             self._valve_manager.actuation_dirty = False
 
         # Aggregate heating demand across all rooms (forecast-aware state machine)
-        any_heating_now = any(
-            rs.get("mode") == MODE_HEATING for rs in room_states.values()
-        )
+        any_heating_now = any(rs.get("mode") == MODE_HEATING for rs in room_states.values())
         forecast_has_heating = any(
-            any(step.get("action") == MODE_HEATING for step in rs.get("forecast", []))
-            for rs in room_states.values()
+            any(step.get("action") == MODE_HEATING for step in rs.get("forecast", [])) for rs in room_states.values()
         )
 
         now = time.monotonic()
@@ -342,11 +339,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Never was heating / fully off → stay off (forecast alone won't start demand)
             heating_demand = False
 
-        rooms_heating_now = [
-            aid for aid, rs in room_states.items() if rs.get("mode") == MODE_HEATING
-        ]
+        rooms_heating_now = [aid for aid, rs in room_states.items() if rs.get("mode") == MODE_HEATING]
         rooms_heating_forecast = [
-            aid for aid, rs in room_states.items()
+            aid
+            for aid, rs in room_states.items()
             if any(step.get("action") == MODE_HEATING for step in rs.get("forecast", []))
         ]
 
@@ -567,9 +563,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         observed_mode: str | None = None
         observed_pf = 0.0
 
-        climate_active = settings.get("climate_control_active", True) and room.get(
-            "climate_control_enabled", True
-        )
+        climate_active = settings.get("climate_control_active", True) and room.get("climate_control_enabled", True)
 
         # --- Residual heat transition tracking ---
         # Only track when climate control is active — RoomMind-initiated heating
@@ -941,7 +935,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "blind_position": (
                 self._cover_orchestrator.get_current_position(area_id)
                 if cover_eids
-                else (cover_result.decision.target_position if covers_sensor_only and room.get("covers_auto_enabled", False) else None)
+                else (
+                    cover_result.decision.target_position
+                    if covers_sensor_only and room.get("covers_auto_enabled", False)
+                    else None
+                )
             ),
             "cover_auto_paused": (
                 self._cover_orchestrator.is_user_override_active(area_id)
@@ -949,18 +947,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 else False
             ),
             "cover_forced_reason": (cover_result.forced_reason if (cover_eids or covers_sensor_only) else ""),
-            "active_cover_schedule_index": (cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1),
+            "active_cover_schedule_index": (
+                cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1
+            ),
             "climate_control_enabled": room.get("climate_control_enabled", True),
             "forecast": self._prediction_forecasts.get(area_id, []),
             "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
-                room.get("covers_auto_enabled", False)
-                and cover_result.decision.target_position < 100
+                room.get("covers_auto_enabled", False) and cover_result.decision.target_position < 100
             ),
             "cover_shading_position": (
-                cover_result.decision.target_position
-                if room.get("covers_auto_enabled", False)
-                else None
+                cover_result.decision.target_position if room.get("covers_auto_enabled", False) else None
             ),
         }
 
@@ -1402,9 +1399,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ):
                 from .binary_sensor import _create_room_binary_sensors
 
-                self.async_add_binary_sensor_entities(
-                    _create_room_binary_sensors(self, area_id, room)
-                )
+                self.async_add_binary_sensor_entities(_create_room_binary_sensors(self, area_id, room))
                 self._binary_sensor_entity_areas.add(area_id)
 
         await self.async_request_refresh()

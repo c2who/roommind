@@ -1561,12 +1561,8 @@ def test_ekf_relative_noise_heavy_building_converges():
     # Alpha should have converged toward true value, not random-walked away
     learned_alpha = ekf._x[1]
     # With relative noise, alpha should be within 5x of true value
-    assert learned_alpha < 5 * true_alpha, (
-        f"alpha={learned_alpha:.4f} diverged from true={true_alpha}"
-    )
-    assert learned_alpha > true_alpha / 10, (
-        f"alpha={learned_alpha:.6f} collapsed below true={true_alpha}"
-    )
+    assert learned_alpha < 5 * true_alpha, f"alpha={learned_alpha:.4f} diverged from true={true_alpha}"
+    assert learned_alpha > true_alpha / 10, f"alpha={learned_alpha:.6f} collapsed below true={true_alpha}"
 
     # Confidence should be meaningfully above zero
     assert ekf.confidence > 0.3, f"confidence={ekf.confidence:.2f} too low"

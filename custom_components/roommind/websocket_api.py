@@ -272,9 +272,7 @@ async def websocket_list_rooms(
             {
                 vol.Required("entity_id"): str,
                 vol.Optional("mode", default="auto"): vol.In(["auto", "cooling", "heating"]),
-                vol.Optional("power_fraction", default=1.0): vol.All(
-                    vol.Coerce(float), vol.Range(min=0.01, max=5.0)
-                ),
+                vol.Optional("power_fraction", default=1.0): vol.All(vol.Coerce(float), vol.Range(min=0.01, max=5.0)),
             }
         ],
         vol.Optional("covers"): [str],
