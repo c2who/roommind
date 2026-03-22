@@ -14,7 +14,6 @@ import pytest
 
 from custom_components.roommind.const import MODE_COOLING, MODE_HEATING, MODE_IDLE
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

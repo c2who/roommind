@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.core import HomeAssistant
 
