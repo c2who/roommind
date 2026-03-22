@@ -31,7 +31,6 @@ def make_room(**overrides):
             "type": "trv",
             "role": "auto",
             "heating_system_type": hst,
-            "control_type": "proportional",
             "setpoint_mode": "proportional",
             **device_overrides.get(eid, {}),
         }
@@ -42,7 +41,6 @@ def make_room(**overrides):
             "type": "ac",
             "role": "auto",
             "heating_system_type": "",
-            "control_type": "proportional",
             "setpoint_mode": "proportional",
             **device_overrides.get(eid, {}),
         }

@@ -27,9 +27,6 @@ DEFAULT_IDLE_FAN_MODE = "low"
 IDLE_ACTION_SETBACK = "setback"
 DEFAULT_IDLE_SETBACK_OFFSET = 2.0
 
-CONTROL_TYPE_PROPORTIONAL = "proportional"
-CONTROL_TYPE_RELAY = "relay"
-
 SETPOINT_MODE_PROPORTIONAL = "proportional"
 SETPOINT_MODE_DIRECT = "direct"
 
@@ -72,7 +69,6 @@ def legacy_to_devices(
                 "heating_system_type": heating_system_type,
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
-                "control_type": CONTROL_TYPE_PROPORTIONAL,
                 "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
             }
         )
@@ -85,7 +81,6 @@ def legacy_to_devices(
                 "heating_system_type": "",
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
-                "control_type": CONTROL_TYPE_PROPORTIONAL,
                 "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
             }
         )
@@ -227,14 +222,6 @@ def get_idle_action(devices: list[dict], entity_id: str) -> tuple[str, str]:
         dev.get("idle_action", IDLE_ACTION_OFF),
         dev.get("idle_fan_mode", DEFAULT_IDLE_FAN_MODE),
     )
-
-
-def get_control_type(devices: list[dict], entity_id: str) -> str:
-    """Return control_type for a device, defaulting to proportional."""
-    dev = get_device_by_eid(devices, entity_id)
-    if dev is None:
-        return CONTROL_TYPE_PROPORTIONAL
-    return dev.get("control_type", CONTROL_TYPE_PROPORTIONAL)
 
 
 def get_direct_setpoint_eids(devices: list[dict]) -> set[str]:

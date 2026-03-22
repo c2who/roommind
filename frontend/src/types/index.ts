@@ -69,7 +69,6 @@ export interface DeviceConfig {
   heating_system_type?: string;
   idle_action?: "off" | "fan_only" | "setback"; // default "off"
   idle_fan_mode?: string; // default "low"
-  control_type?: "proportional" | "relay"; // default "proportional"
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
 }
 

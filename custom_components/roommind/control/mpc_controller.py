@@ -29,12 +29,10 @@ from ..const import (
     make_roommind_context,
 )
 from ..utils.device_utils import (
-    CONTROL_TYPE_RELAY,
     DEFAULT_IDLE_SETBACK_OFFSET,
     IDLE_ACTION_FAN_ONLY,
     IDLE_ACTION_SETBACK,
     get_ac_eids,
-    get_control_type,
     get_direct_setpoint_eids,
     get_idle_action,
     get_trv_eids,
@@ -1252,9 +1250,7 @@ class MPCController:
                     continue
                 if cmd.active:
                     if cmd.device_type == "thermostat":
-                        if get_control_type(self._devices, cmd.entity_id) == CONTROL_TYPE_RELAY:
-                            t = trv_heat_boost
-                        elif self.has_external_sensor and current_temp is not None:
+                        if self.has_external_sensor and current_temp is not None:
                             t = round(
                                 current_temp + cmd.power_fraction * (trv_heat_boost - current_temp),
                                 1,
@@ -1272,9 +1268,7 @@ class MPCController:
                             temp_intent="heat",
                         )
                     else:  # ac
-                        if get_control_type(self._devices, cmd.entity_id) == CONTROL_TYPE_RELAY:
-                            t = ac_heat_boost
-                        elif self.has_external_sensor and current_temp is not None:
+                        if self.has_external_sensor and current_temp is not None:
                             t = round(
                                 current_temp + cmd.power_fraction * (ac_heat_boost - current_temp),
                                 1,
@@ -1339,10 +1333,8 @@ class MPCController:
                 if entity_modes.get(eid, "auto") == "cool_only":
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
                     continue
-                # Per-device setpoint: relay→boost, direct→target, proportional→interpolated
-                if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
-                    trv_target = trv_heat_boost
-                elif eid in self._direct_eids:
+                # Per-device setpoint: direct→target, proportional→interpolated
+                if eid in self._direct_eids:
                     trv_target = effective_target
                 elif self.has_external_sensor and current_temp is not None:
                     trv_target = round(
@@ -1364,10 +1356,8 @@ class MPCController:
                 if not _entity_allowed_heat(self.hass, eid, entity_modes):
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
                     continue
-                # Per-device setpoint
-                if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
-                    ac_heat_target = ac_heat_boost
-                elif eid in self._direct_eids:
+                # Per-device setpoint: direct→target, proportional→interpolated
+                if eid in self._direct_eids:
                     ac_heat_target = effective_target
                 elif self.has_external_sensor and current_temp is not None:
                     ac_heat_target = round(
@@ -1401,10 +1391,8 @@ class MPCController:
                 if not _entity_allowed_cool(self.hass, eid, entity_modes):
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
                     continue
-                # Per-device setpoint
-                if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
-                    ac_cool_target = ac_cool_boost
-                elif eid in self._direct_eids:
+                # Per-device setpoint: direct→target, proportional→interpolated
+                if eid in self._direct_eids:
                     ac_cool_target = effective_target
                 elif self.has_external_sensor and current_temp is not None:
                     ac_cool_target = round(
