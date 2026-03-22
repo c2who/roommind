@@ -120,6 +120,106 @@ class TestComputeDeviceSetpoint:
         )
         assert result == 22.0
 
+    def test_all_direct_returns_target(self, hass, mock_config_entry):
+        """When all devices are direct, return target_temp directly."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        result = coordinator._compute_device_setpoint(
+            "heating",
+            1.0,
+            20.0,
+            21.0,
+            True,
+            all_direct=True,
+        )
+        assert result == 21.0
+
+    def test_all_direct_cooling_returns_target(self, hass, mock_config_entry):
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        result = coordinator._compute_device_setpoint(
+            "cooling",
+            1.0,
+            26.0,
+            23.0,
+            True,
+            has_acs=True,
+            all_direct=True,
+        )
+        assert result == 23.0
+
+    def test_all_direct_no_sensor_still_none(self, hass, mock_config_entry):
+        """all_direct with no external sensor still returns None."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        result = coordinator._compute_device_setpoint(
+            "heating",
+            1.0,
+            20.0,
+            21.0,
+            False,
+            all_direct=True,
+        )
+        assert result is None
+
+
+class TestComputeDeviceSetpointOrchestrated:
+    """Tests for _compute_device_setpoint_orchestrated with direct_eids."""
+
+    def test_direct_device_returns_target(self, hass, mock_config_entry):
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        cmd = MagicMock()
+        cmd.active = True
+        cmd.entity_id = "climate.heater"
+        cmd.device_type = "thermostat"
+        cmd.power_fraction = 1.0
+        plan = MagicMock()
+        plan.commands = [cmd]
+        result = coordinator._compute_device_setpoint_orchestrated(
+            plan,
+            20.0,
+            21.0,
+            30.0,
+            28.0,
+            direct_eids={"climate.heater"},
+        )
+        assert result == 21.0
+
+    def test_proportional_device_computes_boost(self, hass, mock_config_entry):
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        cmd = MagicMock()
+        cmd.active = True
+        cmd.entity_id = "climate.trv1"
+        cmd.device_type = "thermostat"
+        cmd.power_fraction = 0.5
+        plan = MagicMock()
+        plan.commands = [cmd]
+        result = coordinator._compute_device_setpoint_orchestrated(
+            plan,
+            20.0,
+            21.0,
+            30.0,
+            28.0,
+            direct_eids=set(),
+        )
+        # 20 + 0.5 * (30 - 20) = 25.0
+        assert result == 25.0
+
+    def test_no_direct_eids_defaults_to_proportional(self, hass, mock_config_entry):
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        cmd = MagicMock()
+        cmd.active = True
+        cmd.entity_id = "climate.trv1"
+        cmd.device_type = "thermostat"
+        cmd.power_fraction = 1.0
+        plan = MagicMock()
+        plan.commands = [cmd]
+        result = coordinator._compute_device_setpoint_orchestrated(
+            plan,
+            20.0,
+            21.0,
+            30.0,
+            28.0,
+        )
+        assert result == 30.0
+
 
 class TestReadDeviceTemp:
     """Tests for _read_device_temp."""

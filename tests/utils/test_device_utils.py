@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from custom_components.roommind.utils.device_utils import (
+    SETPOINT_MODE_PROPORTIONAL,
     VALID_DEVICE_TYPES,
     VALID_HEATING_SYSTEM_TYPES,
     devices_to_legacy,
@@ -12,6 +13,7 @@ from custom_components.roommind.utils.device_utils import (
     get_ac_eids,
     get_all_entity_ids,
     get_device_by_eid,
+    get_direct_setpoint_eids,
     get_entity_ids_by_type,
     get_idle_action,
     get_room_heating_system_type,
@@ -61,6 +63,7 @@ def test_legacy_to_devices_basic():
         "idle_action": "off",
         "idle_fan_mode": "low",
         "control_type": "proportional",
+        "setpoint_mode": "proportional",
     }
     assert devices[2]["type"] == "ac"
     assert devices[2]["heating_system_type"] == ""
@@ -471,3 +474,57 @@ class TestHasReliableHvacModes:
         state.state = "off"
         state.attributes = {"hvac_modes": None}
         assert has_reliable_hvac_modes(state) is False
+
+
+# ---------------------------------------------------------------------------
+# get_direct_setpoint_eids
+# ---------------------------------------------------------------------------
+
+
+class TestGetDirectSetpointEids:
+    def test_mixed_devices(self):
+        devices = [
+            {"entity_id": "climate.trv1", "type": "trv", "setpoint_mode": "proportional"},
+            {"entity_id": "climate.heater", "type": "trv", "setpoint_mode": "direct"},
+            {"entity_id": "climate.ac1", "type": "ac", "setpoint_mode": "direct"},
+        ]
+        result = get_direct_setpoint_eids(devices)
+        assert result == {"climate.heater", "climate.ac1"}
+
+    def test_all_proportional(self):
+        devices = [
+            {"entity_id": "climate.trv1", "type": "trv", "setpoint_mode": "proportional"},
+        ]
+        assert get_direct_setpoint_eids(devices) == set()
+
+    def test_missing_field_defaults_to_not_direct(self):
+        """Devices without setpoint_mode field are NOT in direct set."""
+        devices = [
+            {"entity_id": "climate.trv1", "type": "trv"},
+        ]
+        assert get_direct_setpoint_eids(devices) == set()
+
+    def test_empty_devices(self):
+        assert get_direct_setpoint_eids([]) == set()
+
+    def test_missing_entity_id_skipped(self):
+        devices = [
+            {"type": "trv", "setpoint_mode": "direct"},
+            {"entity_id": "climate.ok", "type": "trv", "setpoint_mode": "direct"},
+        ]
+        assert get_direct_setpoint_eids(devices) == {"climate.ok"}
+
+
+# ---------------------------------------------------------------------------
+# legacy_to_devices includes setpoint_mode
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyToDevicesSetpointMode:
+    def test_trv_gets_proportional(self):
+        devices = legacy_to_devices(["climate.trv1"], [])
+        assert devices[0]["setpoint_mode"] == SETPOINT_MODE_PROPORTIONAL
+
+    def test_ac_gets_proportional(self):
+        devices = legacy_to_devices([], ["climate.ac1"])
+        assert devices[0]["setpoint_mode"] == SETPOINT_MODE_PROPORTIONAL

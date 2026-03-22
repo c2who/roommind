@@ -32,6 +32,7 @@ def make_room(**overrides):
             "role": "auto",
             "heating_system_type": hst,
             "control_type": "proportional",
+            "setpoint_mode": "proportional",
             **device_overrides.get(eid, {}),
         }
         for eid in room.get("thermostats", [])
@@ -42,6 +43,7 @@ def make_room(**overrides):
             "role": "auto",
             "heating_system_type": "",
             "control_type": "proportional",
+            "setpoint_mode": "proportional",
             **device_overrides.get(eid, {}),
         }
         for eid in room.get("acs", [])

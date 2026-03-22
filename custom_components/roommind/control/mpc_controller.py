@@ -26,6 +26,7 @@ from ..const import (
     MODE_HEATING,
     MODE_IDLE,
     TargetTemps,
+    make_roommind_context,
 )
 from ..utils.device_utils import (
     CONTROL_TYPE_RELAY,
@@ -34,6 +35,7 @@ from ..utils.device_utils import (
     IDLE_ACTION_SETBACK,
     get_ac_eids,
     get_control_type,
+    get_direct_setpoint_eids,
     get_idle_action,
     get_trv_eids,
     has_reliable_hvac_modes,
@@ -111,6 +113,7 @@ async def async_turn_off_climate(
                 "set_hvac_mode",
                 {"entity_id": entity_id, "hvac_mode": "off"},
                 blocking=True,
+                context=make_roommind_context(),
             )
             _last_commands[entity_id] = _cache_entry("set_hvac_mode", {"hvac_mode": "off"})
         except Exception:  # noqa: BLE001
@@ -184,6 +187,7 @@ async def async_turn_off_climate(
             "set_temperature",
             svc_data,
             blocking=True,
+            context=make_roommind_context(),
         )
         _last_commands[entity_id] = _cache_entry("set_temperature", svc_data)
     except Exception:  # noqa: BLE001
@@ -278,6 +282,7 @@ async def async_idle_device(
                 "set_temperature",
                 {"entity_id": entity_id, "temperature": ha_t},
                 blocking=True,
+                context=make_roommind_context(),
             )
             _last_commands[entity_id] = _cache_entry("set_temperature", {"temperature": ha_t})
         except Exception:  # noqa: BLE001
@@ -326,6 +331,7 @@ async def async_idle_device(
             "set_hvac_mode",
             {"entity_id": entity_id, "hvac_mode": "fan_only"},
             blocking=True,
+            context=make_roommind_context(),
         )
         _last_commands[entity_id] = _cache_entry("set_hvac_mode", {"hvac_mode": "fan_only"})
     except Exception:  # noqa: BLE001
@@ -346,6 +352,7 @@ async def async_idle_device(
                     "set_fan_mode",
                     {"entity_id": entity_id, "fan_mode": idle_fan_mode},
                     blocking=True,
+                    context=make_roommind_context(),
                 )
             except Exception:  # noqa: BLE001
                 _LOGGER.warning(
@@ -557,6 +564,7 @@ class MPCController:
         self.thermostats: list[str] = get_trv_eids(room_config.get("devices", []))
         self.acs: list[str] = get_ac_eids(room_config.get("devices", []))
         self._devices: list[dict] = room_config.get("devices", [])
+        self._direct_eids: set[str] = get_direct_setpoint_eids(self._devices)
         self.climate_mode: str = room_config.get("climate_mode", "auto")
         self.outdoor_temp = outdoor_temp
         self.outdoor_forecast = outdoor_forecast or []
@@ -1255,7 +1263,8 @@ class MPCController:
                             t = min(trv_heat_boost, t)
                         else:
                             t = trv_heat_boost if self.has_external_sensor else effective_target
-                        ha_t = celsius_to_ha_temp(self.hass, t)
+                        t_final = effective_target if cmd.entity_id in self._direct_eids else t
+                        ha_t = celsius_to_ha_temp(self.hass, t_final)
                         await self._call("set_hvac_mode", {"entity_id": cmd.entity_id, "hvac_mode": "heat"})
                         await self._call(
                             "set_temperature",
@@ -1274,7 +1283,8 @@ class MPCController:
                             t = min(ac_heat_boost, t)
                         else:
                             t = effective_target
-                        ha_t = celsius_to_ha_temp(self.hass, t)
+                        t_final = effective_target if cmd.entity_id in self._direct_eids else t
+                        ha_t = celsius_to_ha_temp(self.hass, t_final)
                         ac_state = self.hass.states.get(cmd.entity_id)
                         ac_modes = _effective_ac_modes(ac_state)
                         if "heat" in ac_modes:
@@ -1329,9 +1339,11 @@ class MPCController:
                 if entity_modes.get(eid, "auto") == "cool_only":
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
                     continue
-                # Per-device setpoint: relay devices get boost, proportional get interpolated
+                # Per-device setpoint: relay→boost, direct→target, proportional→interpolated
                 if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
                     trv_target = trv_heat_boost
+                elif eid in self._direct_eids:
+                    trv_target = effective_target
                 elif self.has_external_sensor and current_temp is not None:
                     trv_target = round(
                         current_temp + power_fraction * (trv_heat_boost - current_temp),
@@ -1341,9 +1353,9 @@ class MPCController:
                     trv_target = min(trv_heat_boost, trv_target)
                 else:
                     trv_target = trv_heat_boost if self.has_external_sensor else effective_target
-                ha_trv = celsius_to_ha_temp(self.hass, trv_target)
+                ha_t = celsius_to_ha_temp(self.hass, trv_target)
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
-                await self._call("set_temperature", {"entity_id": eid, "temperature": ha_trv}, temp_intent="heat")
+                await self._call("set_temperature", {"entity_id": eid, "temperature": ha_t}, temp_intent="heat")
             # ACs: proportional setpoint in Full Control, actual target otherwise
             for eid in self.acs:
                 if eid in _forced_off:
@@ -1355,6 +1367,8 @@ class MPCController:
                 # Per-device setpoint
                 if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
                     ac_heat_target = ac_heat_boost
+                elif eid in self._direct_eids:
+                    ac_heat_target = effective_target
                 elif self.has_external_sensor and current_temp is not None:
                     ac_heat_target = round(
                         current_temp + power_fraction * (ac_heat_boost - current_temp),
@@ -1364,24 +1378,18 @@ class MPCController:
                     ac_heat_target = min(ac_heat_boost, ac_heat_target)
                 else:
                     ac_heat_target = effective_target
-                ha_ac_target = celsius_to_ha_temp(self.hass, ac_heat_target)
+                ha_t = celsius_to_ha_temp(self.hass, ac_heat_target)
                 ac_state = self.hass.states.get(eid)
                 ac_modes = _effective_ac_modes(ac_state)
                 if "heat" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat"})
-                    await self._call(
-                        "set_temperature", {"entity_id": eid, "temperature": ha_ac_target}, temp_intent="heat"
-                    )
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_t}, temp_intent="heat")
                 elif "heat_cool" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "heat_cool"})
-                    await self._call(
-                        "set_temperature", {"entity_id": eid, "temperature": ha_ac_target}, temp_intent="heat"
-                    )
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_t}, temp_intent="heat")
                 elif "auto" in ac_modes:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "auto"})
-                    await self._call(
-                        "set_temperature", {"entity_id": eid, "temperature": ha_ac_target}, temp_intent="heat"
-                    )
+                    await self._call("set_temperature", {"entity_id": eid, "temperature": ha_t}, temp_intent="heat")
                 else:
                     await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "off"})
         elif mode == MODE_COOLING:
@@ -1396,6 +1404,8 @@ class MPCController:
                 # Per-device setpoint
                 if get_control_type(self._devices, eid) == CONTROL_TYPE_RELAY:
                     ac_cool_target = ac_cool_boost
+                elif eid in self._direct_eids:
+                    ac_cool_target = effective_target
                 elif self.has_external_sensor and current_temp is not None:
                     ac_cool_target = round(
                         current_temp - power_fraction * (current_temp - ac_cool_boost),
@@ -1405,9 +1415,9 @@ class MPCController:
                     ac_cool_target = min(effective_target, ac_cool_target)
                 else:
                     ac_cool_target = effective_target
-                ha_target = celsius_to_ha_temp(self.hass, ac_cool_target)
+                ha_t = celsius_to_ha_temp(self.hass, ac_cool_target)
                 await self._call("set_hvac_mode", {"entity_id": eid, "hvac_mode": "cool"})
-                await self._call("set_temperature", {"entity_id": eid, "temperature": ha_target}, temp_intent="cool")
+                await self._call("set_temperature", {"entity_id": eid, "temperature": ha_t}, temp_intent="cool")
             for eid in thermostats:
                 if eid in _forced_off:
                     await async_idle_device(self.hass, eid, self._devices, area_id=self._area_id, targets=targets)
@@ -1633,7 +1643,13 @@ class MPCController:
             return
 
         try:
-            await self.hass.services.async_call("climate", service, data, blocking=True)
+            await self.hass.services.async_call(
+                "climate",
+                service,
+                data,
+                blocking=True,
+                context=make_roommind_context(),
+            )
             if eid:
                 _last_commands[eid] = _cache_entry(service, data)
         except Exception:  # noqa: BLE001

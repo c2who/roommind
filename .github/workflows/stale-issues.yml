@@ -32,13 +32,15 @@ jobs:
               const labels = issue.labels.map(l => l.name);
               const hasStale = labels.includes('stale');
 
-              const comments = await github.rest.issues.listComments({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: issue.number,
-                per_page: 1,
-                direction: 'desc'
-              });
+              const comments = issue.comments > 0
+                ? await github.rest.issues.listComments({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: issue.number,
+                    per_page: 1,
+                    page: issue.comments
+                  })
+                : { data: [] };
 
               const lastActivity = comments.data.length > 0
                 ? new Date(comments.data[0].created_at)

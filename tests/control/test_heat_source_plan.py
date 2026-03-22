@@ -730,3 +730,62 @@ async def test_apply_orchestrated_forced_on_ac():
     temp_calls = [c for c in calls if c[0][2].get("entity_id") == "climate.ac" and c[0][1] == "set_temperature"]
     assert len(temp_calls) == 1
     assert temp_calls[0][0][2]["temperature"] == 21.0
+
+
+@pytest.mark.asyncio
+async def test_hso_direct_setpoint_trv():
+    """Active TRV with setpoint_mode='direct' in HSO receives target, not boost."""
+    from custom_components.roommind.managers.heat_source_orchestrator import (
+        DeviceCommand,
+        HeatSourcePlan,
+    )
+
+    _last_commands.clear()
+    hass = build_hass()
+    room = make_room(thermostats=["climate.trv_direct"], acs=[])
+    room["devices"] = [
+        {
+            "entity_id": "climate.trv_direct",
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": "",
+            "setpoint_mode": "direct",
+        },
+    ]
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=RoomModelManager(),
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+
+    plan = HeatSourcePlan(
+        commands=[
+            DeviceCommand(
+                entity_id="climate.trv_direct",
+                role="primary",
+                device_type="thermostat",
+                active=True,
+                power_fraction=1.0,
+                reason="primary heating",
+            ),
+        ],
+        active_sources="primary",
+        reason="normal heating",
+    )
+
+    await ctrl.async_apply(
+        mode=MODE_HEATING,
+        targets=TargetTemps(heat=21.0, cool=None),
+        power_fraction=1.0,
+        current_temp=18.0,
+        heat_source_plan=plan,
+    )
+
+    calls = hass.services.async_call.call_args_list
+    temp_calls = [c for c in calls if c[0][2].get("entity_id") == "climate.trv_direct" and c[0][1] == "set_temperature"]
+    assert len(temp_calls) == 1
+    # Direct mode: receives target 21.0, NOT proportional boost (18 + 1.0*(30-18)=30)
+    assert temp_calls[0][0][2]["temperature"] == 21.0

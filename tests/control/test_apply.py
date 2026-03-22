@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -261,6 +261,7 @@ async def test_turn_off_climate_normal_device():
         "set_hvac_mode",
         {"entity_id": "climate.trv", "hvac_mode": "off"},
         blocking=True,
+        context=ANY,
     )
 
 
@@ -279,6 +280,7 @@ async def test_turn_off_climate_heat_only_uses_min_temp():
         "set_temperature",
         {"entity_id": "climate.trv", "temperature": 5.0},
         blocking=True,
+        context=ANY,
     )
 
 
@@ -297,6 +299,7 @@ async def test_turn_off_climate_cool_only_uses_max_temp():
         "set_temperature",
         {"entity_id": "climate.ac", "temperature": 30.0},
         blocking=True,
+        context=ANY,
     )
 
 
@@ -328,6 +331,7 @@ async def test_turn_off_climate_empty_modes_uses_off():
         "set_hvac_mode",
         {"entity_id": "climate.trv", "hvac_mode": "off"},
         blocking=True,
+        context=ANY,
     )
 
 
@@ -346,6 +350,7 @@ async def test_turn_off_climate_no_modes_attr_uses_off():
         "set_hvac_mode",
         {"entity_id": "climate.trv", "hvac_mode": "off"},
         blocking=True,
+        context=ANY,
     )
 
 
@@ -3074,3 +3079,141 @@ async def test_snap_reclamps_to_max():
         temp = call[0][2].get("temperature")
         if temp is not None:
             assert temp <= 29.5, f"temperature {temp} exceeds max_temp 29.5"
+
+
+# ── Direct setpoint mode tests ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_direct_setpoint_trv_heating():
+    """TRV with setpoint_mode='direct' receives effective_target, not boost."""
+    hass = build_hass()
+    room = make_room()
+    # Override device to direct mode
+    room["devices"] = [
+        {
+            "entity_id": "climate.living_trv",
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": "",
+            "setpoint_mode": "direct",
+        }
+    ]
+    model_mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    _last_commands.clear()
+    await ctrl.async_apply("heating", 21.0, power_fraction=1.0, current_temp=19.0)
+
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = [c for c in calls if c[0][1] == "set_temperature"]
+    assert set_temp_calls
+    # Direct mode: device receives target (21.0), NOT boost (30.0)
+    temp_arg = set_temp_calls[0][0][2]["temperature"]
+    assert temp_arg == 21.0
+
+
+@pytest.mark.asyncio
+async def test_direct_setpoint_ac_cooling():
+    """AC with setpoint_mode='direct' in cooling receives effective_target."""
+    hass = build_hass()
+    room = make_room(thermostats=[], acs=["climate.ac"])
+    room["devices"] = [
+        {"entity_id": "climate.ac", "type": "ac", "role": "auto", "heating_system_type": "", "setpoint_mode": "direct"}
+    ]
+    model_mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=35.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    _last_commands.clear()
+    await ctrl.async_apply("cooling", 24.0, power_fraction=1.0, current_temp=28.0)
+
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = [c for c in calls if c[0][1] == "set_temperature"]
+    assert set_temp_calls
+    # Direct mode: device receives target (24.0), NOT cool boost (16.0)
+    temp_arg = set_temp_calls[0][0][2]["temperature"]
+    assert temp_arg == 24.0
+
+
+@pytest.mark.asyncio
+async def test_mixed_setpoint_modes():
+    """Room with one proportional TRV and one direct TRV: each gets own setpoint."""
+    hass = build_hass()
+    room = make_room(thermostats=["climate.trv_prop", "climate.trv_direct"])
+    room["devices"] = [
+        {
+            "entity_id": "climate.trv_prop",
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": "",
+            "setpoint_mode": "proportional",
+        },
+        {
+            "entity_id": "climate.trv_direct",
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": "",
+            "setpoint_mode": "direct",
+        },
+    ]
+    model_mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    _last_commands.clear()
+    target = 21.0
+    current = 19.0
+    await ctrl.async_apply("heating", target, power_fraction=0.5, current_temp=current)
+
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = {c[0][2]["entity_id"]: c[0][2]["temperature"] for c in calls if c[0][1] == "set_temperature"}
+    # Proportional TRV: 19 + 0.5 * (30 - 19) = 24.5
+    assert set_temp_calls["climate.trv_prop"] == 24.5
+    # Direct TRV: 21.0 (effective_target)
+    assert set_temp_calls["climate.trv_direct"] == target
+
+
+@pytest.mark.asyncio
+async def test_proportional_setpoint_unchanged_default():
+    """Regression: default proportional TRV still gets boost, not target."""
+    hass = build_hass()
+    room = make_room()
+    model_mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    _last_commands.clear()
+    target = 21.0
+    current = 19.0
+    await ctrl.async_apply("heating", target, power_fraction=1.0, current_temp=current)
+
+    calls = hass.services.async_call.call_args_list
+    set_temp_calls = [c for c in calls if c[0][1] == "set_temperature"]
+    assert set_temp_calls
+    # Default proportional: 19 + 1.0 * (30 - 19) = 30.0 (boost)
+    temp_arg = set_temp_calls[0][0][2]["temperature"]
+    from custom_components.roommind.control.mpc_controller import HEATING_BOOST_TARGET
+
+    assert temp_arg == HEATING_BOOST_TARGET

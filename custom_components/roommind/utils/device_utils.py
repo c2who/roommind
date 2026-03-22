@@ -30,6 +30,9 @@ DEFAULT_IDLE_SETBACK_OFFSET = 2.0
 CONTROL_TYPE_PROPORTIONAL = "proportional"
 CONTROL_TYPE_RELAY = "relay"
 
+SETPOINT_MODE_PROPORTIONAL = "proportional"
+SETPOINT_MODE_DIRECT = "direct"
+
 # Active HVAC modes that indicate real device capabilities.
 _ACTIVE_HVAC_MODES = {"heat", "cool", "heat_cool", "auto"}
 
@@ -70,6 +73,7 @@ def legacy_to_devices(
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
                 "control_type": CONTROL_TYPE_PROPORTIONAL,
+                "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
             }
         )
     for eid in acs:
@@ -82,6 +86,7 @@ def legacy_to_devices(
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
                 "control_type": CONTROL_TYPE_PROPORTIONAL,
+                "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
             }
         )
     return devices
@@ -230,6 +235,11 @@ def get_control_type(devices: list[dict], entity_id: str) -> str:
     if dev is None:
         return CONTROL_TYPE_PROPORTIONAL
     return dev.get("control_type", CONTROL_TYPE_PROPORTIONAL)
+
+
+def get_direct_setpoint_eids(devices: list[dict]) -> set[str]:
+    """Return entity IDs of devices with setpoint_mode='direct'."""
+    return {d["entity_id"] for d in devices if d.get("entity_id") and d.get("setpoint_mode") == SETPOINT_MODE_DIRECT}
 
 
 def migrate_heat_pump_devices(devices: list[dict]) -> bool:

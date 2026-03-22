@@ -54,7 +54,12 @@ from .managers.residual_heat_tracker import ResidualHeatTracker
 from .managers.valve_manager import ValveManager
 from .managers.weather_manager import WeatherManager
 from .managers.window_manager import WindowManager
-from .utils.device_utils import get_ac_eids, get_all_entity_ids, get_trv_eids
+from .utils.device_utils import (
+    get_ac_eids,
+    get_all_entity_ids,
+    get_direct_setpoint_eids,
+    get_trv_eids,
+)
 from .utils.history_store import HistoryStore
 from .utils.schedule_utils import resolve_schedule_index
 from .utils.sensor_utils import read_sensor_value
@@ -884,6 +889,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
         self._previous_decisions[area_id] = decision
 
+        _room_devices = room.get("devices", [])
+        _direct_eids = get_direct_setpoint_eids(_room_devices)
+        _devs_with_eid = [d for d in _room_devices if d.get("entity_id")]
+        _all_direct = bool(_devs_with_eid) and len(_direct_eids) == len(_devs_with_eid)
+
         return {
             "area_id": area_id,
             "current_temp": current_temp,
@@ -899,6 +909,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 target_temp,
                 device_max_temp,
                 ac_device_max_temp,
+                direct_eids=_direct_eids,
             )
             if heat_source_plan is not None
             else self._compute_device_setpoint(
@@ -909,8 +920,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 has_external_sensor,
                 device_max_temp=device_max_temp,
                 device_min_temp=device_min_temp,
-                has_thermostats=bool(get_trv_eids(room.get("devices", []))),
-                has_acs=bool(get_ac_eids(room.get("devices", []))),
+                has_thermostats=bool(get_trv_eids(_room_devices)),
+                has_acs=bool(get_ac_eids(_room_devices)),
+                all_direct=_all_direct,
             ),
             "window_open": window_open,
             "raw_window_open": raw_open,
@@ -959,6 +971,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         target_temp: float | None,
         device_max_temp: float | None,
         ac_device_max_temp: float | None,
+        direct_eids: set[str] | None = None,
     ) -> float | None:
         """Compute device setpoint from the orchestrated heat source plan."""
         if current_temp is None or target_temp is None:
@@ -969,6 +982,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             return None
         # Pick the first active command (primary preferred, then secondary)
         cmd = active_cmds[0]
+        if direct_eids and cmd.entity_id in direct_eids:
+            return target_temp
         if cmd.device_type == "thermostat":
             boost = device_max_temp if device_max_temp is not None else HEATING_BOOST_TARGET
         else:
@@ -989,10 +1004,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         device_min_temp: float | None = None,
         has_thermostats: bool = True,
         has_acs: bool = False,
+        all_direct: bool = False,
     ) -> float | None:
         """Compute the device setpoint for UI display (Full Control only)."""
         if not has_external_sensor or current_temp is None or target_temp is None:
             return None
+        if all_direct:
+            return target_temp
 
         if mode == MODE_HEATING:
             default_boost = HEATING_BOOST_TARGET if has_thermostats else AC_HEATING_BOOST_TARGET

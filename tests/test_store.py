@@ -463,6 +463,7 @@ async def test_migration_legacy_room_gets_devices(store):
         "idle_action": "off",
         "idle_fan_mode": "low",
         "control_type": "proportional",
+        "setpoint_mode": "proportional",
     }
     assert room["devices"][2] == {
         "entity_id": "climate.ac1",
@@ -472,6 +473,7 @@ async def test_migration_legacy_room_gets_devices(store):
         "idle_action": "off",
         "idle_fan_mode": "low",
         "control_type": "proportional",
+        "setpoint_mode": "proportional",
     }
     # Legacy keys are consistent
     assert room["thermostats"] == ["climate.trv1", "climate.trv2"]
