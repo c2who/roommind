@@ -711,8 +711,9 @@ class MPCController:
             current_temp,
             T_out,
             PLAN_DT_MINUTES,
-            q_solar=self.q_solar,
+            q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
+            q_occupancy=self.q_occupancy,
         )
         if pred_std >= MPC_MAX_PREDICTION_STD or not self._has_enough_data(can_heat, can_cool):
             return False
@@ -736,8 +737,9 @@ class MPCController:
             T_out,
             Q_active=0.0,
             dt_minutes=remaining_minutes,
-            q_solar=self.q_solar,
+            q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
+            q_occupancy=self.q_occupancy,
         )
 
         if mode == MODE_HEATING:
