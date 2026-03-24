@@ -140,7 +140,7 @@ def evaluate_heat_sources(
                 )
             )
         _LOGGER.debug(
-            "Room '%s': heat source orchestration → none (delta_t=%.1f, outdoor=%s)",
+            "Room '%s': heat source orchestration → none (delta_t=%.2f, outdoor=%s)",
             room_config.get("area_id", "?"),
             delta_t,
             outdoor_temp,
@@ -255,7 +255,7 @@ def evaluate_heat_sources(
     reason = "; ".join(reason_parts) if reason_parts else active
 
     _LOGGER.debug(
-        "Room '%s': heat source orchestration → %s (delta_t=%.1f, outdoor=%s)",
+        "Room '%s': heat source orchestration → %s (delta_t=%.2f, outdoor=%s)",
         room_config.get("area_id", "?"),
         active,
         delta_t,

@@ -386,7 +386,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             if time.monotonic() - cached_ts < MAX_SENSOR_STALENESS:
                 current_temp = cached_temp
                 _LOGGER.debug(
-                    "Room '%s': sensor unavailable, using cached temp %.1f°C (age %.0fs)",
+                    "Room '%s': sensor unavailable, using cached temp %.2f°C (age %.0fs)",
                     area_id,
                     cached_temp,
                     time.monotonic() - cached_ts,
@@ -546,6 +546,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Force idle when target resolved to "off" (presence away or schedule off)
         if force_off:
+            _LOGGER.debug("[%s] Force-off: targets resolved to off", area_id)
             mode = MODE_IDLE
             power_fraction = 0.0
 
@@ -558,6 +559,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             room.get("window_close_delay", 0),
         )
         if window_open:
+            _LOGGER.debug("[%s] Window open: forcing IDLE", area_id)
             mode = MODE_IDLE
             power_fraction = 0.0
         elif self._window_manager.in_open_delay(area_id) or self._window_manager.in_close_delay(area_id):
@@ -565,9 +567,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Block new starts and mode switches, but allow MPC to stop naturally.
             prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
             if prev_mode == MODE_IDLE and mode != MODE_IDLE:
+                _LOGGER.debug("[%s] Window delay: blocked new %s start", area_id, mode)
                 mode = MODE_IDLE
                 power_fraction = 0.0
             elif prev_mode != MODE_IDLE and mode != MODE_IDLE and mode != prev_mode:
+                _LOGGER.debug(
+                    "[%s] Window delay: blocked mode switch %s→%s, keeping %s", area_id, prev_mode, mode, prev_mode
+                )
                 mode = prev_mode
 
         # Store MPC prediction forecast for analytics.
@@ -677,6 +683,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         compressor_forced_on.add(eid)
 
             if compressor_forced_off and compressor_forced_off >= set(all_device_eids):
+                _LOGGER.debug("[%s] Compressor group: all devices forced off, IDLE", area_id)
                 mode = MODE_IDLE
                 power_fraction = 0.0
                 compressor_forced_off.clear()
@@ -904,41 +911,26 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         prev = self._previous_decisions.get(area_id, {})
         changes = {k: v for k, v in decision.items() if prev.get(k) != v}
         if changes:
-            # Build MPC prediction summary for the log
-            prediction_info = ""
-            plan = controller.last_plan if controller else None
-            if plan and len(plan.temperatures) > 1:
-                temps = plan.temperatures
-                dt = plan.dt_minutes
-                # Find min/max predicted temps with their time offsets
-                min_t = min(temps[1:])
-                max_t = max(temps[1:])
-                min_idx = temps.index(min_t, 1)
-                max_idx = temps.index(max_t, 1)
-                if display_mode == MODE_HEATING:
-                    prediction_info = (
-                        f" | predicted: {min_t:.1f}°C in {min_idx * dt:.0f}min"
-                        f" (peak {max_t:.1f}°C in {max_idx * dt:.0f}min)"
-                    )
-                elif display_mode == MODE_COOLING:
-                    prediction_info = (
-                        f" | predicted: {max_t:.1f}°C in {max_idx * dt:.0f}min"
-                        f" (low {min_t:.1f}°C in {min_idx * dt:.0f}min)"
-                    )
-                else:
-                    prediction_info = f" | predicted: {min_t:.1f}°C..{max_t:.1f}°C over {len(temps[1:]) * dt:.0f}min"
+            # Build consolidated reasoning for the log
+            reason = ""
+            if controller:
+                reason = controller.last_guard_reason or ""
+                idle_drift = controller.last_idle_drift
+                if idle_drift:
+                    drift_temp, drift_minutes = idle_drift
+                    reason += f", idle drift {drift_temp:.2f} in {drift_minutes:.0f}min"
             _LOGGER.info(
                 "[%s] %s | temp=%s targets=%s/%s (%s) mode=%s pf=%.0f%% mpc=%s%s",
                 area_id,
                 " ".join(f"{k}={v}" for k, v in changes.items()),
-                f"{current_temp:.1f}" if current_temp is not None else "n/a",
-                f"{targets.heat:.1f}" if targets.heat is not None else "off",
-                f"{targets.cool:.1f}" if targets.cool is not None else "off",
+                f"{current_temp:.2f}" if current_temp is not None else "n/a",
+                f"{targets.heat:.2f}" if targets.heat is not None else "off",
+                f"{targets.cool:.2f}" if targets.cool is not None else "off",
                 target_reason,
                 display_mode,
                 display_pf * 100,
                 mpc_active,
-                prediction_info,
+                f" | {reason}" if reason else "",
             )
         self._previous_decisions[area_id] = decision
 

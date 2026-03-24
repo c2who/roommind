@@ -151,7 +151,7 @@ class MoldManager:
                 if not self._prevention_active.get(area_id):
                     self._prevention_active[area_id] = True
                     _LOGGER.info(
-                        "[%s] Mold prevention activated (delta=+%.1f, intensity=%s)",
+                        "[%s] Mold prevention activated (delta=+%.2f, intensity=%s)",
                         area_id,
                         result.prevention_delta,
                         intensity,

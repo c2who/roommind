@@ -1017,44 +1017,6 @@ class RoomModelManager:
             q_occupancy=q_occupancy,
         )
 
-        # Periodic diagnostic log (~every 9 min at ~3 min EKF update interval).
-        # Outputs: confidence %, physical params (tau, heating/cooling rates),
-        # prediction std at idle/heat, raw EKF state with covariance diagonals,
-        # and current Q noise values. Useful for tuning and spotting divergence.
-        if est._n_updates > 0 and est._n_updates % 3 == 0:
-            alpha, beta_h, beta_c, beta_s = est._x[1], est._x[2], est._x[3], est._x[4]
-            P = est._P
-            tau = 1.0 / alpha if alpha > 0 else float("inf")
-            std_idle = est.prediction_std(0.0, T_new, T_outdoor, 5.0)
-            std_heat = est.prediction_std(beta_h, T_new, T_outdoor, 5.0)
-            _LOGGER.debug(
-                "EKF [%s] n=%d conf=%.0f%% | tau=%.1fh heat=%.1f°C/h cool=%.1f°C/h solar=%.2f°C/h "
-                "| std_idle=%.3f std_heat=%.3f "
-                "| alpha=%.4f (P=%.2e) beta_h=%.2f (P=%.2e) beta_c=%.2f (P=%.2e) beta_s=%.3f (P=%.2e) "
-                "| Q_alpha=%.2e Q_bh=%.2e Q_bc=%.2e Q_bs=%.2e",
-                area_id,
-                est._n_updates,
-                est.confidence * 100,
-                tau,
-                beta_h,
-                beta_c,
-                beta_s,
-                std_idle,
-                std_heat,
-                alpha,
-                P[1][1],
-                beta_h,
-                P[2][2],
-                beta_c,
-                P[3][3],
-                beta_s,
-                P[4][4],
-                min(max((est._Q_ALPHA_REL * alpha) ** 2, est._Q_ALPHA_FLOOR), est._Q_ALPHA_CAP),
-                min((est._Q_BETA_H_REL * beta_h) ** 2, est._Q_BETA_H_CAP),
-                min((est._Q_BETA_C_REL * beta_c) ** 2, est._Q_BETA_C_CAP),
-                min(max((est._Q_BETA_S_REL * beta_s) ** 2, est._Q_BETA_S_FLOOR), est._Q_BETA_S_CAP),
-            )
-
     def predict(
         self,
         area_id: str,
