@@ -880,20 +880,26 @@ class MPCController:
             predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
             if predicted < min(near_heat) - GUARD_PREDICTION_MARGIN:
                 _LOGGER.debug(
-                    "[%s] Safety guard: allowed HEATING (predicted %.1f < min target %.1f - margin)",
+                    "[%s] Safety guard: allowed HEATING"
+                    " (predicted %.1f in %dmin < min target %.1f - %.1f margin)",
                     self._area_id,
                     predicted,
+                    guard_horizon_minutes,
                     min(near_heat),
+                    GUARD_PREDICTION_MARGIN,
                 )
             elif not self._within_min_run(MODE_HEATING) or self._should_early_exit_min_run(
                 MODE_HEATING, current_temp, max(near_heat)
             ):
                 _LOGGER.debug(
-                    "[%s] Safety guard: overrode HEATING to IDLE (temp %.1f >= max target %.1f, predicted %.1f)",
+                    "[%s] Safety guard: overrode HEATING to IDLE"
+                    " (temp %.1f >= max target %.1f, predicted %.1f in %dmin, need < %.1f to allow)",
                     self._area_id,
                     current_temp,
                     max(near_heat),
                     predicted,
+                    guard_horizon_minutes,
+                    min(near_heat) - GUARD_PREDICTION_MARGIN,
                 )
                 action = MODE_IDLE
                 power_fraction = 0.0
@@ -904,20 +910,26 @@ class MPCController:
             predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
             if predicted > max(near_cool) + GUARD_PREDICTION_MARGIN:
                 _LOGGER.debug(
-                    "[%s] Safety guard: allowed COOLING (predicted %.1f > max target %.1f + margin)",
+                    "[%s] Safety guard: allowed COOLING"
+                    " (predicted %.1f in %dmin > max target %.1f + %.1f margin)",
                     self._area_id,
                     predicted,
+                    guard_horizon_minutes,
                     max(near_cool),
+                    GUARD_PREDICTION_MARGIN,
                 )
             elif not self._within_min_run(MODE_COOLING) or self._should_early_exit_min_run(
                 MODE_COOLING, current_temp, min(near_cool)
             ):
                 _LOGGER.debug(
-                    "[%s] Safety guard: overrode COOLING to IDLE (temp %.1f <= min target %.1f, predicted %.1f)",
+                    "[%s] Safety guard: overrode COOLING to IDLE"
+                    " (temp %.1f <= min target %.1f, predicted %.1f in %dmin, need > %.1f to allow)",
                     self._area_id,
                     current_temp,
                     min(near_cool),
                     predicted,
+                    guard_horizon_minutes,
+                    max(near_cool) + GUARD_PREDICTION_MARGIN,
                 )
                 action = MODE_IDLE
                 power_fraction = 0.0

@@ -904,8 +904,34 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         prev = self._previous_decisions.get(area_id, {})
         changes = {k: v for k, v in decision.items() if prev.get(k) != v}
         if changes:
+            # Build MPC prediction summary for the log
+            prediction_info = ""
+            plan = controller.last_plan if controller else None
+            if plan and len(plan.temperatures) > 1:
+                temps = plan.temperatures
+                dt = plan.dt_minutes
+                # Find min/max predicted temps with their time offsets
+                min_t = min(temps[1:])
+                max_t = max(temps[1:])
+                min_idx = temps.index(min_t, 1)
+                max_idx = temps.index(max_t, 1)
+                if display_mode == MODE_HEATING:
+                    prediction_info = (
+                        f" | predicted: {min_t:.1f}°C in {min_idx * dt:.0f}min"
+                        f" (peak {max_t:.1f}°C in {max_idx * dt:.0f}min)"
+                    )
+                elif display_mode == MODE_COOLING:
+                    prediction_info = (
+                        f" | predicted: {max_t:.1f}°C in {max_idx * dt:.0f}min"
+                        f" (low {min_t:.1f}°C in {min_idx * dt:.0f}min)"
+                    )
+                else:
+                    prediction_info = (
+                        f" | predicted: {min_t:.1f}°C..{max_t:.1f}°C"
+                        f" over {len(temps[1:]) * dt:.0f}min"
+                    )
             _LOGGER.info(
-                "[%s] %s | temp=%s targets=%s/%s (%s) mode=%s pf=%.0f%% mpc=%s",
+                "[%s] %s | temp=%s targets=%s/%s (%s) mode=%s pf=%.0f%% mpc=%s%s",
                 area_id,
                 " ".join(f"{k}={v}" for k, v in changes.items()),
                 f"{current_temp:.1f}" if current_temp is not None else "n/a",
@@ -915,6 +941,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 display_mode,
                 display_pf * 100,
                 mpc_active,
+                prediction_info,
             )
         self._previous_decisions[area_id] = decision
 
