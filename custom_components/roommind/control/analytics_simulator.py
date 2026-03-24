@@ -14,7 +14,7 @@ from ..const import (
     MODE_IDLE,
 )
 from ..utils.device_utils import get_ac_eids, get_trv_eids
-from .mpc_controller import get_can_heat_cool
+from .mpc_controller import GUARD_PREDICTION_MARGIN, SAFETY_GUARD_MIN_BLOCKS, get_can_heat_cool
 from .mpc_optimizer import MPCOptimizer
 from .residual_heat import build_residual_series, get_min_run_blocks
 from .thermal_model import RCModel, ThermalEKF
@@ -239,8 +239,33 @@ def _simulate_mpc(
             action = MODE_COOLING
             pf = 1.0
         elif prev_action != MODE_IDLE and blocks_in_action < min_run:
-            action = prev_action
-            pf = 1.0
+            # Check early exit: after 50% of min-run, predict if room stays comfortable
+            if blocks_in_action >= min_run * 0.5:
+                remaining_blocks = min_run - blocks_in_action
+                remaining_minutes = remaining_blocks * 5.0
+                margin = 0.15 + 0.01 * remaining_minutes
+                qs_guard = solar_series[i] if solar_series and i < len(solar_series) else 0.0
+                predicted = model.predict(
+                    T,
+                    outdoor_series[i],
+                    Q_active=0.0,
+                    dt_minutes=remaining_minutes,
+                    q_solar=qs_guard,
+                    q_residual=current_q_residual,
+                    q_occupancy=q_occupancy,
+                )
+                if prev_action == MODE_HEATING and h_tgt is not None and predicted >= h_tgt + margin:
+                    action = MODE_IDLE
+                    pf = 0.0
+                elif prev_action == MODE_COOLING and c_tgt is not None and predicted <= c_tgt - margin:
+                    action = MODE_IDLE
+                    pf = 0.0
+                else:
+                    action = prev_action
+                    pf = 1.0
+            else:
+                action = prev_action
+                pf = 1.0
         else:
             remaining_outdoor = outdoor_series[i:]
             remaining_heat_targets = [
@@ -276,17 +301,49 @@ def _simulate_mpc(
             )
             action = plan.get_current_action()
             pf = plan.get_current_power_fraction()
-            # Safety guard matching real MPC controller: don't heat above target,
-            # don't cool below target (optimizer may still choose active mode due
-            # to tiny natural drift in the lookahead horizon).
-            near_heat = remaining_heat_targets[:6]
-            near_cool = remaining_cool_targets[:6]
+            # Safety guard matching real MPC controller: predict idle drift
+            # to decide if pre-heating/pre-cooling is actually needed.
+            # Note: the real controller also checks min-run inside the guard,
+            # but in the simulator min-run stickiness is handled earlier in
+            # the control flow (the elif branch above), so we only reach
+            # here for fresh optimizer decisions where min-run doesn't apply.
+            guard_blocks = max(SAFETY_GUARD_MIN_BLOCKS, min_run)
+            near_heat = remaining_heat_targets[:guard_blocks]
+            near_cool = remaining_cool_targets[:guard_blocks]
+            guard_horizon = guard_blocks * 5.0
             if near_heat and action == MODE_HEATING and T >= max(near_heat):
-                action = MODE_IDLE
-                pf = 0.0
+                # Predict where temp goes with no HVAC
+                qs_guard = solar_series[i] if solar_series and i < len(solar_series) else 0.0
+                predicted = model.predict(
+                    T,
+                    outdoor_series[i],
+                    Q_active=0.0,
+                    dt_minutes=guard_horizon,
+                    q_solar=qs_guard,
+                    q_residual=current_q_residual,
+                    q_occupancy=q_occupancy,
+                )
+                if predicted < min(near_heat) - GUARD_PREDICTION_MARGIN:
+                    pass  # Allow heating — pre-heating needed
+                else:
+                    action = MODE_IDLE
+                    pf = 0.0
             elif near_cool and action == MODE_COOLING and T <= min(near_cool):
-                action = MODE_IDLE
-                pf = 0.0
+                qs_guard = solar_series[i] if solar_series and i < len(solar_series) else 0.0
+                predicted = model.predict(
+                    T,
+                    outdoor_series[i],
+                    Q_active=0.0,
+                    dt_minutes=guard_horizon,
+                    q_solar=qs_guard,
+                    q_residual=current_q_residual,
+                    q_occupancy=q_occupancy,
+                )
+                if predicted > max(near_cool) + GUARD_PREDICTION_MARGIN:
+                    pass  # Allow cooling — pre-cooling needed
+                else:
+                    action = MODE_IDLE
+                    pf = 0.0
         if action == MODE_HEATING:
             Q = pf * model.Q_heat
         elif action == MODE_COOLING:

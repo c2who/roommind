@@ -923,3 +923,83 @@ class TestSimulateMPCEdgeCases:
         assert any(r > n for r, n in zip(temps_with_residual, temps_no_residual, strict=True)), (
             "Residual series should raise temperatures compared to no residual"
         )
+
+    def test_early_exit_min_run_when_comfortable(self):
+        """Min-run early exit: stop heating early when model predicts comfort."""
+        # Underfloor system → min_run = 12 blocks (60 min / 5 min per block)
+        # Very high Q_heat so temp overshoots quickly
+        model = RCModel(C=1.0, U=0.5, Q_heat=5000.0, Q_cool=50.0, Q_solar=0.0)
+        target_forecast = [{"target_temp": 21.0, "heat_target": 21.0, "cool_target": 24.0}] * 12
+        outdoor_series = [15.0] * 12  # mild outdoor
+        room_config = {
+            "thermostats": ["climate.trv"],
+            "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
+            "climate_mode": "auto",
+        }
+        temps, actions = _simulate_mpc(
+            model,
+            target_forecast,
+            outdoor_series,
+            current_temp=18.0,
+            room_config=room_config,
+            settings={"comfort_weight": 70},
+            heating_system_type="underfloor",
+        )
+        # Without early exit, all 12 blocks would be heating (min_run=12).
+        # With early exit (after 50% = block 6), heating stops because the
+        # model predicts the room stays comfortable without HVAC.
+        heating_blocks = sum(1 for a in actions if a == "heating")
+        assert heating_blocks < 12, (
+            f"Expected early exit from min-run, but got {heating_blocks} heating blocks (min_run=12)"
+        )
+
+    def test_guard_allows_preheating_when_drift_undershoots(self):
+        """Guard allows heating when idle drift would undershoot target - margin."""
+        # High U (fast heat loss) means idle drift will drop well below target
+        model = RCModel(C=1.0, U=5.0, Q_heat=200.0, Q_cool=50.0, Q_solar=0.0)
+        target_forecast = [{"target_temp": 21.0, "heat_target": 21.0, "cool_target": 24.0}] * 20
+        outdoor_series = [-10.0] * 20  # extremely cold outside → fast drift down
+        room_config = {
+            "thermostats": ["climate.trv"],
+            "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
+            "climate_mode": "auto",
+        }
+        # Start slightly above target — old guard always blocks, but idle drift
+        # prediction should show the room will fall well below target
+        temps, actions = _simulate_mpc(
+            model,
+            target_forecast,
+            outdoor_series,
+            current_temp=21.2,
+            room_config=room_config,
+            settings={"comfort_weight": 70},
+        )
+        # With prediction-aware guard, heating should be allowed (pre-heating)
+        # so temperature shouldn't plummet
+        assert temps[-1] > 18.0, f"Expected pre-heating to keep temp above 18, got {temps[-1]}"
+
+    def test_guard_overrides_to_idle_when_drift_is_fine(self):
+        """Guard overrides heating→idle when idle drift stays above target - margin."""
+        # Low U (slow heat loss) + mild outdoor = drift stays fine
+        model = RCModel(C=1.0, U=0.05, Q_heat=100.0, Q_cool=50.0, Q_solar=0.0)
+        target_forecast = [{"target_temp": 21.0, "heat_target": 21.0, "cool_target": 24.0}] * 20
+        outdoor_series = [19.0] * 20  # mild outdoor, minimal drift
+        room_config = {
+            "thermostats": ["climate.trv"],
+            "acs": [],
+            "devices": [{"entity_id": "climate.trv", "type": "trv", "role": "auto", "heating_system_type": ""}],
+            "climate_mode": "auto",
+        }
+        # Start above target — guard should override to idle
+        temps, actions = _simulate_mpc(
+            model,
+            target_forecast,
+            outdoor_series,
+            current_temp=21.5,
+            room_config=room_config,
+            settings={"comfort_weight": 70},
+        )
+        # Should NOT overheat — guard should block unnecessary heating
+        assert temps[-1] < 23.0, f"Expected guard to prevent overheating, got {temps[-1]}"
