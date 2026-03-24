@@ -124,6 +124,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._switch_entity_areas: set[str] = set()
         self._climate_control_switch_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
+        self._cover_sensor_entity_areas: set[str] = set()
         self._climate_entity_areas: set[str] = set()
         # Heating demand aggregation (forecast-aware state machine)
         self._heating_demand_was_active: bool = False
@@ -1436,6 +1437,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
                 self.async_add_binary_sensor_entities(_create_room_binary_sensors(self, area_id, room))
                 self._binary_sensor_entity_areas.add(area_id)
+            if (
+                area_id not in self._cover_sensor_entity_areas
+                and hasattr(self, "async_add_entities")
+                and self.async_add_entities
+            ):
+                from .sensor import _create_cover_sensors
+
+                self.async_add_entities(_create_cover_sensors(self, area_id, room["covers"]))
+                self._cover_sensor_entity_areas.add(area_id)
 
         await self.async_request_refresh()
 
@@ -1471,6 +1481,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._switch_entity_areas.discard(area_id)
         self._climate_control_switch_areas.discard(area_id)
         self._binary_sensor_entity_areas.discard(area_id)
+        self._cover_sensor_entity_areas.discard(area_id)
         self._climate_entity_areas.discard(area_id)
         self._model_manager.remove_room(area_id)
         self._heat_source_states.pop(area_id, None)
