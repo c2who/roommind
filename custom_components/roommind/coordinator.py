@@ -926,10 +926,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         f" (low {min_t:.1f}°C in {min_idx * dt:.0f}min)"
                     )
                 else:
-                    prediction_info = (
-                        f" | predicted: {min_t:.1f}°C..{max_t:.1f}°C"
-                        f" over {len(temps[1:]) * dt:.0f}min"
-                    )
+                    prediction_info = f" | predicted: {min_t:.1f}°C..{max_t:.1f}°C over {len(temps[1:]) * dt:.0f}min"
             _LOGGER.info(
                 "[%s] %s | temp=%s targets=%s/%s (%s) mode=%s pf=%.0f%% mpc=%s%s",
                 area_id,

@@ -880,8 +880,7 @@ class MPCController:
             predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
             if predicted < min(near_heat) - GUARD_PREDICTION_MARGIN:
                 _LOGGER.debug(
-                    "[%s] Safety guard: allowed HEATING"
-                    " (predicted %.1f in %dmin < min target %.1f - %.1f margin)",
+                    "[%s] Safety guard: allowed HEATING (predicted %.1f in %dmin < min target %.1f - %.1f margin)",
                     self._area_id,
                     predicted,
                     guard_horizon_minutes,
@@ -910,8 +909,7 @@ class MPCController:
             predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
             if predicted > max(near_cool) + GUARD_PREDICTION_MARGIN:
                 _LOGGER.debug(
-                    "[%s] Safety guard: allowed COOLING"
-                    " (predicted %.1f in %dmin > max target %.1f + %.1f margin)",
+                    "[%s] Safety guard: allowed COOLING (predicted %.1f in %dmin > max target %.1f + %.1f margin)",
                     self._area_id,
                     predicted,
                     guard_horizon_minutes,
