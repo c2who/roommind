@@ -87,6 +87,7 @@ export interface RoomConfig {
   devices?: DeviceConfig[];
   temperature_sensor: string;
   humidity_sensor: string;
+  occupancy_sensors?: string[];
   window_sensors: string[];
   window_open_delay: number;
   window_close_delay: number;

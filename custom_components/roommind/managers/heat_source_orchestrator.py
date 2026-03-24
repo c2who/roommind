@@ -71,7 +71,7 @@ def _ac_can_heat(hass: HomeAssistant, entity_id: str) -> bool:
     modes = state.attributes.get("hvac_modes", [])
     if "heat" in modes or "heat_cool" in modes or "auto" in modes:
         return True
-    # Modes unreliable when off with no active modes — assume it can heat.
+    # Modes unreliable (no active modes in list) — assume it can heat.
     return not has_reliable_hvac_modes(state)
 
 

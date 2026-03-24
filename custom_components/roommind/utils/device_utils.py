@@ -38,13 +38,11 @@ def has_reliable_hvac_modes(state: Any) -> bool:
     """Check if a device's hvac_modes attribute is trustworthy.
 
     Some integrations report only limited modes like ``["off", "fan_only"]``
-    when the device is off, hiding its actual capabilities (see #100).
+    regardless of device state, hiding actual capabilities (see #100).
     Returns *False* when modes are likely incomplete.
     """
     if state is None:
         return False
-    if state.state != "off":
-        return True  # Only off-state can have incomplete modes
     modes = set(state.attributes.get("hvac_modes") or [])
     return bool(modes & _ACTIVE_HVAC_MODES)
 

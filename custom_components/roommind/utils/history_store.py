@@ -21,6 +21,7 @@ DETAIL_FIELDS = [
     "solar_irradiance",
     "blind_position",
     "device_setpoint",
+    "occupancy",
 ]
 DETAIL_MAX_AGE = 48 * 3600  # 48 hours
 HISTORY_MAX_AGE = 90 * 24 * 3600  # 90 days
@@ -64,6 +65,7 @@ class HistoryStore:
                     "solar_irradiance": data.get("solar_irradiance", ""),
                     "blind_position": data.get("blind_position", ""),
                     "device_setpoint": data.get("device_setpoint", ""),
+                    "occupancy": data.get("occupancy", ""),
                 }
             )
 

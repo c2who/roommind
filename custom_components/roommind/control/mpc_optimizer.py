@@ -60,6 +60,7 @@ class MPCOptimizer:
         *,
         solar_series: list[float] | None = None,
         residual_series: list[float] | None = None,
+        occupancy_series: list[float] | None = None,
         initial_mode: str = MODE_IDLE,
         initial_blocks_in_mode: int = 0,
     ) -> MPCPlan:
@@ -84,6 +85,7 @@ class MPCOptimizer:
 
         q_solar = solar_series or [0.0] * n_blocks
         q_residual = residual_series or [0.0] * n_blocks
+        q_occupancy = occupancy_series or [0.0] * n_blocks
 
         actions: list[str] = []
         temperatures: list[float] = [T_room]
@@ -98,6 +100,7 @@ class MPCOptimizer:
             cool_tgt = cool_target_series[i]
             qs = q_solar[i] if i < len(q_solar) else 0.0
             qr = q_residual[i] if i < len(q_residual) else 0.0
+            qo = q_occupancy[i] if i < len(q_occupancy) else 0.0
 
             # Determine available actions this block
             available = [MODE_IDLE]
@@ -118,6 +121,7 @@ class MPCOptimizer:
                 best_cost = float("inf")
                 future_solar = q_solar[i:] if q_solar else None
                 future_residual = q_residual[i:] if q_residual else None
+                future_occupancy = q_occupancy[i:] if q_occupancy else None
                 for action in available:
                     cost = self._evaluate_action(
                         action,
@@ -131,6 +135,7 @@ class MPCOptimizer:
                         dt_minutes,
                         future_solar=future_solar,
                         future_residual=future_residual,
+                        future_occupancy=future_occupancy,
                     )
                     if cost < best_cost:
                         best_cost = cost
@@ -146,6 +151,7 @@ class MPCOptimizer:
                 dt_minutes,
                 q_solar=qs,
                 q_residual=qr,
+                q_occupancy=qo,
             )
             if best_action == MODE_IDLE:
                 pf = 0.0
@@ -166,6 +172,7 @@ class MPCOptimizer:
                 dt_minutes,
                 q_solar=qs,
                 q_residual=qr if Q == 0.0 else 0.0,
+                q_occupancy=qo,
             )
             next_temp = max(self.temp_min, min(next_temp, self.temp_max))
 
@@ -203,6 +210,7 @@ class MPCOptimizer:
         *,
         future_solar: list[float] | None = None,
         future_residual: list[float] | None = None,
+        future_occupancy: list[float] | None = None,
     ) -> float:
         """Evaluate the cost of taking an action, looking a few steps ahead."""
         # Scale lookahead with min_run_blocks so slow systems (e.g. underfloor)
@@ -213,10 +221,12 @@ class MPCOptimizer:
         T = T_room
         solar = future_solar or []
         residual = future_residual or []
+        occupancy = future_occupancy or []
 
         for j in range(lookahead):
             qs = solar[j] if j < len(solar) else 0.0
             qr = residual[j] if j < len(residual) else 0.0
+            qo = occupancy[j] if j < len(occupancy) else 0.0
             # Simulate HVAC for min_run_blocks (not just 1 block) to correctly
             # value sustained heating/cooling over the lookahead horizon.
             block_Q = Q if j < self.min_run_blocks else 0.0
@@ -227,6 +237,7 @@ class MPCOptimizer:
                 dt_minutes,
                 q_solar=qs,
                 q_residual=qr if block_Q == 0.0 else 0.0,
+                q_occupancy=qo,
             )
             # Clamp temperature in lookahead to prevent cost explosion
             # from implausible model predictions
@@ -268,6 +279,7 @@ class MPCOptimizer:
         *,
         q_solar: float = 0.0,
         q_residual: float = 0.0,
+        q_occupancy: float = 0.0,
     ) -> tuple[float, str]:
         """Analytical closed-form optimal heating/cooling power.
 
@@ -299,6 +311,12 @@ class MPCOptimizer:
                 T_drift += beta * self.model.Q_heat * q_residual / alpha
             else:
                 T_drift += self.model.Q_heat * q_residual * dt_h
+        # Add predicted occupancy gain to drift
+        if q_occupancy > 0:
+            if alpha > 0.01:
+                T_drift += beta * self.model.Q_occupancy * q_occupancy / alpha
+            else:
+                T_drift += self.model.Q_occupancy * q_occupancy * dt_h
 
         Q_required = (target - T_drift) * alpha / beta
 

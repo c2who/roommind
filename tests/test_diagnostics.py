@@ -18,13 +18,13 @@ from custom_components.roommind.diagnostics import (
 def _make_estimator():
     """Build a mock ThermalEKF estimator."""
     est = MagicMock()
-    est._x = [20.0, 0.5, 100.0, 80.0, 10.0]
+    est._x = [20.0, 0.5, 100.0, 80.0, 10.0, 0.3]
     est._n_updates = 200
     est._n_idle = 120
     est._n_heating = 60
     est._n_cooling = 20
     est._applicable_modes = {"idle", "heating"}
-    est._P = [[0.01 * (i == j) for j in range(5)] for i in range(5)]
+    est._P = [[0.01 * (i == j) for j in range(6)] for i in range(6)]
     est.prediction_std.return_value = 0.25
     est.confidence = 0.85
     rc = MagicMock()
@@ -95,7 +95,7 @@ def test_build_model_info():
     assert info["n_heating"] == 60
     assert info["n_cooling"] == 20
     assert info["applicable_modes"] == ["heating", "idle"]  # sorted
-    assert len(info["P_diagonal"]) == 5
+    assert len(info["P_diagonal"]) == 6
     assert info["confidence"] == 0.85
     assert "model_params" in info
 

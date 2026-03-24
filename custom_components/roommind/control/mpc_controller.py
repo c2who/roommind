@@ -392,8 +392,8 @@ _ASSUMED_FULL_MODES: list[str] = ["off", "heat", "cool", "fan_only"]
 def _effective_ac_modes(state: Any) -> list[str]:
     """Return hvac_modes, assuming full capability when modes appear unreliable.
 
-    When a device is off and reports no active modes (heat/cool/heat_cool/auto),
-    the integration likely hides modes while off or is misconfigured.  Return a
+    When a device reports no active modes (heat/cool/heat_cool/auto),
+    the integration likely hides modes or is misconfigured.  Return a
     generous assumed set so the command cascade picks the right mode.  The actual
     service call may still fail — the caller's try/except handles that safely.
     """
@@ -556,6 +556,7 @@ class MPCController:
         heating_system_type: str = "",
         mode_on_since: float | None = None,
         shading_factor: float = 1.0,
+        q_occupancy: float = 0.0,
     ) -> None:
         self.hass = hass
         self.room_config = room_config
@@ -580,6 +581,7 @@ class MPCController:
         self._heating_system_type = heating_system_type
         self._mode_on_since = mode_on_since
         self._shading_factor = shading_factor
+        self.q_occupancy = q_occupancy
         self._idle_targets: TargetTemps | None = None
 
         s = settings or {}
@@ -633,6 +635,7 @@ class MPCController:
             PLAN_DT_MINUTES,
             q_solar=self.q_solar * self._shading_factor,
             q_residual=self.q_residual,
+            q_occupancy=self.q_occupancy,
         )
         if pred_std < MPC_MAX_PREDICTION_STD and self._has_enough_data(can_heat, can_cool):
             return self._evaluate_mpc(current_temp, targets)
@@ -779,6 +782,9 @@ class MPCController:
         # Build residual heat series (decaying from current q_residual)
         residual_series = self._build_residual_series(horizon_blocks)
 
+        # Build occupancy heat series (constant over horizon)
+        occupancy_series = [self.q_occupancy] * horizon_blocks
+
         # Build dual target series with schedule lookahead for pre-heating/pre-cooling.
         # None values (from "off" action) are replaced with current_temp so the
         # optimizer sees "no deviation needed = idle optimal".
@@ -831,6 +837,7 @@ class MPCController:
             dt_minutes=PLAN_DT_MINUTES,
             solar_series=solar_series,
             residual_series=residual_series,
+            occupancy_series=occupancy_series,
             initial_mode=self.previous_mode,
             initial_blocks_in_mode=blocks_in_mode,
         )
@@ -1484,12 +1491,12 @@ class MPCController:
             resolved = resolve_hvac_mode(data["hvac_mode"], hvac_modes)
             if resolved is None:
                 if not has_reliable_hvac_modes(state):
-                    # Modes unreliable (device off with incomplete modes).
-                    # Send the desired mode directly; turning the device on
-                    # should reveal the full mode list.
+                    # Modes unreliable (device with incomplete modes).
+                    # Send the desired mode directly; the device may reveal
+                    # its full mode list once active.
                     resolved = data["hvac_mode"]
                     _LOGGER.debug(
-                        "Area '%s': device '%s' off with incomplete modes, sending '%s' directly",
+                        "Area '%s': device '%s' has incomplete modes, sending '%s' directly",
                         self._area_id,
                         eid,
                         resolved,

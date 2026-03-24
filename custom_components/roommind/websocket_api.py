@@ -50,6 +50,7 @@ _ROOM_SAVE_FIELDS = (
     "devices",
     "temperature_sensor",
     "humidity_sensor",
+    "occupancy_sensors",
     "climate_mode",
     "schedules",
     "schedule_selector_entity",
@@ -252,6 +253,7 @@ async def websocket_list_rooms(
         ],
         vol.Optional("temperature_sensor"): str,
         vol.Optional("humidity_sensor"): str,
+        vol.Optional("occupancy_sensors"): [str],
         vol.Optional("climate_mode"): vol.In(CLIMATE_MODES),
         vol.Optional("schedules"): [{vol.Required("entity_id"): str}],
         vol.Optional("schedule_selector_entity"): str,
@@ -318,7 +320,7 @@ async def websocket_save_room(
 
     # Reject RoomMind's own entities to prevent self-assignment (#86)
     own_prefix = f"{DOMAIN}_"
-    for field in ("thermostats", "acs", "window_sensors", "covers"):
+    for field in ("thermostats", "acs", "window_sensors", "covers", "occupancy_sensors"):
         for eid in config.get(field, []):
             if eid.split(".", 1)[-1].startswith(own_prefix):
                 connection.send_error(

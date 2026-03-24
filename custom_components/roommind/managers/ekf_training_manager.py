@@ -33,6 +33,7 @@ class EkfTrainingManager:
         q_solar: float,
         q_residual: float = 0.0,
         shading_factor: float = 1.0,
+        q_occupancy: float = 0.0,
     ) -> None:
         """Flush accumulated EKF update (on mode change or window open)."""
         accumulated = self._accumulated_dt.pop(area_id, 0.0)
@@ -50,6 +51,7 @@ class EkfTrainingManager:
                 power_fraction=pf,
                 q_solar=q_solar * shading_factor,
                 q_residual=q_residual,
+                q_occupancy=q_occupancy,
             )
 
     def process(
@@ -67,6 +69,7 @@ class EkfTrainingManager:
         can_heat: bool,
         can_cool: bool,
         dt_minutes: float,
+        q_occupancy: float = 0.0,
     ) -> None:
         """Process an EKF training step for a room.
 
@@ -83,6 +86,7 @@ class EkfTrainingManager:
                 q_solar,
                 q_residual=q_residual,
                 shading_factor=shading_factor,
+                q_occupancy=q_occupancy,
             )
             self._accumulated_dt.pop(area_id, None)
             self._accumulated_mode.pop(area_id, None)
@@ -107,6 +111,7 @@ class EkfTrainingManager:
                 q_solar,
                 q_residual=q_residual,
                 shading_factor=shading_factor,
+                q_occupancy=q_occupancy,
             )
             self._accumulated_dt.pop(area_id, None)
             self._accumulated_mode.pop(area_id, None)
@@ -123,6 +128,7 @@ class EkfTrainingManager:
                     q_solar,
                     q_residual=q_residual,
                     shading_factor=shading_factor,
+                    q_occupancy=q_occupancy,
                 )
 
             old_dt = self._accumulated_dt.get(area_id, 0.0)
@@ -146,6 +152,7 @@ class EkfTrainingManager:
                     power_fraction=pf,
                     q_solar=q_solar * shading_factor,
                     q_residual=q_residual,
+                    q_occupancy=q_occupancy,
                 )
                 self._accumulated_dt[area_id] = 0.0
 

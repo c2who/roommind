@@ -415,11 +415,32 @@ class TestHasReliableHvacModes:
     def test_none_state(self):
         assert has_reliable_hvac_modes(None) is False
 
-    def test_device_on_always_reliable(self):
-        """Non-off state is always considered reliable."""
+    def test_device_on_with_active_modes_reliable(self):
+        """Device with active modes in list is reliable regardless of state."""
         state = MagicMock()
         state.state = "heat"
         state.attributes = {"hvac_modes": ["heat"]}
+        assert has_reliable_hvac_modes(state) is True
+
+    def test_device_fan_only_no_active_modes_unreliable(self):
+        """Device in fan_only with no active modes is unreliable (#100)."""
+        state = MagicMock()
+        state.state = "fan_only"
+        state.attributes = {"hvac_modes": ["off", "fan_only"]}
+        assert has_reliable_hvac_modes(state) is False
+
+    def test_device_on_without_active_modes_unreliable(self):
+        """Device in heat state but modes list has no active modes (broken integration)."""
+        state = MagicMock()
+        state.state = "heat"
+        state.attributes = {"hvac_modes": ["off", "fan_only"]}
+        assert has_reliable_hvac_modes(state) is False
+
+    def test_device_fan_only_with_active_modes_reliable(self):
+        """Device in fan_only with active modes in list is reliable."""
+        state = MagicMock()
+        state.state = "fan_only"
+        state.attributes = {"hvac_modes": ["off", "heat", "cool", "fan_only"]}
         assert has_reliable_hvac_modes(state) is True
 
     def test_device_off_with_active_modes_reliable(self):

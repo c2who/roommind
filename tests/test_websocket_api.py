@@ -1103,7 +1103,7 @@ def _make_mock_estimator(**overrides):
     est._n_heating = overrides.get("n_heating", 60)
     est._n_cooling = overrides.get("n_cooling", 20)
     est._applicable_modes = overrides.get("applicable_modes", {"idle", "heating"})
-    est._P = overrides.get("P", [[0.01 * (i == j) for j in range(5)] for i in range(5)])
+    est._P = overrides.get("P", [[0.01 * (i == j) for j in range(6)] for i in range(6)])
     est.confidence = overrides.get("confidence", 0.85)
     est.prediction_std.return_value = overrides.get("prediction_std", 0.3)
     rc = MagicMock()

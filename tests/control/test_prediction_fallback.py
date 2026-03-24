@@ -226,6 +226,16 @@ class TestCheckAcsCanHeat:
         room = make_room(thermostats=[], acs=["climate.ac"])
         assert check_acs_can_heat(hass, room) is False
 
+    def test_ac_fan_only_unreliable_modes(self):
+        """AC in fan_only with no active modes uses assumed modes (#100)."""
+        hass = build_hass()
+        state = MagicMock()
+        state.state = "fan_only"
+        state.attributes = {"hvac_modes": ["off", "fan_only"]}
+        hass.states.get = MagicMock(return_value=state)
+        room = make_room(thermostats=[], acs=["climate.ac"])
+        assert check_acs_can_heat(hass, room) is True
+
 
 # ---------------------------------------------------------------------------
 # get_can_heat_cool with acs_can_heat

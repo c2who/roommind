@@ -26,6 +26,7 @@ from .const import (
     HISTORY_ROTATE_CYCLES,
     HISTORY_WRITE_CYCLES,
     MAX_PREDICTION_DELTA,
+    MAX_SENSOR_STALENESS,
     MODE_COOLING,
     MODE_DISABLED,
     MODE_HEATING,
@@ -118,6 +119,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._entity_areas: set[str] = set()
         # Min-run enforcement: timestamp when current non-idle mode started
         self._mode_on_since: dict[str, float] = {}
+        # Sensor dropout fallback: last valid temperature per room
+        self._last_valid_temps: dict[str, tuple[float, float]] = {}  # {area_id: (celsius, monotonic_ts)}
         self._switch_entity_areas: set[str] = set()
         self._climate_control_switch_areas: set[str] = set()
         self._binary_sensor_entity_areas: set[str] = set()
@@ -225,7 +228,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         self._history_store.record,
                         area_id,
                         {
-                            "room_temp": current_temp,
+                            "room_temp": rs.get("current_temp_raw", current_temp),
                             "outdoor_temp": self.outdoor_temp,
                             "target_temp": target_temp,
                             "mode": mode,
@@ -235,6 +238,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "solar_irradiance": round(self._current_q_solar, 3),
                             "blind_position": rs.get("blind_position"),
                             "device_setpoint": rs.get("device_setpoint"),
+                            "occupancy": rs.get("q_occupancy", 0.0) > 0,
                         },
                     )
                 except Exception:  # noqa: BLE001
@@ -371,6 +375,24 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             raw_dev = self._read_device_temp(room)
             current_temp = ha_temp_to_celsius(self.hass, raw_dev) if raw_dev is not None else None
 
+        # --- Sensor dropout fallback: use cached temp if fresh enough ---
+        current_temp_raw = current_temp  # preserve original for EKF/history
+
+        if current_temp is not None:
+            self._last_valid_temps[area_id] = (current_temp, time.monotonic())
+        elif area_id in self._last_valid_temps:
+            cached_temp, cached_ts = self._last_valid_temps[area_id]
+            if time.monotonic() - cached_ts < MAX_SENSOR_STALENESS:
+                current_temp = cached_temp
+                _LOGGER.debug(
+                    "Room '%s': sensor unavailable, using cached temp %.1f°C (age %.0fs)",
+                    area_id,
+                    cached_temp,
+                    time.monotonic() - cached_ts,
+                )
+            else:
+                del self._last_valid_temps[area_id]
+
         current_humidity = read_sensor_value(self.hass, room.get("humidity_sensor"), area_id, "humidity")
 
         # --- Outdoor room: skip all control logic ---
@@ -378,6 +400,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             return {
                 "area_id": area_id,
                 "current_temp": current_temp,
+                "current_temp_raw": current_temp_raw,
                 "current_humidity": current_humidity,
                 "target_temp": None,
                 "heat_target": None,
@@ -474,6 +497,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         cover_pos_result = self._cover_orchestrator.read_positions(area_id, room)
         shading_factor = cover_pos_result.shading_factor
 
+        # Read occupancy sensors for thermal model (OR logic: any sensor "on" → occupied)
+        q_occupancy = 0.0
+        for occ_eid in room.get("occupancy_sensors", []):
+            occ_state = self.hass.states.get(occ_eid)
+            if occ_state and occ_state.state == "on":
+                q_occupancy = 1.0
+                break
+            # unavailable/unknown/off → skip (conservative: no occupancy heat)
+
         # Determine and apply mode with MPC controller
         controller = MPCController(
             self.hass,
@@ -493,6 +525,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             q_residual=q_residual,
             heating_system_type=system_type,
             shading_factor=shading_factor,
+            q_occupancy=q_occupancy,
         )
         mode, power_fraction = await controller.async_evaluate(current_temp, targets)
 
@@ -784,12 +817,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # Update thermal model with observation (EKF online learning)
         learning_disabled = settings.get("learning_disabled_rooms", [])
         learning_active = area_id not in learning_disabled
-        if learning_active and current_temp is not None:
-            T_outdoor = self.outdoor_temp if self.outdoor_temp is not None else current_temp
+        if learning_active and current_temp_raw is not None:
+            T_outdoor = self.outdoor_temp if self.outdoor_temp is not None else current_temp_raw
             can_heat, can_cool = get_can_heat_cool(room, acs_can_heat=check_acs_can_heat(self.hass, room))
             self._ekf_training.process(
                 area_id=area_id,
-                current_temp=current_temp,
+                current_temp=current_temp_raw,
                 T_outdoor=T_outdoor,
                 ekf_mode=ekf_mode,
                 ekf_pf=ekf_pf,
@@ -801,6 +834,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 can_heat=can_heat,
                 can_cool=can_cool,
                 dt_minutes=UPDATE_INTERVAL / 60.0,
+                q_occupancy=q_occupancy,
             )
         else:
             self._ekf_training.clear(area_id)
@@ -891,6 +925,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         return {
             "area_id": area_id,
             "current_temp": current_temp,
+            "current_temp_raw": current_temp_raw,
             "current_humidity": current_humidity,
             "target_temp": target_temp,
             "heat_target": targets.heat,
@@ -931,6 +966,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "mold_prevention_active": mold_prevention_active_room,
             "mold_prevention_delta": mold_prevention_temp_delta,
             "shading_factor": shading_factor,
+            "q_occupancy": q_occupancy,
             "n_observations": self._model_manager.get_n_observations(area_id),
             "blind_position": (
                 self._cover_orchestrator.get_current_position(area_id)
@@ -1425,6 +1461,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         self._previous_modes.pop(area_id, None)
         self._previous_decisions.pop(area_id, None)
         self._last_resolve_reason.pop(area_id, None)
+        self._last_valid_temps.pop(area_id, None)
         self._ekf_training.remove_room(area_id)
         self._pending_predictions.pop(area_id, None)
         self._prediction_forecasts.pop(area_id, None)

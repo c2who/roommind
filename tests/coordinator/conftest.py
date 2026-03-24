@@ -16,6 +16,7 @@ SAMPLE_ROOM = {
     "schedule_selector_entity": "",
     "comfort_temp": 21.0,
     "eco_temp": 17.0,
+    "occupancy_sensors": [],
 }
 
 MANAGED_ROOM = {

@@ -8,6 +8,7 @@ jobs:
   remove-label:
     if: >
       !github.event.issue.pull_request &&
+      github.event.issue.state == 'open' &&
       github.event.comment.user.login == github.event.issue.user.login &&
       contains(toJSON(github.event.issue.labels.*.name), 'waiting for feedback')
     runs-on: ubuntu-latest

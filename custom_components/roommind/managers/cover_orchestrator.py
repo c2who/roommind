@@ -203,6 +203,7 @@ class CoverOrchestrator:
             forced_position=_forced_position,
             forced_reason=_forced_reason,
             sensor_only=sensor_only,
+            current_temp=current_temp,
         )
 
         if cover_decision.changed and not sensor_only:

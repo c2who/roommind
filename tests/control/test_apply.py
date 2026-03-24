@@ -865,8 +865,9 @@ async def test_apply_managed_mode_ac_heat_only():
 
 
 @pytest.mark.asyncio
-async def test_apply_managed_mode_ac_no_compatible_mode_turns_off():
-    """Managed mode AC with no compatible mode attempts turn-off (warning if no off/min_temp)."""
+async def test_apply_managed_mode_ac_unreliable_fan_only_sends_heat():
+    """Managed mode AC in fan_only with no active modes: unreliable → sends heat directly (#100)."""
+    _last_commands.clear()
     hass = build_hass()
     ac_state = MagicMock()
     ac_state.state = "fan_only"
@@ -890,9 +891,12 @@ async def test_apply_managed_mode_ac_no_compatible_mode_turns_off():
     )
 
     await ctrl.async_apply("heating", target_temp=21.0)
-    # Device has no 'off' mode and no min_temp, so async_turn_off_climate
-    # logs a warning and returns without calling any service
-    hass.services.async_call.assert_not_called()
+    # Device has unreliable modes (no active modes in list) → assumed full modes
+    # → heat command sent directly (may fail on device, caught by try/except)
+    calls = hass.services.async_call.call_args_list
+    hvac_calls = [c for c in calls if c[0][1] == "set_hvac_mode"]
+    assert len(hvac_calls) >= 1
+    assert hvac_calls[0][0][2]["hvac_mode"] == "heat"
 
 
 @pytest.mark.asyncio
