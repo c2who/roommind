@@ -185,26 +185,23 @@ class TestRoomMindCoordinator:
         room = {"area_id": "bedroom_abc12345"}
         await coordinator.async_room_added(room)
 
-        # async_add_entities should be called with 3 entities
+        # async_add_entities should be called with 2 entities
         mock_add_entities.assert_called_once()
         entities = mock_add_entities.call_args[0][0]
-        assert len(entities) == 3
+        assert len(entities) == 2
 
         # Verify entity types
         from custom_components.roommind.sensor import (
-            RoomMindForecastSensor,
             RoomMindModeSensor,
             RoomMindTargetTemperatureSensor,
         )
 
         assert isinstance(entities[0], RoomMindTargetTemperatureSensor)
         assert isinstance(entities[1], RoomMindModeSensor)
-        assert isinstance(entities[2], RoomMindForecastSensor)
 
         # Verify unique IDs
         assert entities[0]._attr_unique_id == "roommind_bedroom_abc12345_target_temp"
         assert entities[1]._attr_unique_id == "roommind_bedroom_abc12345_mode"
-        assert entities[2]._attr_unique_id == "roommind_bedroom_abc12345_forecast"
 
         coordinator.async_request_refresh.assert_called_once()
 

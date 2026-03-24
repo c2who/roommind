@@ -987,7 +987,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1
             ),
             "climate_control_enabled": room.get("climate_control_enabled", True),
-            "forecast": self._prediction_forecasts.get(area_id, []),
             "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
                 room.get("covers_auto_enabled", False) and cover_result.decision.target_position < 100
@@ -1492,7 +1491,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         registry = er.async_get(self.hass)
 
         # Known valid suffixes for each condition
-        always_valid = ("_target_temp", "_mode", "_forecast", "_climate", "_override", "_climate_control")
+        always_valid = ("_target_temp", "_mode", "_climate", "_override", "_climate_control")
         cover_only = ("_cover_auto", "_cover_paused")
         # Global entities (not per-room) that should never be cleaned up
         global_uids = {f"{DOMAIN}_vacation", f"{DOMAIN}_heating_demand"}
