@@ -921,10 +921,8 @@ class MPCController:
                         f"guard: kept HEATING (min-run {elapsed:.0f}s/{min_run_s:.0f}s,"
                         f" predicted {predicted:.2f} in {guard_horizon_minutes}min)"
                     )
-            _LOGGER.debug("[%s] %s", self._area_id, self.last_guard_reason)
         elif near_heat and action == MODE_HEATING:
             self.last_guard_reason = f"guard: no override (temp {current_temp:.2f} < target {max(near_heat):.2f})"
-            _LOGGER.debug("[%s] %s", self._area_id, self.last_guard_reason)
         elif near_cool and action == MODE_COOLING and current_temp <= min(near_cool):
             predicted = self._predict_idle_drift(current_temp, guard_horizon_minutes)
             if predicted > max(near_cool) + GUARD_PREDICTION_MARGIN:
@@ -955,10 +953,8 @@ class MPCController:
                         f"guard: kept COOLING (min-run {elapsed:.0f}s/{min_run_s:.0f}s,"
                         f" predicted {predicted:.2f} in {guard_horizon_minutes}min)"
                     )
-            _LOGGER.debug("[%s] %s", self._area_id, self.last_guard_reason)
         elif near_cool and action == MODE_COOLING:
             self.last_guard_reason = f"guard: no override (temp {current_temp:.2f} > target {min(near_cool):.2f})"
-            _LOGGER.debug("[%s] %s", self._area_id, self.last_guard_reason)
 
         return action, power_fraction
 

@@ -359,6 +359,31 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "rooms_heating_forecast": rooms_heating_forecast,
         }
 
+    @staticmethod
+    def _format_guard_reason(guard_reason: str, current_mode: str, prev_mode: str) -> str:
+        """Extract human-readable reason from MPC guard reason string."""
+        if not guard_reason:
+            return ""
+        if "no override" in guard_reason:
+            if current_mode == MODE_HEATING:
+                return "temp below target"
+            if current_mode == MODE_COOLING:
+                return "temp above target"
+            return ""
+        # Extract details from parentheses
+        paren_start = guard_reason.find("(")
+        paren_end = guard_reason.rfind(")")
+        details = guard_reason[paren_start + 1 : paren_end] if paren_start != -1 and paren_end != -1 else ""
+        if "overrode" in guard_reason:
+            return details
+        if "allowed" in guard_reason:
+            return f"pre-{'heating' if current_mode == MODE_HEATING else 'cooling'}: {details}"
+        if "kept" in guard_reason:
+            return f"min-run protection: {details}"
+        if guard_reason.startswith("MPC decided"):
+            return guard_reason.lower()
+        return guard_reason
+
     async def _async_process_room(self, room: dict, settings: dict, outdoor_forecast: list[dict]) -> dict:
         """Process a single room: read sensor, evaluate schedule, apply control."""
         area_id = room.get("area_id", "unknown")
@@ -546,7 +571,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Force idle when target resolved to "off" (presence away or schedule off)
         if force_off:
-            _LOGGER.debug("[%s] Force-off: targets resolved to off", area_id)
             mode = MODE_IDLE
             power_fraction = 0.0
 
@@ -559,7 +583,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             room.get("window_close_delay", 0),
         )
         if window_open:
-            _LOGGER.debug("[%s] Window open: forcing IDLE", area_id)
             mode = MODE_IDLE
             power_fraction = 0.0
         elif self._window_manager.in_open_delay(area_id) or self._window_manager.in_close_delay(area_id):
@@ -567,13 +590,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # Block new starts and mode switches, but allow MPC to stop naturally.
             prev_mode = self._previous_modes.get(area_id, MODE_IDLE)
             if prev_mode == MODE_IDLE and mode != MODE_IDLE:
-                _LOGGER.debug("[%s] Window delay: blocked new %s start", area_id, mode)
                 mode = MODE_IDLE
                 power_fraction = 0.0
             elif prev_mode != MODE_IDLE and mode != MODE_IDLE and mode != prev_mode:
-                _LOGGER.debug(
-                    "[%s] Window delay: blocked mode switch %s→%s, keeping %s", area_id, prev_mode, mode, prev_mode
-                )
                 mode = prev_mode
 
         # Store MPC prediction forecast for analytics.
@@ -683,7 +702,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         compressor_forced_on.add(eid)
 
             if compressor_forced_off and compressor_forced_off >= set(all_device_eids):
-                _LOGGER.debug("[%s] Compressor group: all devices forced off, IDLE", area_id)
                 mode = MODE_IDLE
                 power_fraction = 0.0
                 compressor_forced_off.clear()
@@ -911,27 +929,57 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         prev = self._previous_decisions.get(area_id, {})
         changes = {k: v for k, v in decision.items() if prev.get(k) != v}
         if changes:
-            # Build consolidated reasoning for the log
+            prev_mode = prev.get("mode", MODE_IDLE)
+
+            # Human-readable action verb
+            actions: list[str] = []
+            if "mode" in changes:
+                if display_mode == MODE_HEATING:
+                    actions.append("Started heating")
+                elif display_mode == MODE_COOLING:
+                    actions.append("Started cooling")
+                elif prev_mode == MODE_HEATING:
+                    actions.append("Stopped heating")
+                elif prev_mode == MODE_COOLING:
+                    actions.append("Stopped cooling")
+                else:
+                    actions.append(f"Mode → {display_mode}")
+            if "window_open" in changes:
+                actions.append("window opened" if window_open else "window closed")
+            if "presence_away" in changes:
+                actions.append("away" if presence_away else "presence returned")
+            if "force_off" in changes:
+                actions.append("force off" if force_off else "force off cleared")
+            if "mold_prevention" in changes:
+                actions.append("mold prevention active" if mold_prevention_active_room else "mold prevention cleared")
+            if "heat_target" in changes or "cool_target" in changes:
+                ht = f"{targets.heat:.1f}" if targets.heat is not None else "off"
+                ct = f"{targets.cool:.1f}" if targets.cool is not None else "off"
+                actions.append(f"targets → {ht}/{ct} ({target_reason})")
+            summary = ", ".join(actions) if actions else "state changed"
+
+            # Extract reason from guard
             reason = ""
             if controller:
-                reason = controller.last_guard_reason or ""
-                idle_drift = controller.last_idle_drift
-                if idle_drift:
-                    drift_temp, drift_minutes = idle_drift
-                    reason += f", idle drift {drift_temp:.2f} in {drift_minutes:.0f}min"
-            _LOGGER.info(
-                "[%s] %s | temp=%s targets=%s/%s (%s) mode=%s pf=%.0f%% mpc=%s%s",
-                area_id,
-                " ".join(f"{k}={v}" for k, v in changes.items()),
-                f"{current_temp:.2f}" if current_temp is not None else "n/a",
-                f"{targets.heat:.2f}" if targets.heat is not None else "off",
-                f"{targets.cool:.2f}" if targets.cool is not None else "off",
-                target_reason,
-                display_mode,
-                display_pf * 100,
-                mpc_active,
-                f" | {reason}" if reason else "",
-            )
+                gr = controller.last_guard_reason or ""
+                reason = self._format_guard_reason(gr, display_mode, prev_mode)
+                # Add idle drift only when idle and not already in guard reason
+                if display_mode == MODE_IDLE and "predicted" not in gr:
+                    idle_drift = controller.last_idle_drift
+                    if idle_drift:
+                        drift_temp, drift_minutes = idle_drift
+                        reason += (", " if reason else "") + f"drift → {drift_temp:.2f} in {drift_minutes:.0f}min"
+
+            # Debug suffix
+            temp_s = f"{current_temp:.2f}" if current_temp is not None else "n/a"
+            ht_s = f"{targets.heat:.2f}" if targets.heat is not None else "off"
+            ct_s = f"{targets.cool:.2f}" if targets.cool is not None else "off"
+            debug = f"temp={temp_s} targets={ht_s}/{ct_s} ({target_reason}) pf={display_pf * 100:.0f}% mpc={mpc_active}"
+
+            if reason:
+                _LOGGER.info("[%s] %s - %s | %s", area_id, summary, reason, debug)
+            else:
+                _LOGGER.info("[%s] %s | %s", area_id, summary, debug)
         self._previous_decisions[area_id] = decision
 
         _room_devices = room.get("devices", [])
