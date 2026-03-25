@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import logging
 import os
+import tempfile
 import time
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,9 +49,16 @@ class HistoryStore:
         ts = timestamp or time.time()
         path = self._detail_path(area_id)
 
+        file_size_before = os.path.getsize(path) if os.path.isfile(path) else -1
+
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
             if f.tell() == 0:
+                _LOGGER.warning(
+                    "History record '%s': file was empty/new (size_before=%d), writing header",
+                    area_id,
+                    file_size_before,
+                )
                 writer.writeheader()
             writer.writerow(
                 {
@@ -125,20 +133,57 @@ class HistoryStore:
     def rotate(self, area_id: str) -> None:
         """Downsample old detail rows to history, trim both files."""
         now = time.time()
+        path = self._detail_path(area_id)
+
+        # Snapshot file size before reading for diagnostics
+        file_size_before = os.path.getsize(path) if os.path.isfile(path) else 0
+
         # Read detail, split into keep (< 48h) and archive (>= 48h)
         detail_rows = self.read_detail(area_id)
         cutoff = now - DETAIL_MAX_AGE
         keep = []
         archive = []
+        skipped_rows: list[dict] = []
         for r in detail_rows:
             try:
                 ts = float(r["timestamp"])
             except (ValueError, TypeError, KeyError):
+                skipped_rows.append(r)
                 continue
             if ts >= cutoff:
                 keep.append(r)
             else:
                 archive.append(r)
+
+        # Diagnostic logging to trace data loss
+        def _ts_range(rows: list[dict]) -> str:
+            if not rows:
+                return ""
+            first = float(rows[0]["timestamp"])
+            last = float(rows[-1]["timestamp"])
+            return f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(first))} → {time.strftime('%Y-%m-%d %H:%M', time.gmtime(last))}"
+
+        parts = [
+            f"file_size={file_size_before}",
+            f"total_rows={len(detail_rows)}",
+            f"keep={len(keep)}",
+            f"archive={len(archive)}",
+            f"skipped={len(skipped_rows)}",
+            f"cutoff={time.strftime('%Y-%m-%d %H:%M', time.gmtime(cutoff))}",
+        ]
+        if keep:
+            parts.append(f"keep_range=[{_ts_range(keep)}]")
+        if archive:
+            parts.append(f"archive_range=[{_ts_range(archive)}]")
+        _LOGGER.warning("History rotate '%s': %s", area_id, ", ".join(parts))
+        if skipped_rows:
+            samples = skipped_rows[:3]
+            _LOGGER.warning(
+                "History rotate '%s': skipped rows (first %d): %s",
+                area_id,
+                len(samples),
+                samples,
+            )
 
         # Downsample archive to 5-min buckets and append to history
         if archive:
@@ -146,7 +191,7 @@ class HistoryStore:
             self._append_history(area_id, downsampled)
 
         # Rewrite detail with only recent rows
-        self._rewrite_csv(self._detail_path(area_id), keep)
+        self._rewrite_csv(path, keep)
 
         # Trim history older than 90 days
         history_rows = self.read_history(area_id)
@@ -220,7 +265,15 @@ class HistoryStore:
 
     def _rewrite_csv(self, path: str, rows: list[dict]) -> None:
         self._ensure_dir()
-        with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
-            writer.writeheader()
-            writer.writerows(rows)
+        dir_name = os.path.dirname(path)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
+            os.replace(tmp_path, path)
+        except BaseException:
+            if os.path.isfile(tmp_path):
+                os.remove(tmp_path)
+            raise
