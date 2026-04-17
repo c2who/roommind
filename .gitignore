@@ -219,8 +219,10 @@ custom_components/roommind/frontend/roommind-panel.js
 .claude/
 .serena/
 .mcp.json
+AGENTS.md
 CLAUDE.md
 ROADMAP.md
+.codex
 tasks/lessons.md
 docs/superpowers/
 docs/improvements.md
