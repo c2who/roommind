@@ -163,12 +163,12 @@ class RoomMindCoverShadingPositionSensor(CoordinatorEntity, SensorEntity):
             per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {})
             val = per_cover.get("target_position", room.get("cover_shading_position"))
             _LOGGER.debug(
-                "Shading position sensor read [%s/%s]: per_cover=%s fallback_room_target=%s",
+                "Shading position sensor read [%s/%s]: per_cover=%s fallback_room_target=%s resolved=%s",
                 self._area_id,
                 self._cover_entity_id,
                 per_cover,
-                val,
                 room.get("cover_shading_position"),
+                val,
             )
             return val if isinstance(val, (int, float)) else None
         return None
