@@ -944,6 +944,7 @@ class MPCController:
                 mode,
             )
         return should_exit
+
     def _predict_idle_drift(self, current_temp: float, dt_minutes: float) -> float:
         """Predict room temperature assuming no active HVAC over *dt_minutes*.
 

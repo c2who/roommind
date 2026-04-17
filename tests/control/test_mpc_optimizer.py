@@ -409,6 +409,7 @@ def test_optimizer_may_idle_after_min_run_reached():
     )
     assert plan.actions[0] == "idle", "Free to idle after min_run satisfied"
 
+
 # Coverage: uncovered lines
 # ---------------------------------------------------------------------------
 

@@ -7,8 +7,6 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.util import dt as dt_util
-
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
