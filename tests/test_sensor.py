@@ -173,6 +173,20 @@ def test_shading_position_sensor_none():
     assert sensor.native_value is None
 
 
+def test_shading_position_sensor_uses_per_cover_debug():
+    """Shading position sensor prefers per-cover debug target when available."""
+    coordinator = _make_coordinator(
+        {
+            "living_room": {
+                "cover_shading_position": 30,
+                "cover_debug": {"cover.living_blinds": {"target_position": 45}},
+            }
+        }
+    )
+    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
+    assert sensor.native_value == 45
+
+
 def test_shading_position_sensor_no_data():
     """Shading position sensor returns None when coordinator data is None."""
     coordinator = _make_coordinator()

@@ -72,6 +72,7 @@ NORMAL_ROOM_KEYS = {
     "active_heat_sources",
     "cover_shading_active",
     "cover_shading_position",
+    "cover_debug",
 }
 
 OUTDOOR_ROOM_KEYS = {

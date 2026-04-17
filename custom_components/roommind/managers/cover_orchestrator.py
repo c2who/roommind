@@ -43,6 +43,7 @@ class CoverPositionResult:
 
     shading_factor: float
     positions: list[int]
+    positions_by_cover: dict[str, int | None]
 
 
 @dataclass
@@ -80,17 +81,22 @@ class CoverOrchestrator:
         """Read current cover positions from HA state and update cover manager."""
         cover_eids: list[str] = room.get("covers", [])
         cover_positions: list[int] = []
+        positions_by_cover: dict[str, int | None] = {eid: None for eid in cover_eids}
         for eid in cover_eids:
             cstate = self.hass.states.get(eid)
             if cstate is None:
                 continue
             pos = cstate.attributes.get("current_position")
             if pos is not None:
-                cover_positions.append(int(pos))
+                int_pos = int(pos)
+                cover_positions.append(int_pos)
+                positions_by_cover[eid] = int_pos
             elif cstate.state == "closed":
                 cover_positions.append(0)
+                positions_by_cover[eid] = 0
             elif cstate.state == "open":
                 cover_positions.append(100)
+                positions_by_cover[eid] = 100
 
         if cover_positions:
             self._cover_manager.update_position(
@@ -101,7 +107,19 @@ class CoverOrchestrator:
             )
 
         shading_factor = compute_shading_factor(cover_positions)
-        return CoverPositionResult(shading_factor=shading_factor, positions=cover_positions)
+        _LOGGER.debug(
+            "Cover positions [%s]: covers=%s positions=%s shading_factor=%.3f sensor_only=%s",
+            area_id,
+            cover_eids,
+            positions_by_cover,
+            shading_factor,
+            room.get("covers_sensor_only", False),
+        )
+        return CoverPositionResult(
+            shading_factor=shading_factor,
+            positions=cover_positions,
+            positions_by_cover=positions_by_cover,
+        )
 
     async def async_process(
         self,
@@ -184,6 +202,14 @@ class CoverOrchestrator:
                         except (ValueError, TypeError):
                             _forced_position = 0
                         _forced_reason = "schedule_active"
+        _LOGGER.debug(
+            "Cover schedule resolution [%s]: active_index=%s forced_position=%s forced_reason=%s solar_gated=%s",
+            area_id,
+            _active_cover_sched_idx,
+            _forced_position,
+            _forced_reason or "",
+            _solar_gated,
+        )
 
         if _forced_position is None and room.get("covers_night_close", False):
             _offset = room.get("covers_night_close_offset_minutes", 0)
@@ -197,6 +223,14 @@ class CoverOrchestrator:
             if _elev <= _night_elev_threshold:
                 _forced_position = room.get("covers_night_position", 0)
                 _forced_reason = "night_close"
+            _LOGGER.debug(
+                "Cover night evaluation [%s]: elevation=%.3f threshold=%.3f offset_min=%s forced_position=%s",
+                area_id,
+                _elev,
+                _night_elev_threshold,
+                _offset,
+                _forced_position,
+            )
 
         # Block D: Tiered prediction
         # Build per-cover orientation list for solar series scaling
@@ -235,6 +269,26 @@ class CoverOrchestrator:
 
         # Block E: Evaluate + apply
         cover_eids = room.get("covers", [])
+        _LOGGER.debug(
+            "Cover evaluate inputs [%s]: current_temp=%s outdoor_temp=%s q_solar=%.3f oriented_q_solar=%.3f "
+            "predicted_peak=%s target=%.3f covers=%s min_position=%s snap_deploy=%s sensor_only=%s "
+            "forced_position=%s forced_reason=%s solar_gated=%s override=%s",
+            area_id,
+            current_temp,
+            outdoor_temp,
+            q_solar,
+            _oriented_q_solar,
+            _cover_predicted_peak,
+            cover_target,
+            cover_eids,
+            room.get("covers_min_position", 0),
+            room.get("covers_snap_deploy", False),
+            sensor_only,
+            _forced_position,
+            _forced_reason or "",
+            _solar_gated,
+            has_override,
+        )
         cover_decision = self._cover_manager.evaluate(
             area_id,
             covers_auto_enabled=room.get("covers_auto_enabled", False),
@@ -251,6 +305,13 @@ class CoverOrchestrator:
             sensor_only=sensor_only,
             current_temp=current_temp,
             solar_gated=_solar_gated,
+        )
+        _LOGGER.debug(
+            "Cover decision [%s]: target_position=%s changed=%s reason=%s",
+            area_id,
+            cover_decision.target_position,
+            cover_decision.changed,
+            cover_decision.reason,
         )
 
         _cover_min_positions: dict[str, int] = room.get("cover_min_positions", {})

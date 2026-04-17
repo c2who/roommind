@@ -888,6 +888,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             shading_factor=shading_factor,
             q_occupancy=q_occupancy,
             cover_eids=cover_eids,
+            cover_pos_result=cover_pos_result,
             cover_result=cover_result,
             mpc_active=mpc_active,
             raw_open=raw_open,
@@ -1159,6 +1160,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         shading_factor: float | None,
         q_occupancy: float,
         cover_eids: list[str],
+        cover_pos_result: Any,
         cover_result: CoverResult,
         mpc_active: bool,
         raw_open: bool,
@@ -1170,7 +1172,23 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         _devs_with_eid = [d for d in _room_devices if d.get("entity_id")]
         _all_direct = bool(_devs_with_eid) and len(_direct_eids) == len(_devs_with_eid)
 
-        return {
+        cover_debug: dict[str, dict[str, Any]] = {}
+        cover_min_positions: dict[str, int] = room.get("cover_min_positions", {})
+        cover_orientations: dict[str, int] = room.get("cover_orientations", {})
+        room_target_position = cover_result.decision.target_position if room.get("covers_auto_enabled", False) else None
+        for eid in cover_eids:
+            effective_target = None
+            if room_target_position is not None:
+                effective_target = max(cover_min_positions.get(eid, 0), room_target_position)
+            cover_debug[eid] = {
+                "current_position": cover_pos_result.positions_by_cover.get(eid),
+                "target_position": effective_target,
+                "shading_active": bool(effective_target is not None and effective_target < 100),
+                "orientation": cover_orientations.get(eid),
+                "min_position": cover_min_positions.get(eid, 0),
+            }
+
+        live_state = {
             "area_id": area_id,
             "current_temp": current_temp,
             "current_temp_raw": current_temp_raw,
@@ -1244,7 +1262,23 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "cover_shading_position": (
                 cover_result.decision.target_position if room.get("covers_auto_enabled", False) else None
             ),
+            "cover_debug": cover_debug,
         }
+        if cover_eids or covers_sensor_only:
+            _LOGGER.debug(
+                "Cover live state [%s]: blind_position=%s cover_reason=%s forced_reason=%s "
+                "active_schedule_index=%s shading_active=%s shading_position=%s sensor_only=%s cover_debug=%s",
+                area_id,
+                live_state["blind_position"],
+                live_state["cover_reason"],
+                live_state["cover_forced_reason"],
+                live_state["active_cover_schedule_index"],
+                live_state["cover_shading_active"],
+                live_state["cover_shading_position"],
+                covers_sensor_only,
+                cover_debug,
+            )
+        return live_state
 
     @staticmethod
     def _compute_device_setpoint_orchestrated(
