@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature
@@ -14,8 +12,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import RoomMindCoordinator
 from .device import get_area_name, roommind_device_info
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def _create_room_entities(coordinator: RoomMindCoordinator, area_id: str) -> list[SensorEntity]:
@@ -162,14 +158,6 @@ class RoomMindCoverShadingPositionSensor(CoordinatorEntity, SensorEntity):
         if room:
             per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {})
             val = per_cover.get("target_position", room.get("cover_shading_position"))
-            _LOGGER.debug(
-                "Shading position sensor read [%s/%s]: per_cover=%s fallback_room_target=%s resolved=%s",
-                self._area_id,
-                self._cover_entity_id,
-                per_cover,
-                room.get("cover_shading_position"),
-                val,
-            )
             return val if isinstance(val, (int, float)) else None
         return None
 

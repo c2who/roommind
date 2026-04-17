@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
@@ -14,8 +13,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import RoomMindCoordinator
 from .device import get_area_name, roommind_device_info, roommind_hub_device_info
-
-_LOGGER = logging.getLogger(__name__)
 
 
 def _create_room_binary_sensors(
@@ -152,16 +149,7 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
             return False
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {}) if room else {}
-        value = bool(per_cover.get("shading_active", room.get("cover_shading_active", False))) if room else False
-        _LOGGER.debug(
-            "Shading binary sensor read [%s/%s]: per_cover=%s fallback_room_active=%s resolved=%s",
-            self._area_id,
-            self._cover_entity_id,
-            per_cover,
-            room.get("cover_shading_active", False) if room else False,
-            value,
-        )
-        return value
+        return bool(per_cover.get("shading_active", room.get("cover_shading_active", False))) if room else False
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -173,12 +161,4 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
             return {"target_position": None}
         per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {})
         target = per_cover.get("target_position", room.get("cover_shading_position"))
-        _LOGGER.debug(
-            "Shading binary sensor attrs [%s/%s]: per_cover=%s fallback_room_target=%s resolved=%s",
-            self._area_id,
-            self._cover_entity_id,
-            per_cover,
-            room.get("cover_shading_position"),
-            target,
-        )
         return {"target_position": target}

@@ -1264,20 +1264,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             ),
             "cover_debug": cover_debug,
         }
-        if cover_eids or covers_sensor_only:
-            _LOGGER.debug(
-                "Cover live state [%s]: blind_position=%s cover_reason=%s forced_reason=%s "
-                "active_schedule_index=%s shading_active=%s shading_position=%s sensor_only=%s cover_debug=%s",
-                area_id,
-                live_state["blind_position"],
-                live_state["cover_reason"],
-                live_state["cover_forced_reason"],
-                live_state["active_cover_schedule_index"],
-                live_state["cover_shading_active"],
-                live_state["cover_shading_position"],
-                covers_sensor_only,
-                cover_debug,
-            )
         return live_state
 
     @staticmethod

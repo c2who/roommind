@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -185,6 +186,24 @@ def test_shading_position_sensor_uses_per_cover_debug():
     )
     sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
     assert sensor.native_value == 45
+
+
+def test_shading_position_sensor_does_not_log_on_read(caplog):
+    """Shading position sensor reads stay quiet to avoid HA state-access log spam."""
+    coordinator = _make_coordinator(
+        {
+            "living_room": {
+                "cover_shading_position": 30,
+                "cover_debug": {"cover.living_blinds": {"target_position": 45}},
+            }
+        }
+    )
+    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
+
+    with caplog.at_level(logging.DEBUG):
+        assert sensor.native_value == 45
+
+    assert caplog.text == ""
 
 
 def test_shading_position_sensor_no_data():

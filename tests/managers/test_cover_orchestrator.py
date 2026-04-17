@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -209,6 +210,85 @@ class TestReadPositions:
         assert result.positions == []
         assert result.shading_factor == 1.0
         cm.update_position.assert_not_called()
+
+    def test_read_positions_logs_short_summary(self, caplog):
+        """Position logging stays compact and avoids per-cover dumps."""
+        hass = _make_hass()
+        cm = _make_cover_manager()
+        orch = CoverOrchestrator(hass, cm, _make_model_manager())
+
+        states = {"cover.blind1": _make_cover_state(position=60), "cover.blind2": _make_cover_state(position=40)}
+        hass.states.get = MagicMock(side_effect=states.get)
+        room = _make_room(covers=["cover.blind1", "cover.blind2"])
+
+        with caplog.at_level(logging.DEBUG):
+            orch.read_positions("living_room", room)
+
+        assert "Cover state [living_room]: 2 covers, avg position 50%" in caplog.text
+        assert "cover.blind1" not in caplog.text
+        assert "positions={" not in caplog.text
+
+
+class TestLogging:
+    @pytest.mark.asyncio
+    async def test_async_process_logs_short_reason_summary(self, caplog):
+        """Decision logging should explain the reason without dumping full inputs."""
+        cm = _make_cover_manager()
+        cm.evaluate.return_value = CoverDecision(
+            target_position=35, changed=True, reason="deploy(excess=2.00C->pos=35%)"
+        )
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        room = _make_room(covers=["cover.b"])
+
+        with caplog.at_level(logging.DEBUG):
+            await orch.async_process(
+                area_id="lr",
+                room=room,
+                targets=TargetTemps(heat=21.0, cool=24.0),
+                mode=MODE_HEATING,
+                current_temp=23.0,
+                outdoor_temp=29.0,
+                q_solar=0.7,
+                predicted_peak_temp=25.0,
+                has_override=False,
+            )
+
+        assert "Cover action [lr]: excess=2.00C->pos=35% -> 35% (peak 25.0C, target 21.0C)" in caplog.text
+        assert "Cover evaluate inputs" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_async_process_logs_effective_sensor_only_position_when_clamped(self, caplog):
+        """Sensor-only logs should reflect min-position-clamped recommendations."""
+        cm = _make_cover_manager()
+        cm.evaluate.return_value = CoverDecision(
+            target_position=10,
+            changed=True,
+            reason="deploy(excess=2.00C->pos=10%)",
+        )
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+        room = _make_room(
+            covers=["cover.a", "cover.b"],
+            covers_sensor_only=True,
+            cover_min_positions={"cover.a": 40},
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            await orch.async_process(
+                area_id="lr",
+                room=room,
+                targets=TargetTemps(heat=21.0, cool=24.0),
+                mode=MODE_HEATING,
+                current_temp=23.0,
+                outdoor_temp=29.0,
+                q_solar=0.7,
+                predicted_peak_temp=25.0,
+                has_override=False,
+                sensor_only=True,
+            )
+
+        assert "Cover action [lr]: excess=2.00C->pos=10% -> 25%" in caplog.text
+        assert "effective avg 25%, min-position clamp" in caplog.text
+        assert "Cover sensor-only" not in caplog.text
 
 
 # ── TestDelegation ────────────────────────────────────────────────────
