@@ -1808,6 +1808,35 @@ async def test_save_room_with_devices_accepted(ws_hass, store, connection):
 
 
 @pytest.mark.asyncio
+async def test_save_room_with_deprecated_control_type_is_accepted_and_stripped(ws_hass, store, connection):
+    """Deprecated device keys should not block unrelated room settings saves."""
+    await store.async_load()
+    msg = {
+        "id": 2,
+        "type": "roommind/rooms/save",
+        "area_id": "living_room",
+        "devices": [
+            {
+                "entity_id": "climate.trv1",
+                "type": "trv",
+                "role": "auto",
+                "heating_system_type": "radiator",
+                "control_type": "relay",
+            }
+        ],
+        "covers": ["cover.living_room_blind"],
+        "cover_orientations": {"cover.living_room_blind": 180},
+    }
+    await _save_room(ws_hass, connection, msg)
+    connection.send_result.assert_called_once()
+    room = connection.send_result.call_args[0][1]["room"]
+    assert room["devices"] == [
+        {"entity_id": "climate.trv1", "type": "trv", "role": "auto", "heating_system_type": "radiator"}
+    ]
+    assert room["cover_orientations"] == {"cover.living_room_blind": 180}
+
+
+@pytest.mark.asyncio
 async def test_save_room_device_type_heat_pump_rejected(ws_hass, store, connection):
     """Sending type: 'heat_pump' in a device should be rejected by the WS schema.
 
@@ -1823,6 +1852,7 @@ async def test_save_room_device_type_heat_pump_rejected(ws_hass, store, connecti
             vol.Required("entity_id"): str,
             vol.Required("type"): vol.In(["trv", "ac"]),
             vol.Optional("role", default="auto"): vol.In(["primary", "secondary", "auto"]),
+            vol.Optional("control_type"): str,
             vol.Optional("heating_system_type", default=""): vol.In(["", "radiator", "underfloor"]),
         }
     )

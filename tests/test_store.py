@@ -500,6 +500,44 @@ async def test_migration_room_with_devices_not_saved(store):
 
 
 @pytest.mark.asyncio
+async def test_migration_room_with_deprecated_device_keys_is_sanitized(store):
+    """Stored devices drop deprecated keys so future saves don't fail WS validation."""
+    stored_data = {
+        "rooms": {
+            "wohnzimmer": {
+                "area_id": "wohnzimmer",
+                "thermostats": ["climate.trv1"],
+                "acs": [],
+                "devices": [
+                    {
+                        "entity_id": "climate.trv1",
+                        "type": "trv",
+                        "role": "auto",
+                        "heating_system_type": "",
+                        "control_type": "relay",
+                    }
+                ],
+                "schedules": [],
+            }
+        }
+    }
+    store._store.async_load = AsyncMock(return_value=stored_data)
+    await store.async_load()
+
+    assert store._store.async_save.called
+    room = store.get_room("wohnzimmer")
+    assert room is not None
+    assert room["devices"] == [
+        {
+            "entity_id": "climate.trv1",
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": "",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_save_room_with_devices_syncs_legacy(store):
     """Saving with 'devices' regenerates thermostats/acs from devices."""
     await store.async_load()
@@ -515,6 +553,34 @@ async def test_save_room_with_devices_syncs_legacy(store):
     assert room["thermostats"] == ["climate.trv1"]
     assert room["acs"] == ["climate.ac1"]
     assert room["heating_system_type"] == "underfloor"
+
+
+@pytest.mark.asyncio
+async def test_save_room_with_devices_strips_deprecated_device_keys(store):
+    """Saving devices strips deprecated compatibility fields before persisting."""
+    await store.async_load()
+    room = await store.async_save_room(
+        "wohnzimmer",
+        {
+            "devices": [
+                {
+                    "entity_id": "climate.trv1",
+                    "type": "trv",
+                    "role": "auto",
+                    "heating_system_type": "radiator",
+                    "control_type": "relay",
+                }
+            ],
+        },
+    )
+    assert room["devices"] == [
+        {
+            "entity_id": "climate.trv1",
+            "type": "trv",
+            "role": "auto",
+            "heating_system_type": "radiator",
+        }
+    ]
 
 
 @pytest.mark.asyncio

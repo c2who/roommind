@@ -30,6 +30,16 @@ DEFAULT_IDLE_SETBACK_OFFSET = 2.0
 SETPOINT_MODE_PROPORTIONAL = "proportional"
 SETPOINT_MODE_DIRECT = "direct"
 
+ALLOWED_DEVICE_KEYS = {
+    "entity_id",
+    "type",
+    "role",
+    "heating_system_type",
+    "idle_action",
+    "idle_fan_mode",
+    "setpoint_mode",
+}
+
 # Active HVAC modes that indicate real device capabilities.
 _ACTIVE_HVAC_MODES = {"heat", "cool", "heat_cool", "auto"}
 
@@ -83,6 +93,22 @@ def legacy_to_devices(
             }
         )
     return devices
+
+
+def sanitize_devices(devices: list[dict]) -> bool:
+    """Strip deprecated/unknown keys from device entries in-place.
+
+    Returns True if any device entry was modified.
+    """
+    changed = False
+    for device in devices:
+        extra_keys = set(device) - ALLOWED_DEVICE_KEYS
+        if not extra_keys:
+            continue
+        for key in extra_keys:
+            device.pop(key, None)
+        changed = True
+    return changed
 
 
 def devices_to_legacy(devices: list[dict]) -> tuple[list[str], list[str]]:

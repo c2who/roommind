@@ -24,6 +24,7 @@ from .utils.device_utils import (
     get_room_heating_system_type,
     legacy_to_devices,
     migrate_heat_pump_devices,
+    sanitize_devices,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ def _migrate_room_temps(room: dict) -> dict:
 def _migrate_room(room: dict) -> dict:
     """Apply all read-time migrations (safety net)."""
     _migrate_room_temps(room)
+    sanitize_devices(room.get("devices", []))
     migrate_heat_pump_devices(room.get("devices", []))
     ensure_room_has_devices(room)
     return room
@@ -80,6 +82,8 @@ class RoomMindStore:
         for room in self._data.values():
             if "devices" not in room:
                 ensure_room_has_devices(room)
+                device_migrated += 1
+            elif sanitize_devices(room.get("devices", [])):
                 device_migrated += 1
             if migrate_heat_pump_devices(room.get("devices", [])):
                 t, a = devices_to_legacy(room["devices"])
@@ -173,6 +177,7 @@ class RoomMindStore:
         for key, value in config.items():
             if key != "area_id":
                 existing[key] = value
+        sanitize_devices(existing.get("devices", []))
         # Sync legacy fields from split fields for backward compat
         if "comfort_heat" in config:
             existing["comfort_temp"] = config["comfort_heat"]
@@ -239,6 +244,7 @@ class RoomMindStore:
             "heat_source_ac_min_outdoor": config.get("heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR),
             "climate_control_enabled": config.get("climate_control_enabled", True),
         }
+        sanitize_devices(room["devices"])
         # Directional device sync for new rooms (truthiness check, not just presence)
         if "devices" in config and config["devices"]:
             t, a = devices_to_legacy(room["devices"])
