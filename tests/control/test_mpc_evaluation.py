@@ -325,7 +325,7 @@ def test_evaluate_mpc_safety_guard_respects_min_run_heating(monkeypatch):
         hass,
         room,
         model_manager=mgr,
-        outdoor_temp=5.0,
+        outdoor_temp=21.0,  # near room temp so predicted idle temp won't drop below target-margin
         settings={},
         has_external_sensor=True,
         previous_mode=MODE_HEATING,
@@ -629,6 +629,126 @@ def test_safety_guard_suppresses_cooling_when_prediction_stays_cool(monkeypatch)
 
     # current_temp=23 <= cool_target=23, outdoor=23 → prediction stays stable → suppress
     mode, pf = ctrl._evaluate_mpc(23.0, TargetTemps(heat=21.0, cool=23.0))
+    assert mode == MODE_IDLE
+    assert pf == 0.0
+
+
+# Hard overshoot ceiling (issue #152)
+# ---------------------------------------------------------------------------
+
+
+def test_hard_ceiling_overrides_heating_past_overshoot(monkeypatch):
+    """Hard ceiling forces idle when temp > max(target) + 1°C, even during min-run."""
+    hass = build_hass()
+    room = make_room()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=5.0,  # cold outdoor — model would predict dip and allow heating
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        heating_system_type="underfloor",
+        mode_on_since=time.time() - 60,  # within 30-min min-run window
+    )
+    fake_plan = MPCPlan(
+        actions=[MODE_HEATING] * 24,
+        temperatures=[23.0] * 25,
+        power_fractions=[0.8] * 24,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+    # 23°C > 21°C + 1.0 → hard ceiling must fire, overriding min-run
+    mode, pf = ctrl._evaluate_mpc(23.0, TargetTemps(heat=21.0, cool=25.0))
+    assert mode == MODE_IDLE
+    assert pf == 0.0
+
+
+def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
+    """Hard ceiling does NOT fire when overshoot is below the ceiling threshold."""
+    hass = build_hass()
+    room = make_room()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    fake_plan = MPCPlan(
+        actions=[MODE_HEATING] * 24,
+        temperatures=[21.5] * 25,
+        power_fractions=[0.8] * 24,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+    # 21.5°C >= 21°C → model-based guard entry, outdoor=5 → prediction dips → allow
+    mode, pf = ctrl._evaluate_mpc(21.5, TargetTemps(heat=21.0, cool=25.0))
+    assert mode == MODE_HEATING
+    assert pf > 0.0
+
+
+def test_hard_ceiling_overrides_cooling_past_overshoot(monkeypatch):
+    """Hard ceiling forces idle when temp < min(cool_target) - 1°C."""
+    hass = build_hass()
+    room = make_room(acs=["climate.ac1"], thermostats=[], climate_mode="cool_only")
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=30.0,
+        settings={},
+        has_external_sensor=True,
+    )
+    fake_plan = MPCPlan(
+        actions=[MODE_COOLING] * 24,
+        temperatures=[21.0] * 25,
+        power_fractions=[0.8] * 24,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+    # 21°C < 23°C - 1.0 = 22°C → hard ceiling must fire
+    mode, pf = ctrl._evaluate_mpc(21.0, TargetTemps(heat=20.0, cool=23.0))
+    assert mode == MODE_IDLE
+    assert pf == 0.0
+
+
+def test_hard_ceiling_exact_boundary_does_not_fire(monkeypatch):
+    """At exactly target + 1.0°C, hard ceiling does NOT fire (strict >)."""
+    hass = build_hass()
+    room = make_room()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=20.0,  # warm outdoor → prediction stays warm → model-based guard suppresses
+        settings={},
+        has_external_sensor=True,
+    )
+    fake_plan = MPCPlan(
+        actions=[MODE_HEATING] * 24,
+        temperatures=[22.0] * 25,
+        power_fractions=[0.8] * 24,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+    # 22°C is exactly 21+1.0 → strict > means hard ceiling does NOT fire
+    # Falls through to model-based guard which suppresses (outdoor=20 → warm prediction)
+    mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_IDLE
     assert pf == 0.0
 

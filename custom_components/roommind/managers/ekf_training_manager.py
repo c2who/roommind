@@ -23,6 +23,10 @@ class EkfTrainingManager:
         self._accumulated_pf: dict[str, float] = {}
         self.last_temps: dict[str, float] = {}
 
+    def set_model_manager(self, model_manager: RoomModelManager) -> None:
+        """Update the model manager reference (used after full thermal reset)."""
+        self._model_manager = model_manager
+
     def flush(
         self,
         area_id: str,

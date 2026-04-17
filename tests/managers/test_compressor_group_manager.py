@@ -4,17 +4,21 @@ import time
 
 from custom_components.roommind.managers.compressor_group_manager import (
     CompressorGroupManager,
+    resolve_master_action,
 )
 
 
-def _make_group(gid="g1", members=None, min_run=15, min_off=5):
-    return {
+def _make_group(gid="g1", members=None, min_run=15, min_off=5, enforce_uniform_mode=False):
+    g = {
         "id": gid,
         "name": f"Group {gid}",
         "members": members or ["climate.ac1"],
         "min_run_minutes": min_run,
         "min_off_minutes": min_off,
     }
+    if enforce_uniform_mode:
+        g["enforce_uniform_mode"] = True
+    return g
 
 
 class TestCompressorGroupManager:
@@ -189,3 +193,207 @@ class TestCompressorGroupManager:
         mgr.load_groups([_make_group(min_run=5)])
         # Now 10 min > 5 min -> can turn off
         assert mgr.check_must_stay_active("climate.ac1") is False
+
+
+class TestResolveMasterAction:
+    def test_all_idle(self):
+        assert resolve_master_action(["idle", "idle"], "heating_priority", None, 22) == "idle"
+
+    def test_empty_modes(self):
+        assert resolve_master_action([], "heating_priority", None, 22) == "idle"
+
+    def test_only_heating(self):
+        assert resolve_master_action(["heating", "heating"], "heating_priority", None, 22) == "heat"
+
+    def test_only_cooling(self):
+        assert resolve_master_action(["cooling", "idle"], "heating_priority", None, 22) == "cool"
+
+    def test_mixed_idle_heating(self):
+        assert resolve_master_action(["idle", "heating", "idle"], "heating_priority", None, 22) == "heat"
+
+    def test_conflict_heating_priority(self):
+        assert resolve_master_action(["heating", "cooling"], "heating_priority", None, 22) == "heat"
+
+    def test_conflict_cooling_priority(self):
+        assert resolve_master_action(["heating", "cooling"], "cooling_priority", None, 22) == "cool"
+
+    def test_conflict_majority_heating_wins(self):
+        assert resolve_master_action(["heating", "heating", "cooling"], "majority", None, 22) == "heat"
+
+    def test_conflict_majority_cooling_wins(self):
+        assert resolve_master_action(["heating", "cooling", "cooling"], "majority", None, 22) == "cool"
+
+    def test_conflict_majority_tie(self):
+        assert resolve_master_action(["heating", "cooling"], "majority", None, 22) == "heat"
+
+    def test_conflict_outdoor_cold(self):
+        assert resolve_master_action(["heating", "cooling"], "outdoor_temp", 10.0, 22) == "heat"
+
+    def test_conflict_outdoor_warm(self):
+        assert resolve_master_action(["heating", "cooling"], "outdoor_temp", 25.0, 22) == "cool"
+
+    def test_conflict_outdoor_at_threshold(self):
+        assert resolve_master_action(["heating", "cooling"], "outdoor_temp", 22.0, 22) == "heat"
+
+    def test_conflict_outdoor_none(self):
+        assert resolve_master_action(["heating", "cooling"], "outdoor_temp", None, 22) == "heat"
+
+
+class TestMasterDeviceState:
+    def test_load_groups_without_master_fields(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"]}])
+        cfg = mgr.get_groups()["g1"]
+        assert cfg.master_entity == ""
+        assert cfg.conflict_resolution == "heating_priority"
+        assert cfg.action_script == ""
+
+    def test_load_groups_with_master_fields(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups(
+            [
+                {
+                    "id": "g1",
+                    "name": "G1",
+                    "members": ["climate.a"],
+                    "master_entity": "climate.boiler",
+                    "conflict_resolution": "majority",
+                    "action_script": "script.boiler_control",
+                }
+            ]
+        )
+        cfg = mgr.get_groups()["g1"]
+        assert cfg.master_entity == "climate.boiler"
+        assert cfg.conflict_resolution == "majority"
+        assert cfg.action_script == "script.boiler_control"
+
+    def test_state_preserves_master_action_on_reload(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"]}])
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_state("g1").master_action == "heat"
+        # Reload same group
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"]}])
+        assert mgr.get_state("g1").master_action == "heat"
+
+    def test_set_master_action_idle_to_heat(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"]}])
+        mgr.set_master_action("g1", "idle")
+        assert mgr.get_state("g1").master_on_since is None
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_state("g1").master_on_since is not None
+
+    def test_set_master_action_heat_to_idle(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"]}])
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_state("g1").master_on_since is not None
+        mgr.set_master_action("g1", "idle")
+        assert mgr.get_state("g1").master_on_since is None
+
+    def test_set_master_action_unknown_group(self):
+        mgr = CompressorGroupManager()
+        mgr.set_master_action("nonexistent", "heat")  # Should not raise
+
+    def test_get_groups_returns_all(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups(
+            [
+                {"id": "g1", "name": "G1", "members": ["climate.a"]},
+                {"id": "g2", "name": "G2", "members": ["climate.b"]},
+            ]
+        )
+        groups = mgr.get_groups()
+        assert "g1" in groups
+        assert "g2" in groups
+
+    def test_get_state_returns_none_for_unknown(self):
+        mgr = CompressorGroupManager()
+        assert mgr.get_state("nonexistent") is None
+
+    def test_check_master_can_switch_min_run_blocks_idle(self):
+        """Master cannot switch to idle during min-run period."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"], "min_run_minutes": 15}])
+        mgr.set_master_action("g1", "heat")
+        # Just started → cannot switch to idle
+        assert mgr.check_master_can_switch("g1", "idle") is False
+        # Same action is always allowed
+        assert mgr.check_master_can_switch("g1", "heat") is True
+
+    def test_check_master_can_switch_min_off_blocks_restart(self):
+        """Master cannot restart during min-off period."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"], "min_off_minutes": 5}])
+        mgr.set_master_action("g1", "heat")
+        mgr.set_master_action("g1", "idle")
+        # Just turned off → cannot restart
+        assert mgr.check_master_can_switch("g1", "heat") is False
+        # Staying idle is allowed
+        assert mgr.check_master_can_switch("g1", "idle") is True
+
+    def test_check_master_can_switch_unknown_group(self):
+        """Unknown group always returns True."""
+        mgr = CompressorGroupManager()
+        assert mgr.check_master_can_switch("nonexistent", "heat") is True
+
+    def test_set_master_action_tracks_off_since(self):
+        """Switching to idle should set master_off_since."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([{"id": "g1", "name": "G1", "members": ["climate.a"]}])
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_state("g1").master_off_since is None
+        mgr.set_master_action("g1", "idle")
+        assert mgr.get_state("g1").master_off_since is not None
+        assert mgr.get_state("g1").master_on_since is None
+
+
+class TestEnforceUniformMode:
+    def test_load_groups_reads_enforce_uniform_mode(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(enforce_uniform_mode=True)])
+        cfg = mgr.get_groups()["g1"]
+        assert cfg.enforce_uniform_mode is True
+
+    def test_load_groups_default_enforce_false(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group()])
+        cfg = mgr.get_groups()["g1"]
+        assert cfg.enforce_uniform_mode is False
+
+    def test_get_enforced_action_disabled(self):
+        """enforce_uniform_mode=False → returns None."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group()])
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_enforced_action("climate.ac1") is None
+
+    def test_get_enforced_action_enabled(self):
+        """enforce_uniform_mode=True → returns stored action."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(enforce_uniform_mode=True)])
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_enforced_action("climate.ac1") == "heat"
+
+    def test_get_enforced_action_first_cycle(self):
+        """enforce_uniform_mode=True, no action set yet → returns None."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(enforce_uniform_mode=True)])
+        assert mgr.get_enforced_action("climate.ac1") is None
+
+    def test_get_enforced_action_entity_not_in_group(self):
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(enforce_uniform_mode=True)])
+        assert mgr.get_enforced_action("climate.unknown") is None
+
+    def test_get_enforced_action_updates_with_master_action(self):
+        """Action follows set_master_action transitions."""
+        mgr = CompressorGroupManager()
+        mgr.load_groups([_make_group(enforce_uniform_mode=True)])
+        mgr.set_master_action("g1", "heat")
+        assert mgr.get_enforced_action("climate.ac1") == "heat"
+        mgr.set_master_action("g1", "cool")
+        assert mgr.get_enforced_action("climate.ac1") == "cool"
+        mgr.set_master_action("g1", "idle")
+        assert mgr.get_enforced_action("climate.ac1") == "idle"

@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import Context
 
 DOMAIN = "roommind"
-VERSION = "1.6.0-beta.1"
+VERSION = "1.7.1-beta.8"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -138,14 +138,15 @@ COVER_POS_SCALE: float = 50.0
 COVER_MAX_EFFECTIVENESS: float = 0.85
 COVER_USER_CONFLICT_THRESHOLD: int = 15
 COVER_USER_OVERRIDE_MINUTES: int = 60
+COVER_TRANSITION_SETTLE_S: int = 90  # seconds after commanding before override detection activates
 COVER_DEFAULT_BETA_S: float = 3.0  # °C/h per unit q_solar (default for rooms without learned data)
 COVER_LINEAR_LOOKAHEAD_H: float = 1.0  # linear fallback: 1h (no heat-loss correction → keep short)
-COVER_RC_LOOKAHEAD_H: float = 2.0  # RC trajectory: 2h (physics-corrected → longer horizon is safe)
 COVER_PREDICTION_DT_MINUTES: float = 5.0  # time step for RC trajectory simulation
 COVER_MAX_PREDICTION_STD: float = 0.5  # max idle+solar prediction_std to activate RC tier
 COVER_CONFIDENCE_REFERENCE_SOLAR: float = 0.5  # reference q_solar for confidence check
 COVER_MIN_IDLE_FOR_LEARNED: int = 30  # Min idle observations before trusting EKF's beta_s
-COVER_POS_DEADBAND: int = 10  # min position change (%) to trigger motor movement
+COVER_POS_DEADBAND: int = 20  # min position change (%) to trigger motor movement
+COVER_DAILY_LOOKAHEAD_H: float = 8.0  # hours ahead to search for daily solar peak (Tier 2)
 
 # Heat source orchestration — smart routing for rooms with multiple heating device types
 DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap to engage primary (boiler/radiator)
@@ -162,16 +163,38 @@ DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
 # Heating demand aggregation
 HEATING_DEMAND_OFF_DELAY = 60  # seconds — short anti-flicker holdoff when forecast is clear
 
+# Compressor group master device — conflict resolution strategies
+CONFLICT_RESOLUTION_HEATING_PRIORITY = "heating_priority"
+CONFLICT_RESOLUTION_COOLING_PRIORITY = "cooling_priority"
+CONFLICT_RESOLUTION_MAJORITY = "majority"
+CONFLICT_RESOLUTION_OUTDOOR_TEMP = "outdoor_temp"
+CONFLICT_RESOLUTIONS = [
+    CONFLICT_RESOLUTION_HEATING_PRIORITY,
+    CONFLICT_RESOLUTION_COOLING_PRIORITY,
+    CONFLICT_RESOLUTION_MAJORITY,
+    CONFLICT_RESOLUTION_OUTDOOR_TEMP,
+]
+DEFAULT_CONFLICT_RESOLUTION = CONFLICT_RESOLUTION_HEATING_PRIORITY
+
 
 # Far-future sentinel: vacation active indefinitely (year 2999)
 VACATION_SENTINEL_UNTIL = 32503680000.0
 
 
+def is_override_active(room: dict) -> bool:
+    """Return True when a manual override is currently active."""
+    override_temp = room.get("override_temp")
+    if override_temp is None:
+        return False
+    override_until = room.get("override_until")
+    return override_until is None or time.time() < override_until
+
+
 def build_override_live(room: dict) -> dict:
     """Build override fields for live data from a room config dict."""
+    active = is_override_active(room)
     override_temp = room.get("override_temp")
     override_until = room.get("override_until")
-    active = bool(override_temp is not None and (override_until is None or time.time() < override_until))
     return {
         "override_active": active,
         "override_type": room.get("override_type") if active else None,

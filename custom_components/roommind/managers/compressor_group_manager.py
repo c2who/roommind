@@ -10,7 +10,11 @@ import logging
 from dataclasses import dataclass, field
 from time import monotonic
 
-from ..const import DEFAULT_COMPRESSOR_MIN_OFF_MINUTES, DEFAULT_COMPRESSOR_MIN_RUN_MINUTES
+from ..const import (
+    DEFAULT_COMPRESSOR_MIN_OFF_MINUTES,
+    DEFAULT_COMPRESSOR_MIN_RUN_MINUTES,
+    DEFAULT_CONFLICT_RESOLUTION,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,6 +28,10 @@ class CompressorGroupConfig:
     members: list[str]
     min_run_seconds: float
     min_off_seconds: float
+    master_entity: str = ""
+    conflict_resolution: str = "heating_priority"
+    action_script: str = ""
+    enforce_uniform_mode: bool = False
 
 
 @dataclass
@@ -33,6 +41,9 @@ class CompressorGroupState:
     active_members: set[str] = field(default_factory=set)
     compressor_on_since: float | None = None
     compressor_off_since: float | None = None
+    master_action: str | None = None
+    master_on_since: float | None = None
+    master_off_since: float | None = None
 
 
 class CompressorGroupManager:
@@ -55,6 +66,10 @@ class CompressorGroupManager:
                 members=g.get("members", []),
                 min_run_seconds=g.get("min_run_minutes", DEFAULT_COMPRESSOR_MIN_RUN_MINUTES) * 60,
                 min_off_seconds=g.get("min_off_minutes", DEFAULT_COMPRESSOR_MIN_OFF_MINUTES) * 60,
+                master_entity=g.get("master_entity", ""),
+                conflict_resolution=g.get("conflict_resolution", DEFAULT_CONFLICT_RESOLUTION),
+                action_script=g.get("action_script", ""),
+                enforce_uniform_mode=g.get("enforce_uniform_mode", False),
             )
             for eid in g.get("members", []):
                 new_entity_map[eid] = gid
@@ -135,3 +150,103 @@ class CompressorGroupManager:
         """True if any member in the group is active."""
         state = self._states.get(group_id)
         return bool(state and state.active_members)
+
+    def get_groups(self) -> dict[str, CompressorGroupConfig]:
+        """Return all group configs."""
+        return self._groups
+
+    def get_state(self, group_id: str) -> CompressorGroupState | None:
+        """Return runtime state for a group."""
+        return self._states.get(group_id)
+
+    def get_enforced_action(self, entity_id: str) -> str | None:
+        """Return the group's resolved action if uniform mode is enforced, else None."""
+        gid = self._entity_to_group.get(entity_id)
+        if gid is None:
+            return None
+        group = self._groups.get(gid)
+        if group is None or not group.enforce_uniform_mode:
+            return None
+        state = self._states.get(gid)
+        return state.master_action if state else None
+
+    def check_master_can_switch(self, group_id: str, new_action: str) -> bool:
+        """Check if the master device is allowed to switch to *new_action*.
+
+        Enforces min-run (must stay active long enough) and min-off (must stay
+        off long enough) timing constraints, mirroring the member-level guards.
+        """
+        state = self._states.get(group_id)
+        if state is None:
+            return True
+        group = self._groups.get(group_id)
+        if group is None:
+            return True
+        prev = state.master_action
+        if prev == new_action:
+            return True  # no transition
+
+        # Min-run: master is active and hasn't run long enough
+        if prev is not None and prev != "idle" and new_action == "idle":
+            if state.master_on_since is not None:
+                elapsed = monotonic() - state.master_on_since
+                if elapsed < group.min_run_seconds:
+                    return False
+
+        # Min-off: master is idle and hasn't been off long enough
+        if (prev is None or prev == "idle") and new_action != "idle":
+            if state.master_off_since is not None:
+                elapsed = monotonic() - state.master_off_since
+                if elapsed < group.min_off_seconds:
+                    return False
+
+        return True
+
+    def set_master_action(self, group_id: str, action: str) -> None:
+        """Record the master entity's resolved action after commands are sent."""
+        state = self._states.get(group_id)
+        if state is None:
+            return
+        prev = state.master_action
+        state.master_action = action
+        if action != "idle" and (prev is None or prev == "idle"):
+            state.master_on_since = monotonic()
+            state.master_off_since = None
+        elif action == "idle" and prev is not None and prev != "idle":
+            state.master_on_since = None
+            state.master_off_since = monotonic()
+
+
+def resolve_master_action(
+    room_modes: list[str],
+    conflict_resolution: str,
+    outdoor_temp: float | None,
+    outdoor_heating_max: float,
+) -> str:
+    """Determine master entity action from aggregate room modes.
+
+    Returns "heat", "cool", or "idle".
+    """
+    n_heating = sum(1 for m in room_modes if m == "heating")
+    n_cooling = sum(1 for m in room_modes if m == "cooling")
+
+    if n_heating == 0 and n_cooling == 0:
+        return "idle"
+    if n_heating > 0 and n_cooling == 0:
+        return "heat"
+    if n_cooling > 0 and n_heating == 0:
+        return "cool"
+
+    # Conflict: both heating and cooling rooms exist
+    if conflict_resolution == "cooling_priority":
+        return "cool"
+    if conflict_resolution == "majority":
+        if n_cooling > n_heating:
+            return "cool"
+        return "heat"  # heating wins on tie (frost-safe)
+    if conflict_resolution == "outdoor_temp":
+        if outdoor_temp is None:
+            return "heat"  # no sensor → frost-safe fallback
+        return "heat" if outdoor_temp <= outdoor_heating_max else "cool"
+    # Default: heating_priority
+    return "heat"

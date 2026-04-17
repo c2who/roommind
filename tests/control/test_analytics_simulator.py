@@ -362,7 +362,7 @@ class TestSimulateBangbang:
 
     def test_mode_stickiness_minimum_run(self):
         """Once heating starts, minimum run time enforced (2 blocks)."""
-        model = RCModel(C=1.0, U=0.5, Q_heat=5000.0, Q_cool=50.0, Q_solar=0.0)
+        model = RCModel(C=1.0, U=5.0, Q_heat=120.0, Q_cool=50.0, Q_solar=0.0)
         target_forecast = [{"target_temp": 21.0}] * 5
         outdoor_series = [5.0] * 5
         room_config = {

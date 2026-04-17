@@ -61,7 +61,9 @@ class TestUpdateCycle:
             "humidity_sensor": "sensor.bedroom_humidity",
             "schedules": [{"entity_id": "schedule.bedroom"}],
             "comfort_temp": 19.0,
+            "comfort_heat": 19.0,
             "eco_temp": 16.0,
+            "eco_heat": 16.0,
         }
         await real_store.async_save_room("bedroom", room2)
 

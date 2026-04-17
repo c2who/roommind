@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.util import dt as dt_util
 
@@ -21,6 +21,26 @@ from ..const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def find_active_block(schedule_blocks: dict, ts: float) -> dict[str, Any] | None:
+    """Find the schedule block active at the given timestamp.
+
+    Returns the block's ``data`` dict, or None if no block matches.
+    Caller must check ``schedule_blocks is None`` before calling.
+    """
+    dt = datetime.fromtimestamp(ts)
+    day_name = dt.strftime("%A").lower()
+    current_time = dt.time()
+    day_blocks = schedule_blocks.get(day_name, [])
+    for block in day_blocks:
+        from_raw = block.get("from", "00:00:00")
+        to_raw = block.get("to", "00:00:00")
+        from_time = from_raw if hasattr(from_raw, "hour") else datetime.strptime(str(from_raw), "%H:%M:%S").time()
+        to_time = to_raw if hasattr(to_raw, "hour") else datetime.strptime(str(to_raw), "%H:%M:%S").time()
+        if from_time <= current_time < to_time:
+            return dict(block.get("data", {}))
+    return None
 
 
 def resolve_target_at_time(
@@ -55,25 +75,16 @@ def resolve_target_at_time(
     # 3. Schedule blocks
     if schedule_blocks is None:
         return comfort_temp
-    dt = datetime.fromtimestamp(ts, tz=dt_util.get_default_time_zone())
-    day_name = dt.strftime("%A").lower()
-    current_time = dt.time()
-    day_blocks = schedule_blocks.get(day_name, [])
-    for block in day_blocks:
-        from_raw = block.get("from", "00:00:00")
-        to_raw = block.get("to", "00:00:00")
-        from_time = from_raw if hasattr(from_raw, "hour") else datetime.strptime(str(from_raw), "%H:%M:%S").time()
-        to_time = to_raw if hasattr(to_raw, "hour") else datetime.strptime(str(to_raw), "%H:%M:%S").time()
-        if from_time <= current_time < to_time:
-            data = block.get("data", {})
-            block_temp = data.get("temperature")
-            if block_temp is not None:
-                try:
-                    val = float(block_temp)
-                    return block_temp_converter(val) if block_temp_converter else val
-                except (ValueError, TypeError):
-                    pass
-            return comfort_temp
+    data = find_active_block(schedule_blocks, ts)
+    if data is not None:
+        block_temp = data.get("temperature")
+        if block_temp is not None:
+            try:
+                val = float(block_temp)
+                return block_temp_converter(val) if block_temp_converter else val
+            except (ValueError, TypeError):
+                pass
+        return comfort_temp
     # Not in any block → eco or off
     if schedule_off_action == "off":
         return None
@@ -116,45 +127,35 @@ def resolve_targets_at_time(
     # 3. Schedule blocks
     if schedule_blocks is None:
         return TargetTemps(heat=comfort_heat, cool=comfort_cool)
-    dt = datetime.fromtimestamp(ts, tz=dt_util.get_default_time_zone())
-    day_name = dt.strftime("%A").lower()
-    current_time = dt.time()
-    day_blocks = schedule_blocks.get(day_name, [])
-    for block in day_blocks:
-        from_raw = block.get("from", "00:00:00")
-        to_raw = block.get("to", "00:00:00")
-        from_time = from_raw if hasattr(from_raw, "hour") else datetime.strptime(str(from_raw), "%H:%M:%S").time()
-        to_time = to_raw if hasattr(to_raw, "hour") else datetime.strptime(str(to_raw), "%H:%M:%S").time()
-        if from_time <= current_time < to_time:
-            data = block.get("data", {})
-            # Check for split heat/cool temps first
-            heat_temp_raw = data.get("heat_temperature")
-            cool_temp_raw = data.get("cool_temperature")
-            if heat_temp_raw is not None or cool_temp_raw is not None:
-                h = comfort_heat
-                c = comfort_cool
-                if heat_temp_raw is not None:
-                    try:
-                        val = float(heat_temp_raw)
-                        h = block_temp_converter(val) if block_temp_converter else val
-                    except (ValueError, TypeError):
-                        pass
-                if cool_temp_raw is not None:
-                    try:
-                        val = float(cool_temp_raw)
-                        c = block_temp_converter(val) if block_temp_converter else val
-                    except (ValueError, TypeError):
-                        pass
-                return TargetTemps(heat=h, cool=c)
-            block_temp = data.get("temperature")
-            if block_temp is not None:
+    data = find_active_block(schedule_blocks, ts)
+    if data is not None:
+        heat_temp_raw = data.get("heat_temperature")
+        cool_temp_raw = data.get("cool_temperature")
+        if heat_temp_raw is not None or cool_temp_raw is not None:
+            h = comfort_heat
+            c = comfort_cool
+            if heat_temp_raw is not None:
                 try:
-                    val = float(block_temp)
-                    t = block_temp_converter(val) if block_temp_converter else val
-                    return TargetTemps(heat=t, cool=t)  # single-point
+                    val = float(heat_temp_raw)
+                    h = block_temp_converter(val) if block_temp_converter else val
                 except (ValueError, TypeError):
                     pass
-            return TargetTemps(heat=comfort_heat, cool=comfort_cool)
+            if cool_temp_raw is not None:
+                try:
+                    val = float(cool_temp_raw)
+                    c = block_temp_converter(val) if block_temp_converter else val
+                except (ValueError, TypeError):
+                    pass
+            return TargetTemps(heat=h, cool=c)
+        block_temp = data.get("temperature")
+        if block_temp is not None:
+            try:
+                val = float(block_temp)
+                t = block_temp_converter(val) if block_temp_converter else val
+                return TargetTemps(heat=t, cool=t)
+            except (ValueError, TypeError):
+                pass
+        return TargetTemps(heat=comfort_heat, cool=comfort_cool)
     # Not in any block → eco or off
     if schedule_off_action == "off":
         return TargetTemps(heat=None, cool=None)

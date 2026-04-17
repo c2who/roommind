@@ -10,9 +10,13 @@ from custom_components.roommind.control.solar import (
     _clear_sky_ghi,
     _cloud_attenuation,
     _solar_elevation,
+    _solar_position,
+    build_oriented_solar_series,
     build_solar_series,
     compute_q_solar_norm,
     estimate_solar_ghi,
+    solar_azimuth,
+    surface_irradiance_factor,
 )
 
 # ---------------------------------------------------------------------------
@@ -212,3 +216,119 @@ def test_build_solar_series_cloud_padding():
     # cloud_series with 1 entry should be padded to 6
     series = build_solar_series(50.0, 10.0, 6, 5.0, start_ts=ts, cloud_series=[50.0])
     assert len(series) == 6
+
+
+# ---------------------------------------------------------------------------
+# _solar_position / solar_azimuth
+# ---------------------------------------------------------------------------
+
+
+def test_solar_position_returns_elevation_and_azimuth():
+    """_solar_position returns a 2-tuple (elevation, azimuth)."""
+    from datetime import datetime
+
+    dt = datetime(2024, 6, 21, 12, 0, tzinfo=UTC)
+    el, az = _solar_position(50.0, 10.0, dt.timestamp())
+    assert -90 <= el <= 90
+    assert 0 <= az < 360
+
+
+def test_solar_azimuth_noon_approx_south():
+    """At solar noon in Northern Hemisphere, azimuth is near 180° (south)."""
+    from datetime import datetime
+
+    # True solar noon at longitude 0 is close to 12:00 UTC
+    dt = datetime(2024, 6, 21, 12, 0, tzinfo=UTC)
+    az = solar_azimuth(50.0, 0.0, dt.timestamp())
+    # Should be between 150° and 210° (roughly south)
+    assert 150 < az < 210, f"Expected south azimuth near noon, got {az}"
+
+
+def test_solar_azimuth_morning_eastern():
+    """In the morning (before noon), sun is in the eastern half."""
+    from datetime import datetime
+
+    dt = datetime(2024, 6, 21, 6, 0, tzinfo=UTC)
+    az = solar_azimuth(50.0, 0.0, dt.timestamp())
+    assert az < 180, f"Morning sun should be in eastern half, got {az}"
+
+
+# ---------------------------------------------------------------------------
+# surface_irradiance_factor
+# ---------------------------------------------------------------------------
+
+
+def test_surface_irradiance_factor_night():
+    """Night (elevation ≤ 0) → factor = 0."""
+    assert surface_irradiance_factor(180.0, -5.0, 180.0) == 0.0
+    assert surface_irradiance_factor(180.0, 0.0, 180.0) == 0.0
+
+
+def test_surface_irradiance_factor_facing_sun():
+    """Sun due south, surface due south → positive factor."""
+    factor = surface_irradiance_factor(180.0, 30.0, 180.0)
+    assert 0 < factor <= 1.0
+
+
+def test_surface_irradiance_factor_facing_away():
+    """Sun due south, surface due north → factor = 0."""
+    factor = surface_irradiance_factor(180.0, 60.0, 0.0)
+    assert factor == 0.0, f"North surface, south sun should give 0, got {factor}"
+
+
+def test_surface_irradiance_factor_perpendicular():
+    """Sun due south, surface due east → factor = 0 (90° off)."""
+    factor = surface_irradiance_factor(180.0, 45.0, 90.0)
+    assert factor == pytest.approx(0.0, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# build_oriented_solar_series
+# ---------------------------------------------------------------------------
+
+
+def test_build_oriented_solar_series_length():
+    """Oriented series has the same length as requested."""
+    from datetime import datetime
+
+    dt = datetime(2024, 6, 21, 12, 0, tzinfo=UTC)
+    series = build_oriented_solar_series(50.0, 10.0, 12, [180.0], 5.0, start_ts=dt.timestamp())
+    assert len(series) == 12
+
+
+def test_build_oriented_solar_series_north_facing_near_zero():
+    """North-facing surface in Northern Hemisphere at noon → near-zero irradiance."""
+    from datetime import datetime
+
+    dt = datetime(2024, 6, 21, 12, 0, tzinfo=UTC)
+    ts = dt.timestamp()
+    series = build_oriented_solar_series(50.0, 0.0, 6, [0.0], 5.0, start_ts=ts)
+    for v in series:
+        assert v == pytest.approx(0.0, abs=0.05), f"North-facing should get ~0 at noon, got {v}"
+
+
+def test_build_oriented_solar_series_south_facing_positive():
+    """South-facing surface at noon in Northern Hemisphere → positive irradiance."""
+    from datetime import datetime
+
+    dt = datetime(2024, 6, 21, 12, 0, tzinfo=UTC)
+    ts = dt.timestamp()
+    oriented = build_oriented_solar_series(50.0, 0.0, 1, [180.0], 5.0, start_ts=ts)
+    base = build_solar_series(50.0, 0.0, 1, 5.0, start_ts=ts)
+    # South-facing should get meaningful fraction of GHI
+    assert oriented[0] > 0
+    # But should not exceed the unoriented GHI
+    assert oriented[0] <= base[0] + 1e-9
+
+
+def test_build_oriented_solar_series_corner_room_average():
+    """Corner room (south + east windows) → average factor between the two orientations."""
+    from datetime import datetime
+
+    dt = datetime(2024, 6, 21, 12, 0, tzinfo=UTC)  # Noon, sun roughly south
+    ts = dt.timestamp()
+    south = build_oriented_solar_series(50.0, 0.0, 1, [180.0], 5.0, start_ts=ts)
+    east = build_oriented_solar_series(50.0, 0.0, 1, [90.0], 5.0, start_ts=ts)
+    corner = build_oriented_solar_series(50.0, 0.0, 1, [180.0, 90.0], 5.0, start_ts=ts)
+    expected_avg = (south[0] + east[0]) / 2
+    assert corner[0] == pytest.approx(expected_avg, rel=1e-6)

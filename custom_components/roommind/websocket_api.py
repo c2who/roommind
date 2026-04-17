@@ -12,17 +12,18 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import (
     CLIMATE_MODES,
+    CONFLICT_RESOLUTIONS,
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
     DEFAULT_COMPRESSOR_MIN_OFF_MINUTES,
     DEFAULT_COMPRESSOR_MIN_RUN_MINUTES,
+    DEFAULT_CONFLICT_RESOLUTION,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
     DOMAIN,
     OVERRIDE_TYPES,
     build_override_live,
 )
-from .control.thermal_model import RoomModelManager
 from .services.analytics_service import (
     _compute_target_forecast,  # noqa: F401 - re-exported for tests
     _csv_to_points,  # noqa: F401 - re-exported for tests
@@ -76,9 +77,14 @@ _ROOM_SAVE_FIELDS = (
     "covers_override_minutes",
     "cover_schedules",
     "cover_schedule_selector_entity",
+    "cover_orientations",
     "covers_night_close",
+    "covers_night_close_elevation",
+    "covers_night_close_offset_minutes",
     "covers_night_position",
     "covers_sensor_only",
+    "covers_snap_deploy",
+    "cover_min_positions",
     "ignore_presence",
     "is_outdoor",
     "heat_source_orchestration",
@@ -135,6 +141,31 @@ def _compute_anyone_home(hass: HomeAssistant, settings: dict) -> bool:
     from .utils.presence_utils import is_presence_away
 
     return not is_presence_away(hass, {}, settings)  # all away
+
+
+def _validate_no_own_entities(config: dict, own_prefix: str) -> str | None:
+    """Check that no RoomMind-owned entities are assigned. Returns error message or None."""
+    for field in ("thermostats", "acs", "window_sensors", "covers", "occupancy_sensors"):
+        for eid in config.get(field, []):
+            if eid.split(".", 1)[-1].startswith(own_prefix):
+                return f"Cannot assign RoomMind's own entity '{eid}' to a room"
+    for device in config.get("devices", []):
+        eid = device.get("entity_id", "")
+        if eid.split(".", 1)[-1].startswith(own_prefix):
+            return f"Cannot assign RoomMind's own entity '{eid}' to a room"
+    for field in ("temperature_sensor", "humidity_sensor"):
+        eid = config.get(field, "")
+        if eid and eid.split(".", 1)[-1].startswith(own_prefix):
+            return f"Cannot assign RoomMind's own entity '{eid}' to a room"
+    return None
+
+
+def _validate_no_duplicate_devices(config: dict) -> str | None:
+    """Check for duplicate entity_ids in devices[]. Returns error message or None."""
+    device_eids = [d["entity_id"] for d in config.get("devices", [])]
+    if len(device_eids) != len(set(device_eids)):
+        return "devices[] contains duplicate entity_ids"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +317,18 @@ async def websocket_list_rooms(
         vol.Optional("cover_schedules"): [
             {
                 vol.Required("entity_id"): str,
+                vol.Optional("mode", default="force"): vol.In(["force", "gate"]),
             }
         ],
         vol.Optional("cover_schedule_selector_entity"): str,
+        vol.Optional("cover_orientations"): {str: vol.All(vol.Coerce(int), vol.Range(min=0, max=359))},
         vol.Optional("covers_night_close"): bool,
+        vol.Optional("covers_night_close_elevation"): vol.All(vol.Coerce(float), vol.Range(min=-18, max=10)),
+        vol.Optional("covers_night_close_offset_minutes"): vol.All(vol.Coerce(int), vol.Range(min=-120, max=120)),
         vol.Optional("covers_night_position"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
         vol.Optional("covers_sensor_only"): bool,
+        vol.Optional("covers_snap_deploy"): bool,
+        vol.Optional("cover_min_positions"): {str: vol.All(vol.Coerce(int), vol.Range(min=0, max=99))},
         vol.Optional("ignore_presence"): bool,
         vol.Optional("is_outdoor"): bool,
         vol.Optional("valve_protection_exclude"): [str],
@@ -320,42 +357,14 @@ async def websocket_save_room(
 
     # Reject RoomMind's own entities to prevent self-assignment (#86)
     own_prefix = f"{DOMAIN}_"
-    for field in ("thermostats", "acs", "window_sensors", "covers", "occupancy_sensors"):
-        for eid in config.get(field, []):
-            if eid.split(".", 1)[-1].startswith(own_prefix):
-                connection.send_error(
-                    msg["id"],
-                    "invalid_entity",
-                    f"Cannot assign RoomMind's own entity '{eid}' to a room",
-                )
-                return
-    for device in config.get("devices", []):
-        eid = device.get("entity_id", "")
-        if eid.split(".", 1)[-1].startswith(own_prefix):
-            connection.send_error(
-                msg["id"],
-                "invalid_entity",
-                f"Cannot assign RoomMind's own entity '{eid}' to a room",
-            )
-            return
-    for field in ("temperature_sensor", "humidity_sensor"):
-        eid = config.get(field, "")
-        if eid and eid.split(".", 1)[-1].startswith(own_prefix):
-            connection.send_error(
-                msg["id"],
-                "invalid_entity",
-                f"Cannot assign RoomMind's own entity '{eid}' to a room",
-            )
-            return
-
+    err = _validate_no_own_entities(config, own_prefix)
+    if err:
+        connection.send_error(msg["id"], "invalid_entity", err)
+        return
     # Reject duplicate entity_ids in devices[]
-    device_eids = [d["entity_id"] for d in config.get("devices", [])]
-    if len(device_eids) != len(set(device_eids)):
-        connection.send_error(
-            msg["id"],
-            "duplicate_entity",
-            "devices[] contains duplicate entity_ids",
-        )
+    err = _validate_no_duplicate_devices(config)
+    if err:
+        connection.send_error(msg["id"], "duplicate_entity", err)
         return
 
     if ("thermostats" in config or "acs" in config) and "devices" not in config:
@@ -611,6 +620,10 @@ async def websocket_get_settings(
                 vol.Optional("min_off_minutes", default=DEFAULT_COMPRESSOR_MIN_OFF_MINUTES): vol.All(
                     vol.Coerce(int), vol.Range(min=1, max=30)
                 ),
+                vol.Optional("master_entity", default=""): str,
+                vol.Optional("conflict_resolution", default=DEFAULT_CONFLICT_RESOLUTION): vol.In(CONFLICT_RESOLUTIONS),
+                vol.Optional("action_script", default=""): str,
+                vol.Optional("enforce_uniform_mode", default=False): bool,
             }
         ],
     }
@@ -655,6 +668,49 @@ async def websocket_save_settings(
                 msg["id"],
                 "duplicate_member",
                 "A climate entity cannot be in multiple compressor groups",
+            )
+            return
+
+        # Validate master_entity and action_script fields
+        all_masters: list[str] = []
+        for g in groups:
+            master = g.get("master_entity", "")
+            if master:
+                if not master.startswith("climate."):
+                    connection.send_error(
+                        msg["id"],
+                        "invalid_master_entity",
+                        f"Master entity '{master}' must be a climate entity",
+                    )
+                    return
+                if master in g.get("members", []):
+                    connection.send_error(
+                        msg["id"],
+                        "master_in_members",
+                        f"Master entity '{master}' cannot also be a group member",
+                    )
+                    return
+                if master in all_members:
+                    connection.send_error(
+                        msg["id"],
+                        "master_is_other_member",
+                        f"Master entity '{master}' is a member of another group",
+                    )
+                    return
+                all_masters.append(master)
+            script = g.get("action_script", "")
+            if script and not script.startswith("script."):
+                connection.send_error(
+                    msg["id"],
+                    "invalid_action_script",
+                    f"Action script '{script}' must be a script entity",
+                )
+                return
+        if len(all_masters) != len(set(all_masters)):
+            connection.send_error(
+                msg["id"],
+                "duplicate_master",
+                "A master entity cannot be assigned to multiple groups",
             )
             return
 
@@ -730,16 +786,14 @@ async def websocket_thermal_reset(
 
     # Clear learned model and residual heat tracking
     if coordinator:
-        coordinator._model_manager.remove_room(area_id)
-        coordinator._ekf_training.last_temps.pop(area_id, None)
-        coordinator._residual_tracker.clear_room(area_id)
+        coordinator.reset_thermal_room(area_id)
 
     # Clear persisted thermal data
     await store.async_clear_thermal_data_room(area_id)
 
     # Clear history CSV files
-    if coordinator and coordinator._history_store:
-        await hass.async_add_executor_job(coordinator._history_store.remove_room, area_id)
+    if coordinator and coordinator.history_store:
+        await hass.async_add_executor_job(coordinator.history_store.remove_room, area_id)
 
     connection.send_result(msg["id"], {"success": True})
 
@@ -763,17 +817,15 @@ async def websocket_thermal_reset_all(
     # Clear all learned models — replace entire manager for clean state
     room_ids = list(store.get_rooms().keys())
     if coordinator:
-        coordinator._replace_model_manager(RoomModelManager())
-        coordinator._ekf_training.last_temps.clear()
-        coordinator._residual_tracker.clear_all()
+        room_ids = coordinator.reset_thermal_all()
 
     # Clear persisted thermal data
     await store.async_clear_all_thermal_data()
 
     # Clear history CSV files for all rooms
-    if coordinator and coordinator._history_store:
+    if coordinator and coordinator.history_store:
         for area_id in room_ids:
-            await hass.async_add_executor_job(coordinator._history_store.remove_room, area_id)
+            await hass.async_add_executor_job(coordinator.history_store.remove_room, area_id)
 
     connection.send_result(msg["id"], {"success": True})
 
@@ -799,7 +851,7 @@ async def websocket_boost_learning(
         connection.send_error(msg["id"], "no_coordinator", "Coordinator not ready")
         return
 
-    n_obs = coordinator._model_manager.boost_learning(area_id)
+    n_obs = coordinator.boost_learning(area_id)
 
     # Persist cooldown anchor in settings
     settings = store.get_settings()
@@ -808,6 +860,29 @@ async def websocket_boost_learning(
     await store.async_save_settings({"boost_applied_at": boost_applied})
 
     connection.send_result(msg["id"], {"success": True, "n_observations": n_obs})
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics
+# ---------------------------------------------------------------------------
+
+
+@websocket_api.websocket_command({vol.Required("type"): "roommind/diagnostics/get"})
+@websocket_api.async_response
+async def websocket_get_diagnostics(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict,
+) -> None:
+    """Return full integration diagnostics via WebSocket."""
+    from .diagnostics import async_get_config_entry_diagnostics
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        connection.send_error(msg["id"], "not_found", "No config entry found")
+        return
+    result = await async_get_config_entry_diagnostics(hass, entries[0])
+    connection.send_result(msg["id"], result)
 
 
 # ---------------------------------------------------------------------------
@@ -829,3 +904,4 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, websocket_thermal_reset)
     websocket_api.async_register_command(hass, websocket_thermal_reset_all)
     websocket_api.async_register_command(hass, websocket_boost_learning)
+    websocket_api.async_register_command(hass, websocket_get_diagnostics)

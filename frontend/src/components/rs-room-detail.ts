@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
+import { unsafeHTML } from "lit/directives/unsafe-html.js";
 import { customElement, property, state } from "lit/decorators.js";
 import type {
   HomeAssistant,
@@ -16,6 +17,8 @@ import "./rs-hero-status";
 import "./rs-climate-mode-selector";
 import "./rs-schedule-settings";
 import "./rs-device-section";
+import "./rs-sensor-section";
+import "./rs-window-section";
 import "./rs-section-card";
 import "./rs-override-section";
 import "./rs-presence-section";
@@ -24,6 +27,7 @@ import "./rs-heat-source-section";
 import "../components/shared/rs-toggle-row";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
+import { resolveHeatingSystemType } from "../utils/device-utils";
 import type { RsOverrideSection } from "./rs-override-section";
 
 @customElement("rs-room-detail")
@@ -56,6 +60,8 @@ export class RsRoomDetail extends LitElement {
   @state() private _dirty = false;
   @state() private _editingSchedule = false;
   @state() private _editingDevices = false;
+  @state() private _editingSensors = false;
+  @state() private _editingWindows = false;
   @state() private _editingPresence = false;
   @state() private _selectedPresencePersons: string[] = [];
   @state() private _displayName = "";
@@ -72,6 +78,12 @@ export class RsRoomDetail extends LitElement {
   @state() private _coversNightClose = false;
   @state() private _coversNightPosition = 0;
   @state() private _coversSensorOnly = false;
+  @state() private _coversSnapDeploy = false;
+  @state() private _coverOrientations: Record<string, number> = {};
+  @state() private _coversNightCloseElevation = 0;
+  @state() private _coversNightCloseOffsetMinutes = 0;
+  @state() private _coversOutdoorMinTemp: number | null = 10;
+  @state() private _coverMinPositions: Record<string, number> = {};
   @state() private _editingCovers = false;
   @state() private _ignorePresence = false;
   @state() private _isOutdoor = false;
@@ -352,6 +364,12 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = this.config.covers_night_close ?? false;
       this._coversNightPosition = this.config.covers_night_position ?? 0;
       this._coversSensorOnly = this.config.covers_sensor_only ?? false;
+      this._coversSnapDeploy = this.config.covers_snap_deploy ?? false;
+      this._coverOrientations = this.config.cover_orientations ?? {};
+      this._coversNightCloseElevation = this.config.covers_night_close_elevation ?? 0;
+      this._coversNightCloseOffsetMinutes = this.config.covers_night_close_offset_minutes ?? 0;
+      this._coversOutdoorMinTemp = this.config.covers_outdoor_min_temp ?? 10;
+      this._coverMinPositions = this.config.cover_min_positions ?? {};
       this._ignorePresence = this.config.ignore_presence ?? false;
       this._isOutdoor = this.config.is_outdoor ?? false;
       this._valveProtectionExclude = new Set(this.config.valve_protection_exclude ?? []);
@@ -390,6 +408,12 @@ export class RsRoomDetail extends LitElement {
       this._coversNightClose = false;
       this._coversNightPosition = 0;
       this._coversSensorOnly = false;
+      this._coversSnapDeploy = false;
+      this._coverOrientations = {};
+      this._coversNightCloseElevation = 0;
+      this._coversNightCloseOffsetMinutes = 0;
+      this._coversOutdoorMinTemp = 10;
+      this._coverMinPositions = {};
       this._ignorePresence = false;
       this._isOutdoor = false;
       this._valveProtectionExclude = new Set();
@@ -407,6 +431,8 @@ export class RsRoomDetail extends LitElement {
     const isConfigured = this._devices.length > 0;
     this._editingSchedule = !isConfigured;
     this._editingDevices = !isConfigured;
+    this._editingSensors = !isConfigured;
+    this._editingWindows = !isConfigured;
     this._editingCovers = !isConfigured;
   }
 
@@ -560,20 +586,64 @@ export class RsRoomDetail extends LitElement {
                     .selectedHumiditySensor=${this._selectedHumiditySensor}
                     .selectedOccupancySensors=${this._selectedOccupancySensors}
                     .selectedWindowSensors=${this._selectedWindowSensors}
-                    .windowOpenDelay=${this._windowOpenDelay}
-                    .windowCloseDelay=${this._windowCloseDelay}
                     .valveProtectionExclude=${this._valveProtectionExclude}
                     .valveProtectionEnabled=${this.valveProtectionEnabled}
                     @device-changed=${this._onDeviceChanged}
                     @entity-mode-change=${this._onEntityModeChange}
-                    @sensor-selected=${this._onSensorSelected}
-                    @occupancy-sensor-toggle=${this._onOccupancySensorToggle}
-                    @window-sensor-toggle=${this._onWindowSensorToggle}
-                    @window-open-delay-changed=${this._onWindowOpenDelayChanged}
-                    @window-close-delay-changed=${this._onWindowCloseDelayChanged}
                     @external-entity-added=${this._onExternalEntityAdded}
                     @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
                   ></rs-device-section>
+                </rs-section-card>
+
+                <rs-section-card
+                  icon="mdi:thermometer"
+                  .heading=${localize("room.section.sensors", this.hass.language)}
+                  editable
+                  .editing=${this._editingSensors}
+                  .doneLabel=${localize("devices.done", this.hass.language)}
+                  @edit-click=${() => {
+                    this._editingSensors = true;
+                  }}
+                  @done-click=${() => {
+                    this._editingSensors = false;
+                  }}
+                >
+                  <rs-sensor-section
+                    .hass=${this.hass}
+                    .area=${this.area}
+                    .editing=${this._editingSensors}
+                    .temperatureSensor=${this._selectedTempSensor}
+                    .humiditySensor=${this._selectedHumiditySensor}
+                    .occupancySensors=${this._selectedOccupancySensors}
+                    .language=${this.hass.language}
+                    @sensor-changed=${this._onSensorChanged}
+                  ></rs-sensor-section>
+                </rs-section-card>
+
+                <rs-section-card
+                  icon="mdi:window-open-variant"
+                  .heading=${localize("room.section.windows", this.hass.language)}
+                  editable
+                  .editing=${this._editingWindows}
+                  .doneLabel=${localize("devices.done", this.hass.language)}
+                  @edit-click=${() => {
+                    this._editingWindows = true;
+                  }}
+                  @done-click=${() => {
+                    this._editingWindows = false;
+                  }}
+                >
+                  <rs-window-section
+                    .hass=${this.hass}
+                    .area=${this.area}
+                    .editing=${this._editingWindows}
+                    .windowSensors=${this._selectedWindowSensors}
+                    .windowOpenDelay=${this._windowOpenDelay}
+                    .windowCloseDelay=${this._windowCloseDelay}
+                    .heatingSystemType=${resolveHeatingSystemType(this._devices)}
+                    .language=${this.hass.language}
+                    @window-config-changed=${this._onWindowConfigChanged}
+                  ></rs-window-section>
                 </rs-section-card>
 
                 <rs-presence-section
@@ -614,13 +684,16 @@ export class RsRoomDetail extends LitElement {
                   <b>${localize("covers.info.schedule_title", this.hass.language)}</b><br />
                   ${localize("covers.info.schedule_body", this.hass.language)}
                   <div class="yaml-block">
-                    <span class="yaml-key">schedule</span>:
-                    <span class="yaml-key">cover_evening</span>: <span class="yaml-key">name</span>:
-                    <span class="yaml-value">Cover Evening</span>
-                    <span class="yaml-key">monday</span>: - <span class="yaml-key">from</span>:
-                    <span class="yaml-value">"20:00:00"</span> <span class="yaml-key">to</span>:
-                    <span class="yaml-value">"06:00:00"</span> <span class="yaml-key">data</span>:
-                    <span class="yaml-key">position</span>: <span class="yaml-value">10</span>
+                    ${unsafeHTML(
+                      '<span class="yaml-key">schedule</span>:\n' +
+                        '  <span class="yaml-key">cover_evening</span>:\n' +
+                        '    <span class="yaml-key">name</span>: <span class="yaml-value">Cover Evening</span>\n' +
+                        '    <span class="yaml-key">monday</span>:\n' +
+                        '      - <span class="yaml-key">from</span>: <span class="yaml-value">"20:00:00"</span>\n' +
+                        '        <span class="yaml-key">to</span>: <span class="yaml-value">"06:00:00"</span>\n' +
+                        '        <span class="yaml-key">data</span>:\n' +
+                        '          <span class="yaml-key">position</span>: <span class="yaml-value">10</span>',
+                    )}
                   </div>
                   <b>${localize("covers.info.solar_title", this.hass.language)}</b><br />
                   ${localize("covers.info.solar_body", this.hass.language)}
@@ -652,8 +725,14 @@ export class RsRoomDetail extends LitElement {
                   .nightClose=${this._coversNightClose}
                   .nightPosition=${this._coversNightPosition}
                   .sensorOnly=${this._coversSensorOnly}
+                  .snapDeploy=${this._coversSnapDeploy}
                   .forcedReason=${this.config?.live?.cover_forced_reason ?? ""}
                   .autoPaused=${this.config?.live?.cover_auto_paused ?? false}
+                  .coverOrientations=${this._coverOrientations}
+                  .nightCloseElevation=${this._coversNightCloseElevation}
+                  .nightCloseOffsetMinutes=${this._coversNightCloseOffsetMinutes}
+                  .outdoorMinTemp=${this._coversOutdoorMinTemp}
+                  .coverMinPositions=${this._coverMinPositions}
                   @covers-toggle=${this._onCoversToggle}
                   @setting-changed=${this._onCoverSettingChanged}
                 ></rs-covers-section>
@@ -783,46 +862,27 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
-  private _onSensorSelected(e: CustomEvent<{ entityId: string; type: "temp" | "humidity" }>) {
-    if (e.detail.type === "temp") {
-      this._selectedTempSensor = e.detail.entityId;
-    } else {
-      this._selectedHumiditySensor = e.detail.entityId;
+  private _onSensorChanged(e: CustomEvent<{ key: string; value: string | string[] }>) {
+    const { key, value } = e.detail;
+    if (key === "temperature_sensor") {
+      this._selectedTempSensor = value as string;
+    } else if (key === "humidity_sensor") {
+      this._selectedHumiditySensor = value as string;
+    } else if (key === "occupancy_sensors") {
+      this._selectedOccupancySensors = new Set(value as string[]);
     }
     this._autoSave();
   }
 
-  private _onOccupancySensorToggle(e: CustomEvent<{ entityId: string; checked: boolean }>) {
-    const { entityId, checked } = e.detail;
-    const next = new Set(this._selectedOccupancySensors);
-    if (checked) {
-      next.add(entityId);
-    } else {
-      next.delete(entityId);
+  private _onWindowConfigChanged(e: CustomEvent<{ key: string; value: string[] | number }>) {
+    const { key, value } = e.detail;
+    if (key === "window_sensors") {
+      this._selectedWindowSensors = new Set(value as string[]);
+    } else if (key === "window_open_delay") {
+      this._windowOpenDelay = value as number;
+    } else if (key === "window_close_delay") {
+      this._windowCloseDelay = value as number;
     }
-    this._selectedOccupancySensors = next;
-    this._autoSave();
-  }
-
-  private _onWindowSensorToggle(e: CustomEvent<{ entityId: string; checked: boolean }>) {
-    const { entityId, checked } = e.detail;
-    const next = new Set(this._selectedWindowSensors);
-    if (checked) {
-      next.add(entityId);
-    } else {
-      next.delete(entityId);
-    }
-    this._selectedWindowSensors = next;
-    this._autoSave();
-  }
-
-  private _onWindowOpenDelayChanged(e: CustomEvent<{ value: number }>) {
-    this._windowOpenDelay = e.detail.value;
-    this._autoSave();
-  }
-
-  private _onWindowCloseDelayChanged(e: CustomEvent<{ value: number }>) {
-    this._windowCloseDelay = e.detail.value;
     this._autoSave();
   }
 
@@ -841,7 +901,7 @@ export class RsRoomDetail extends LitElement {
   private _onExternalEntityAdded(
     e: CustomEvent<{
       entityId: string;
-      category: "temp" | "humidity" | "window";
+      category: "temp" | "humidity" | "window" | "occupancy";
     }>,
   ) {
     const { entityId, category } = e.detail;
@@ -851,6 +911,10 @@ export class RsRoomDetail extends LitElement {
       const next = new Set(this._selectedWindowSensors);
       next.add(entityId);
       this._selectedWindowSensors = next;
+    } else if (category === "occupancy") {
+      const next = new Set(this._selectedOccupancySensors);
+      next.add(entityId);
+      this._selectedOccupancySensors = next;
     } else {
       this._selectedHumiditySensor = entityId;
     }
@@ -880,6 +944,16 @@ export class RsRoomDetail extends LitElement {
       next.add(entityId);
     } else {
       next.delete(entityId);
+      if (entityId in this._coverOrientations) {
+        const nextOrientations = { ...this._coverOrientations };
+        delete nextOrientations[entityId];
+        this._coverOrientations = nextOrientations;
+      }
+      if (entityId in this._coverMinPositions) {
+        const nextMinPositions = { ...this._coverMinPositions };
+        delete nextMinPositions[entityId];
+        this._coverMinPositions = nextMinPositions;
+      }
     }
     this._selectedCovers = next;
     this._autoSave();
@@ -898,6 +972,16 @@ export class RsRoomDetail extends LitElement {
     else if (key === "covers_night_close") this._coversNightClose = value as boolean;
     else if (key === "covers_night_position") this._coversNightPosition = value as number;
     else if (key === "covers_sensor_only") this._coversSensorOnly = value as boolean;
+    else if (key === "covers_snap_deploy") this._coversSnapDeploy = value as boolean;
+    else if (key === "cover_orientations")
+      this._coverOrientations = value as Record<string, number>;
+    else if (key === "covers_night_close_elevation")
+      this._coversNightCloseElevation = value as number;
+    else if (key === "covers_night_close_offset_minutes")
+      this._coversNightCloseOffsetMinutes = value as number;
+    else if (key === "covers_outdoor_min_temp") this._coversOutdoorMinTemp = value as number | null;
+    else if (key === "cover_min_positions")
+      this._coverMinPositions = value as Record<string, number>;
     this._autoSave();
   }
 
@@ -977,6 +1061,12 @@ export class RsRoomDetail extends LitElement {
         covers_night_close: this._coversNightClose,
         covers_night_position: this._coversNightPosition,
         covers_sensor_only: this._coversSensorOnly,
+        covers_snap_deploy: this._coversSnapDeploy,
+        cover_orientations: this._coverOrientations,
+        covers_night_close_elevation: this._coversNightCloseElevation,
+        covers_night_close_offset_minutes: this._coversNightCloseOffsetMinutes,
+        covers_outdoor_min_temp: this._coversOutdoorMinTemp,
+        cover_min_positions: this._coverMinPositions,
         ignore_presence: this._ignorePresence,
         is_outdoor: this._isOutdoor,
         valve_protection_exclude: [...this._valveProtectionExclude],

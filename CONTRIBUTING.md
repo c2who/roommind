@@ -42,6 +42,25 @@ The production build outputs to `custom_components/roommind/frontend/roommind-pa
 .venv/bin/pytest tests/test_coordinator.py::test_heating_mode -v
 ```
 
+Tests are organized by module:
+```
+tests/
+  coordinator/    # Coordinator logic tests
+  control/        # MPC, thermal model, solar tests
+  managers/       # Manager-specific tests
+  services/       # Analytics service tests
+  utils/          # Utility function tests
+  integration/    # Multi-cycle integration tests
+```
+
+## Test Coverage
+
+Coverage must stay ≥ 95% (enforced in CI). Check locally:
+
+```bash
+.venv/bin/pytest tests/ --cov=custom_components/roommind --cov-report=term-missing
+```
+
 ## Code Style
 
 ### Python

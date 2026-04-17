@@ -14,8 +14,8 @@ from custom_components.roommind.const import (
     COVER_POS_DEADBAND,
     COVER_POS_SCALE,
     COVER_PREDICTION_DT_MINUTES,
-    COVER_RC_LOOKAHEAD_H,
     COVER_SOLAR_MIN,
+    COVER_TRANSITION_SETTLE_S,
     COVER_USER_CONFLICT_THRESHOLD,
     COVER_USER_OVERRIDE_MINUTES,
 )
@@ -35,9 +35,8 @@ def test_cover_constants_exist():
     assert COVER_MAX_EFFECTIVENESS == 0.85
     assert COVER_USER_CONFLICT_THRESHOLD == 15
     assert COVER_USER_OVERRIDE_MINUTES == 60
-    assert COVER_POS_DEADBAND == 10
+    assert COVER_POS_DEADBAND == 20
     assert COVER_PREDICTION_DT_MINUTES == 5.0
-    assert COVER_RC_LOOKAHEAD_H == 2.0
     assert COVER_LINEAR_LOOKAHEAD_H == 1.0
     assert COVER_MAX_PREDICTION_STD == 0.5
     assert COVER_CONFIDENCE_REFERENCE_SOLAR == 0.5
@@ -67,12 +66,16 @@ async def test_room_config_has_cover_defaults():
     assert room["covers_auto_enabled"] is False
     assert room["covers_deploy_threshold"] == 1.5
     assert room["covers_min_position"] == 0
-    assert room["covers_outdoor_min_temp"] == 10.0
+    assert room["covers_outdoor_min_temp"] is None
     assert room["covers_override_minutes"] == 60
     assert room["cover_schedules"] == []
     assert room["cover_schedule_selector_entity"] == ""
     assert room["covers_night_close"] is False
+    assert room["covers_night_close_elevation"] == 0
+    assert room["covers_night_close_offset_minutes"] == 0
     assert room["covers_night_position"] == 0
+    assert room["covers_snap_deploy"] is False
+    assert room["cover_min_positions"] == {}
 
 
 # ── Shading factor ─────────────────────────────────────────────────────
@@ -200,6 +203,43 @@ def test_min_position_respected():
     assert d.target_position >= 30
 
 
+def test_snap_deploy_jumps_to_min_position():
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, covers_snap_deploy=True, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 0
+
+
+def test_snap_deploy_respects_custom_min_position():
+    mgr = CoverManager()
+    kwargs = {**_BASE_KWARGS, "covers_min_position": 20}
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, covers_snap_deploy=True, **kwargs)
+    assert d.changed is True
+    assert d.target_position == 20
+
+
+def test_snap_deploy_retract_unchanged():
+    mgr = CoverManager()
+    mgr._get_state("lr").current_position = 0
+    mgr._get_state("lr").last_change_ts = 0
+    d = mgr.evaluate("lr", predicted_peak_temp=20.0, target_temp=22.0, covers_snap_deploy=True, **_BASE_KWARGS)
+    assert d.target_position == 100
+
+
+def test_snap_deploy_hysteresis_hold():
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=23.0, target_temp=22.0, covers_snap_deploy=True, **_BASE_KWARGS)
+    assert d.changed is False
+    assert "hysteresis" in d.reason
+
+
+def test_proportional_unchanged_when_snap_false():
+    mgr = CoverManager()
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, covers_snap_deploy=False, **_BASE_KWARGS)
+    assert d.changed is True
+    assert d.target_position == 25
+
+
 def test_disabled_feature_does_nothing():
     mgr = CoverManager()
     kwargs = {**_BASE_KWARGS, "covers_auto_enabled": False}
@@ -300,6 +340,36 @@ def test_override_duration_zero_means_no_pause():
         # user_override_until = 1100.0 + 0 = 1100.0, which is <= time.time()
         mock_t.time.return_value = 1100.0
         assert not mgr.is_user_override_active("lr")
+
+
+def test_override_not_triggered_during_cover_transit():
+    """No override detection while cover is physically moving toward commanded position."""
+    mgr = CoverManager()
+    with patch("custom_components.roommind.managers.cover_manager.time") as mock_t:
+        mock_t.time.return_value = 1000.0
+        # RoomMind commands cover to position ~25 (high solar)
+        d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+        assert d.changed is True
+
+        # Cover is still in transit (e.g. moving from 100 → 25, reports 60 after 30s)
+        mock_t.time.return_value = 1030.0  # within COVER_TRANSITION_SETTLE_S=90
+        mgr.update_position("lr", 60)
+        state = mgr._get_state("lr")
+        assert state.user_override_until == 0.0  # no false override during transit
+
+
+def test_override_triggered_after_settle_window():
+    """Override detection activates once the settling period has elapsed."""
+    mgr = CoverManager()
+    with patch("custom_components.roommind.managers.cover_manager.time") as mock_t:
+        mock_t.time.return_value = 1000.0
+        mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+
+        # User manually opens cover well after the settle window
+        mock_t.time.return_value = 1000.0 + COVER_TRANSITION_SETTLE_S + 10
+        mgr.update_position("lr", 100)
+        state = mgr._get_state("lr")
+        assert state.user_override_until > 0.0  # override correctly detected
 
 
 def test_low_solar_retract_respects_hold_time():
@@ -636,16 +706,151 @@ def test_forced_position_works_without_prediction():
     assert "forced" in d.reason
 
 
-def test_manual_override_blocks_forced_position():
+def test_temp_override_does_not_block_forced_position():
+    """Temperature override (boost/eco) must not block night close or schedules."""
     mgr = CoverManager()
+    mgr.update_position("lr", 100)
     d = mgr.evaluate(
         "lr",
         predicted_peak_temp=22.0,
         target_temp=22.0,
         **{**_BASE_KWARGS, "has_active_override": True, "forced_position": 0, "forced_reason": "night_close"},
     )
+    assert d.changed is True
+    assert "night_close" in d.reason
+
+
+def test_user_cover_override_blocks_forced_position():
+    """User manually moving cover pauses forced positions (night close)."""
+    mgr = CoverManager()
+    mgr.update_position("lr", 50)  # cover at commanded position
+    mgr._get_state("lr").last_commanded_position = 50  # simulate prior command
+    mgr.update_position("lr", 100)  # user opens → drift detection → user override
+    d = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "forced_position": 0, "forced_reason": "night_close"},
+    )
     assert d.changed is False
-    assert "manual_override" in d.reason
+    assert "user_override" in d.reason
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_repeated_position_reads_do_not_refresh_override(mock_t):
+    """Repeated reads of the same position must not refresh the override timer.
+
+    Regression test: update_position() was resetting user_override_until on every
+    coordinator cycle (30s) because the drift check ran on every call, even when
+    the position hadn't changed. This made the override permanent.
+    """
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+
+    # RoomMind commands shading position
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+    assert d.changed is True  # covers deployed
+
+    # User opens covers → override set at T=1100
+    mock_t.time.return_value = 1100.0
+    mgr.update_position("lr", 100)
+    state = mgr._get_state("lr")
+    assert state.user_override_until == 1100.0 + COVER_USER_OVERRIDE_MINUTES * 60
+
+    # 30 minutes later: same position reported again (simulates coordinator cycle)
+    mock_t.time.return_value = 2900.0  # 1100 + 1800 (30 min)
+    mgr.update_position("lr", 100)  # same position → must NOT refresh timer
+
+    # Timer must still expire at original time, not be pushed forward
+    assert state.user_override_until == 1100.0 + COVER_USER_OVERRIDE_MINUTES * 60
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_night_close_works_after_user_override_expires(mock_t):
+    """Night close must succeed after user override timer expires.
+
+    End-to-end scenario: RoomMind shades → user opens → override blocks night_close
+    → override expires → night_close succeeds.
+    """
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+
+    # RoomMind commands shading position
+    d1 = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+    assert d1.changed is True
+
+    # User opens covers → override set
+    mock_t.time.return_value = 1100.0
+    mgr.update_position("lr", 100)
+
+    # During override: night_close is blocked
+    mock_t.time.return_value = 1200.0
+    d2 = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "forced_position": 0, "forced_reason": "night_close"},
+    )
+    assert d2.changed is False
+    assert "user_override" in d2.reason
+
+    # Simulate repeated position reads during override (must not refresh)
+    for t in range(1200, 4700, 30):
+        mock_t.time.return_value = float(t)
+        mgr.update_position("lr", 100)
+
+    # After override expires (61 minutes after set): night_close succeeds
+    mock_t.time.return_value = 1100.0 + COVER_USER_OVERRIDE_MINUTES * 60 + 60
+    d3 = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "forced_position": 0, "forced_reason": "night_close"},
+    )
+    assert d3.changed is True
+    assert "night_close" in d3.reason
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_user_moving_cover_again_during_override_extends_timer(mock_t):
+    """User moving cover to a new position during active override extends the timer."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+
+    # RoomMind commands shading position
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+    assert d.changed is True
+    commanded = mgr._get_state("lr").last_commanded_position
+
+    # User opens covers → override set at T=1100
+    mock_t.time.return_value = 1100.0
+    mgr.update_position("lr", 100)
+    state = mgr._get_state("lr")
+    original_expiry = state.user_override_until
+    assert original_expiry == 1100.0 + COVER_USER_OVERRIDE_MINUTES * 60
+
+    # 20 minutes later: user moves cover again (e.g. partially closes to 80)
+    mock_t.time.return_value = 2300.0  # 1100 + 1200
+    mgr.update_position("lr", 80)  # 80 != 100 → position changed
+    # |80 - commanded| should still exceed threshold
+    assert abs(80 - commanded) > COVER_USER_CONFLICT_THRESHOLD
+    # Timer must be extended from new time
+    assert state.user_override_until == 2300.0 + COVER_USER_OVERRIDE_MINUTES * 60
+    assert state.user_override_until > original_expiry
+
+
+def test_forced_position_works_when_auto_disabled():
+    """Night close and schedules work even with covers_auto_enabled=False."""
+    mgr = CoverManager()
+    mgr.update_position("lr", 100)
+    d = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=None,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "covers_auto_enabled": False, "forced_position": 0, "forced_reason": "night_close"},
+    )
+    assert d.changed is True
+    assert "night_close" in d.reason
 
 
 def test_no_forced_position_uses_thermal():
@@ -703,10 +908,10 @@ def test_min_position_100_prevents_closing():
 
 
 def test_deadband_prevents_small_changes():
-    """Cover at 25%, desired would be 20% → no change (within 10% deadband)."""
+    """Cover at 25%, desired would be 20% → no change (5% diff < 20% deadband)."""
     mgr = CoverManager()
     mgr.update_position("r", 25)
-    # excess = 25.1 - 22 = 3.1, raw_close = int((3.1-1.5)*50) = 80, desired = max(0, 100-80) = 20
+    # excess = 25.1 - 22 = 3.1, raw_close = int((3.1-1.5)*50) = 80, desired = max(0, 100-80) = 20, diff=5
     d = mgr.evaluate("r", **{**_BASE_KWARGS, "predicted_peak_temp": 25.1, "target_temp": 22.0})
     assert not d.changed
     assert d.reason == "deadband"
@@ -714,31 +919,31 @@ def test_deadband_prevents_small_changes():
 
 
 def test_deadband_allows_large_changes():
-    """Cover at 25%, desired would be 0% → change (>10% deadband)."""
+    """Cover at 25%, desired would be 0% → change (25% diff > 20% deadband)."""
     mgr = CoverManager()
     mgr.update_position("r", 25)
-    # excess = 26.0 - 22 = 4.0, raw_close = int((4.0-1.5)*50) = 125 → 100, desired = 0
+    # excess = 26.0 - 22 = 4.0, raw_close = int((4.0-1.5)*50) = 125 → 100, desired = 0, diff=25
     d = mgr.evaluate("r", **{**_BASE_KWARGS, "predicted_peak_temp": 26.0, "target_temp": 22.0})
     assert d.changed
     assert d.target_position == 0
 
 
 def test_deadband_boundary_exact_threshold():
-    """At exactly 10% difference → no change; at 11% → change."""
+    """At exactly 20% difference → no change; at 21% → change."""
     mgr = CoverManager()
     mgr.update_position("r", 40)
-    # excess = 24.9 - 22 = 2.9, raw_close = int((2.9-1.5)*50) = 70, desired = 30 → diff=10 → deadband
+    # excess = 25.1 - 22 = 3.1, raw_close = int((3.1-1.5)*50) = 80, desired = 20 → diff=20 → deadband
     d = mgr.evaluate(
-        "r", **{**_BASE_KWARGS, "predicted_peak_temp": 24.9, "target_temp": 22.0, "covers_deploy_threshold": 1.5}
+        "r", **{**_BASE_KWARGS, "predicted_peak_temp": 25.1, "target_temp": 22.0, "covers_deploy_threshold": 1.5}
     )
     assert not d.changed
     assert d.reason == "deadband"
-    # excess = 24.92 - 22 = 2.92, raw_close = int((2.92-1.5)*50) = 71, desired = 29 → diff=11 → change
+    # excess = 25.12 - 22 = 3.12, raw_close = int((3.12-1.5)*50) = 81, desired = 19 → diff=21 → change
     d2 = mgr.evaluate(
-        "r", **{**_BASE_KWARGS, "predicted_peak_temp": 24.92, "target_temp": 22.0, "covers_deploy_threshold": 1.5}
+        "r", **{**_BASE_KWARGS, "predicted_peak_temp": 25.12, "target_temp": 22.0, "covers_deploy_threshold": 1.5}
     )
     assert d2.changed
-    assert d2.target_position == 29
+    assert d2.target_position == 19
 
 
 @patch("custom_components.roommind.managers.cover_manager.time")
@@ -786,6 +991,23 @@ def test_no_night_close_when_no_forced_position(mock_t):
     mgr = CoverManager()
     d = mgr.evaluate("lr", predicted_peak_temp=20.0, target_temp=22.0, **_BASE_KWARGS)
     assert "night_close" not in d.reason
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_night_end_opens_covers_when_auto_disabled(mock_t):
+    """Night end forced open works even with covers_auto_enabled=False."""
+    mock_t.time.return_value = 1000.0
+    mgr = CoverManager()
+    mgr.update_position("lr", 0)  # covers closed from night close
+    d = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=None,
+        target_temp=22.0,
+        **{**_BASE_KWARGS, "covers_auto_enabled": False, "forced_position": 100, "forced_reason": "night_end"},
+    )
+    assert d.changed is True
+    assert d.target_position == 100
+    assert "night_end" in d.reason
 
 
 # ── Mixed availability tests ──────────────────────────────────────────
@@ -932,3 +1154,172 @@ def test_low_solar_holds_open_covers_when_peak_predicted():
     assert d.changed is False
     assert "peak_predicted" in d.reason
     assert d.target_position == 100
+
+
+# ── Schedule gate mode tests ──────────────────────────────────────────
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_solar_not_gated_retracts_after_hold(mock_t):
+    """solar_gated=False, covers at 40%, hold time expired → retract to 100."""
+    mock_t.time.return_value = 1000.0
+    mgr = CoverManager()
+    # Start with covers at 40% and some change time in the past
+    state = mgr._get_state("lr")
+    state.current_position = 40
+    state.last_change_ts = 1000.0 - 1000  # 1000s ago, well past hold time
+
+    mock_t.time.return_value = 1000.0
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **{**_BASE_KWARGS, "solar_gated": False})
+    assert d.changed is True
+    assert d.target_position == 100
+    assert d.reason == "gate_retract"
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_solar_not_gated_hold_active_no_retract(mock_t):
+    """solar_gated=False, within hold time → no change."""
+    mock_t.time.return_value = 1000.0
+    mgr = CoverManager()
+    state = mgr._get_state("lr")
+    state.current_position = 40
+    state.last_change_ts = 999.0  # 1s ago, well within hold time
+
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **{**_BASE_KWARGS, "solar_gated": False})
+    assert d.changed is False
+    assert d.reason == "gate_inactive"
+
+
+def test_solar_gated_true_runs_full_logic():
+    """solar_gated=True (default) → existing gate flow unchanged."""
+    mgr = CoverManager()
+    # solar_gated=True is the default — solar logic runs normally
+    d = mgr.evaluate("lr", **{**_BASE_KWARGS, "solar_gated": True, "predicted_peak_temp": 20.0, "target_temp": 22.0})
+    # With low predicted peak (no threat), should remain open
+    assert d.target_position == 100
+
+
+def test_solar_not_gated_already_open_no_action():
+    """solar_gated=False, covers already at 100% → no change needed."""
+    mgr = CoverManager()
+    # Default state: current_position = 100
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **{**_BASE_KWARGS, "solar_gated": False})
+    assert d.changed is False
+    assert d.reason == "gate_inactive"
+
+
+# ── Override detection regression tests ──────────────────────────────
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_override_detected_after_settling_even_with_same_position_reads(mock_t):
+    """Regression: override must be detected even if position was read during settling.
+
+    Previously, update_position() compared against current_position which was
+    updated on the first read, making subsequent reads of the same position
+    skip detection forever.
+    """
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    d = mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+    assert d.changed is True
+
+    mock_t.time.return_value = 1020.0
+    mgr.update_position("lr", 80)
+    state = mgr._get_state("lr")
+    assert state.user_override_until == 0.0
+
+    mock_t.time.return_value = 1050.0
+    mgr.update_position("lr", 80)
+    assert state.user_override_until == 0.0
+
+    mock_t.time.return_value = 1000.0 + COVER_TRANSITION_SETTLE_S
+    mgr.update_position("lr", 80)
+    assert state.user_override_until > 0.0
+
+
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_override_not_perpetually_refreshed_when_drift_persists(mock_t):
+    """Timer must not refresh every cycle when position differs from commanded but is stable."""
+    mgr = CoverManager()
+    mock_t.time.return_value = 1000.0
+    mgr.evaluate("lr", predicted_peak_temp=25.0, target_temp=22.0, **_BASE_KWARGS)
+
+    mock_t.time.return_value = 1100.0
+    mgr.update_position("lr", 100)
+    state = mgr._get_state("lr")
+    first_expiry = state.user_override_until
+    assert first_expiry == 1100.0 + COVER_USER_OVERRIDE_MINUTES * 60
+
+    mock_t.time.return_value = 1200.0
+    mgr.update_position("lr", 100)
+    assert state.user_override_until == first_expiry
+
+    mock_t.time.return_value = 2000.0
+    mgr.update_position("lr", 100)
+    assert state.user_override_until == first_expiry
+
+
+# ── Per-cover min position tests ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_async_apply_per_cover_min_positions():
+    """Per-cover min_positions clamp individual covers."""
+    hass = MagicMock()
+    hass.services.async_call = AsyncMock()
+
+    cover_a = MagicMock()
+    cover_a.attributes = {"supported_features": 4}
+    cover_b = MagicMock()
+    cover_b.attributes = {"supported_features": 4}
+
+    def _get(eid):
+        return {"cover.a": cover_a, "cover.b": cover_b}.get(eid)
+
+    hass.states.get = MagicMock(side_effect=_get)
+
+    await CoverManager.async_apply(
+        hass,
+        ["cover.a", "cover.b"],
+        10,
+        cover_min_positions={"cover.a": 30},
+    )
+
+    calls = hass.services.async_call.call_args_list
+    positions_sent = {}
+    for call in calls:
+        if call[0][1] == "set_cover_position":
+            for eid in call[0][2]["entity_id"]:
+                positions_sent[eid] = call[0][2]["position"]
+
+    assert positions_sent["cover.a"] == 30
+    assert positions_sent["cover.b"] == 10
+
+
+@pytest.mark.asyncio
+async def test_async_apply_no_min_positions_unchanged():
+    """Without cover_min_positions, behavior is unchanged."""
+    hass = MagicMock()
+    hass.services.async_call = AsyncMock()
+
+    cover_state = MagicMock()
+    cover_state.attributes = {"supported_features": 4}
+    hass.states.get = MagicMock(return_value=cover_state)
+
+    await CoverManager.async_apply(hass, ["cover.blind1"], 60)
+
+    hass.services.async_call.assert_called_once_with(
+        "cover",
+        "set_cover_position",
+        {"entity_id": ["cover.blind1"], "position": 60},
+        blocking=False,
+    )
+
+
+def test_set_commanded_position():
+    """set_commanded_position updates last_commanded_position."""
+    mgr = CoverManager()
+    mgr._get_state("lr").last_commanded_position = 10
+    mgr.set_commanded_position("lr", 25)
+    assert mgr._get_state("lr").last_commanded_position == 25

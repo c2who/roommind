@@ -1,8 +1,9 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant, HassArea, CoverScheduleEntry } from "../types";
-import { localize } from "../utils/localize";
+import { localize, type TranslationKey } from "../utils/localize";
 import { getEntitiesForArea } from "../utils/room-state";
+import { getSelectValue } from "../utils/events";
 import "./shared/rs-toggle-row";
 import "./shared/rs-threshold-field";
 import "./rs-cover-schedule";
@@ -23,8 +24,14 @@ export class RsCoverSection extends LitElement {
   @property({ type: Number }) public activeCoverScheduleIndex = -1;
   @property({ type: Boolean }) public nightClose = false;
   @property({ type: Number }) public nightPosition = 0;
+  @property({ type: Boolean }) public snapDeploy = false;
   @property({ type: String }) public forcedReason = "";
   @property({ type: Boolean }) public sensorOnly = false;
+  @property({ attribute: false }) public coverOrientations: Record<string, number> = {};
+  @property({ type: Number }) public nightCloseElevation = 0;
+  @property({ type: Number }) public nightCloseOffsetMinutes = 0;
+  @property({ type: Number }) public outdoorMinTemp: number | null = 10;
+  @property({ attribute: false }) public coverMinPositions: Record<string, number> = {};
 
   static styles = css`
     :host {
@@ -174,6 +181,24 @@ export class RsCoverSection extends LitElement {
     .status-hint.paused {
       color: var(--warning-color, #ff9800);
     }
+    .pill {
+      font-size: 10px;
+      font-weight: 500;
+      padding: 1px 6px;
+      border-radius: 10px;
+      background: var(--divider-color, rgba(0, 0, 0, 0.08));
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+    }
+    .inline-cover-settings {
+      margin-top: 6px;
+    }
+    .inline-setting-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      align-items: end;
+    }
   `;
 
   render() {
@@ -192,10 +217,23 @@ export class RsCoverSection extends LitElement {
           const st = this.hass.states[eid];
           const name = (st?.attributes?.friendly_name as string) ?? eid;
           const pos = st?.attributes?.current_position as number | undefined;
+          const orient = this.coverOrientations[eid];
+          const orientDir =
+            orient !== undefined
+              ? RsCoverSection._DIRECTIONS.find((d) => d.deg === orient)
+              : undefined;
+          const orientLabel = orientDir ? localize(orientDir.shortLabel, l) : undefined;
+          const minPos = this.coverMinPositions[eid];
           return html`
             <div class="cover-row">
               <ha-icon icon="mdi:blinds-horizontal"></ha-icon>
               <span>${name}</span>
+              ${orientLabel ? html`<span class="pill">${orientLabel}</span>` : nothing}
+              ${minPos !== undefined && minPos > 0
+                ? html`<span class="pill"
+                    >${localize("covers.per_cover_min_short", l)} ${minPos}%</span
+                  >`
+                : nothing}
               ${pos !== undefined ? html`<span class="pos-badge">${pos}%</span>` : nothing}
             </div>
           `;
@@ -254,6 +292,8 @@ export class RsCoverSection extends LitElement {
     const friendlyName = (entityState?.attributes?.friendly_name as string) || entityId;
     const pos = entityState?.attributes?.current_position as number | undefined;
     const l = this.hass.language;
+    const currentOrientation = this.coverOrientations[entityId];
+    const currentMin = this.coverMinPositions[entityId];
 
     return html`
       <div class="device-row ${isSelected ? "selected" : ""}">
@@ -272,6 +312,52 @@ export class RsCoverSection extends LitElement {
               : nothing}
           </div>
           <div class="device-entity">${entityId}</div>
+          ${isSelected
+            ? html`
+                <div class="inline-cover-settings">
+                  <div class="inline-setting-row">
+                    <ha-select
+                      .label=${localize("covers.orientation_group_title", l)}
+                      .value=${currentOrientation !== undefined ? String(currentOrientation) : ""}
+                      .options=${[
+                        { value: "", label: localize("covers.orientation_none", l) },
+                        ...RsCoverSection._DIRECTIONS.map((d) => ({
+                          value: String(d.deg),
+                          label: localize(d.longLabel, l),
+                        })),
+                      ]}
+                      fixedMenuPosition
+                      @selected=${(e: Event) => {
+                        const val = getSelectValue(e);
+                        this._setOrientation(entityId, val === "" ? undefined : Number(val));
+                      }}
+                      @closed=${(e: Event) => e.stopPropagation()}
+                    >
+                      <ha-list-item value=""
+                        >${localize("covers.orientation_none", l)}</ha-list-item
+                      >
+                      ${RsCoverSection._DIRECTIONS.map(
+                        (d) => html`
+                          <ha-list-item value=${String(d.deg)}
+                            >${localize(d.longLabel, l)}</ha-list-item
+                          >
+                        `,
+                      )}
+                    </ha-select>
+                    <rs-threshold-field
+                      .label=${localize("covers.per_cover_min_position", l)}
+                      .value=${currentMin ?? 0}
+                      .min=${0}
+                      .max=${99}
+                      .step=${1}
+                      suffix="%"
+                      @value-changed=${(e: CustomEvent) =>
+                        this._setMinPosition(entityId, e.detail as number)}
+                    ></rs-threshold-field>
+                  </div>
+                </div>
+              `
+            : nothing}
         </div>
         ${pos !== undefined ? html`<span class="device-value">${pos}%</span>` : nothing}
       </div>
@@ -371,6 +457,39 @@ export class RsCoverSection extends LitElement {
                     `
                   : nothing}
               </div>
+              ${this.nightClose
+                ? html`
+                    <ha-expansion-panel
+                      .header=${localize("covers.night_close_advanced", l)}
+                      outlined
+                    >
+                      <div style="display:flex;flex-direction:column;gap:12px;padding:8px 0;">
+                        <rs-threshold-field
+                          .label=${localize("covers.night_close_elevation", l)}
+                          .hint=${localize("covers.night_close_elevation_hint", l)}
+                          .value=${this.nightCloseElevation}
+                          .min=${-18}
+                          .max=${10}
+                          .step=${1}
+                          suffix="°"
+                          @value-changed=${(e: CustomEvent) =>
+                            this._emit("covers_night_close_elevation", e.detail)}
+                        ></rs-threshold-field>
+                        <rs-threshold-field
+                          .label=${localize("covers.night_close_offset", l)}
+                          .hint=${localize("covers.night_close_offset_hint", l)}
+                          .value=${this.nightCloseOffsetMinutes}
+                          .min=${-120}
+                          .max=${120}
+                          .step=${5}
+                          suffix="min"
+                          @value-changed=${(e: CustomEvent) =>
+                            this._emit("covers_night_close_offset_minutes", e.detail)}
+                        ></rs-threshold-field>
+                      </div>
+                    </ha-expansion-panel>
+                  `
+                : nothing}
 
               <div class="sub-section">
                 <div class="sub-section-header">
@@ -415,15 +534,68 @@ export class RsCoverSection extends LitElement {
                           @value-changed=${(e: CustomEvent) =>
                             this._emit("covers_override_minutes", e.detail)}
                         ></rs-threshold-field>
+                        <rs-threshold-field
+                          .label=${localize("covers.outdoor_min_temp", l)}
+                          .hint=${localize("covers.outdoor_min_temp_hint", l)}
+                          .value=${this.outdoorMinTemp ?? 10}
+                          .min=${0}
+                          .max=${35}
+                          .step=${1}
+                          suffix="°C"
+                          @value-changed=${(e: CustomEvent) =>
+                            this._emit("covers_outdoor_min_temp", e.detail)}
+                        ></rs-threshold-field>
                       </div>
                     `
                   : nothing}
               </div>
+              ${!this.sensorOnly
+                ? html`
+                    <rs-toggle-row
+                      .label=${localize("covers.snap_deploy", l)}
+                      .hint=${localize("covers.snap_deploy_hint", l)}
+                      .checked=${this.snapDeploy}
+                      @toggle-changed=${(e: CustomEvent) =>
+                        this._emit("covers_snap_deploy", e.detail)}
+                    ></rs-toggle-row>
+                  `
+                : nothing}
             `
           : nothing}
       </div>`
         : nothing}
     `;
+  }
+
+  private static readonly _DIRECTIONS: Array<{
+    shortLabel: TranslationKey;
+    longLabel: TranslationKey;
+    deg: number;
+  }> = [
+    { shortLabel: "covers.orientation_N", longLabel: "covers.orientation_N_full", deg: 0 },
+    { shortLabel: "covers.orientation_NE", longLabel: "covers.orientation_NE_full", deg: 45 },
+    { shortLabel: "covers.orientation_E", longLabel: "covers.orientation_E_full", deg: 90 },
+    { shortLabel: "covers.orientation_SE", longLabel: "covers.orientation_SE_full", deg: 135 },
+    { shortLabel: "covers.orientation_S", longLabel: "covers.orientation_S_full", deg: 180 },
+    { shortLabel: "covers.orientation_SW", longLabel: "covers.orientation_SW_full", deg: 225 },
+    { shortLabel: "covers.orientation_W", longLabel: "covers.orientation_W_full", deg: 270 },
+    { shortLabel: "covers.orientation_NW", longLabel: "covers.orientation_NW_full", deg: 315 },
+  ];
+
+  private _setMinPosition(eid: string, value: number) {
+    const next = { ...this.coverMinPositions };
+    next[eid] = value;
+    this._emit("cover_min_positions", next);
+  }
+
+  private _setOrientation(eid: string, deg: number | undefined) {
+    const next = { ...this.coverOrientations };
+    if (deg === undefined) {
+      delete next[eid];
+    } else {
+      next[eid] = deg;
+    }
+    this._emit("cover_orientations", next);
   }
 
   private _onEntityPicked(ev: CustomEvent) {

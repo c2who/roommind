@@ -243,22 +243,72 @@ class TestCoverageGaps:
 
     @pytest.mark.asyncio
     async def test_schedule_split_heat_cool_temps(self, hass, mock_config_entry):
-        """Schedule with split heat/cool temperatures."""
+        """Schedule with split heat/cool temperatures read from schedule.get_schedule.
+
+        HA does not expose heat_temperature/cool_temperature as entity state attributes,
+        so the fix reads them from block data via schedule.get_schedule instead.
+        """
         store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
         hass.data = {"roommind": {"store": store}}
         hass.states.get = MagicMock(
             side_effect=make_mock_states_get(
-                schedule_attrs={"heat_temperature": 20.0, "cool_temperature": 25.0},
+                schedule_state="on",
+                schedule_attrs={},  # No heat/cool attrs — HA does not expose these
             )
         )
-        hass.services.async_call = AsyncMock()
+
+        all_day_block = {
+            "from": "00:00:00",
+            "to": "23:59:59",
+            "data": {"heat_temperature": 20.0, "cool_temperature": 25.0},
+        }
+        schedule_data = {
+            day: [all_day_block]
+            for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        }
+
+        async def mock_service_call(domain, service, data=None, **kwargs):
+            if domain == "schedule" and service == "get_schedule":
+                eid = (data or {}).get("entity_id", "")
+                return {eid: schedule_data}
+            return None
+
+        hass.services.async_call = AsyncMock(side_effect=mock_service_call)
 
         coordinator = _create_coordinator(hass, mock_config_entry)
-        data = await coordinator._async_update_data()
+        result = await coordinator._async_update_data()
 
-        room = data["rooms"]["living_room_abc12345"]
+        room = result["rooms"]["living_room_abc12345"]
         assert room["heat_target"] == 20.0
         assert room["cool_target"] == 25.0
+
+    @pytest.mark.asyncio
+    async def test_schedule_single_temperature_via_blocks(self, hass, mock_config_entry):
+        """Single temperature field in block data also works via schedule.get_schedule."""
+        store = _make_store_mock({"living_room_abc12345": SAMPLE_ROOM})
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(schedule_state="on", schedule_attrs={}))
+
+        all_day_block = {"from": "00:00:00", "to": "23:59:59", "data": {"temperature": 22.5}}
+        schedule_data = {
+            day: [all_day_block]
+            for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        }
+
+        async def mock_service_call(domain, service, data=None, **kwargs):
+            if domain == "schedule" and service == "get_schedule":
+                eid = (data or {}).get("entity_id", "")
+                return {eid: schedule_data}
+            return None
+
+        hass.services.async_call = AsyncMock(side_effect=mock_service_call)
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        result = await coordinator._async_update_data()
+
+        room = result["rooms"]["living_room_abc12345"]
+        assert room["heat_target"] == 22.5
+        assert room["cool_target"] == 22.5
 
     @pytest.mark.asyncio
     async def test_schedule_entity_unavailable_uses_comfort(self, hass, mock_config_entry):

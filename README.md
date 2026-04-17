@@ -1,8 +1,8 @@
 # RoomMind
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![HACS Default](https://img.shields.io/badge/HACS-Default-orange.svg)](https://github.com/hacs/integration)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.2%2B-blue.svg)](https://www.home-assistant.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/github/license/snazzybean/roommind)](https://github.com/snazzybean/roommind/blob/main/LICENSE)
 [![Tests](https://github.com/snazzybean/roommind/actions/workflows/ci.yml/badge.svg)](https://github.com/snazzybean/roommind/actions/workflows/ci.yml)
 ![Coverage](https://raw.githubusercontent.com/snazzybean/roommind/python-coverage-comment-action-data/badge.svg)
 [![GitHub Release](https://img.shields.io/github/v/release/snazzybean/roommind)](https://github.com/snazzybean/roommind/releases/latest)
@@ -21,11 +21,19 @@
 - **Multi-Scheduler** - Multiple `schedule.*` entities per room with selector switching via `input_boolean` or `input_number`.
 - **Manual Override** - Boost, eco, or custom temperature with configurable duration and instant UI feedback.
 - **Presence Detection** - Link `person.*`, `device_tracker.*`, `binary_sensor.*`, or `input_boolean.*` entities globally or per room. Eco temperature is used when all assigned persons are away.
+- **Ignore Presence per Room** - Rooms can opt out of presence detection to always follow their schedule.
 - **Vacation Mode** - Global setback temperature with end date for all rooms.
 - **Window/Door Pause** - Pauses climate control when windows or doors are open, with configurable open/close delays.
 - **Mold Risk Detection & Prevention** - Surface humidity estimation using the DIN 4108-2 method. Configurable notifications and automatic temperature raise to prevent mold growth.
 - **Automatic Blind/Cover Shading** - Smart cover deployment based on predicted solar overheating. Includes night close, manual override detection, and cover schedules.
 - **Valve Protection** - Periodic cycling of idle TRV valves to prevent seizing and calcification.
+- **Heat Source Orchestration** - Rooms with both TRVs and ACs automatically route heating demand to the most efficient device based on temperature gap and outdoor conditions.
+- **Compressor Group Protection** - Define groups of climate devices sharing an outdoor compressor. Enforces minimum run and off times to prevent short-cycling.
+- **Fan-only & Setback Idle Modes** - AC and heat pump devices can switch to fan-only or setback mode instead of turning off, keeping air circulation or low-load operation active.
+- **Per-Device Setpoint Mode** - Choose proportional (boost setpoint) or direct (exact target) control per device for optimal results with different hardware.
+- **Separate Heat/Cool Targets** - Independent comfort and eco temperatures for heating and cooling in auto mode, creating a natural dead-band.
+- **Per-Room Climate Toggle** - Disable climate control for individual rooms while keeping other rooms active.
+- **Outdoor Areas** - Mark rooms as outdoor (e.g. balcony) to disable climate control while keeping monitoring.
 - **Analytics Dashboard** - Temperature charts with heating power, solar irradiance, and model predictions over 24h to 90 days.
 - **Mobile Ready** - Responsive layout with HA-native toolbar for the companion app.
 - **Multilingual** - English and German, auto-detected from your HA language setting.
@@ -37,11 +45,9 @@
 ### HACS (Recommended)
 
 1. Open HACS in Home Assistant
-2. Click the three-dot menu > **Custom repositories**
-3. Add `https://github.com/snazzybean/roommind` as an **Integration**
-4. Search for "RoomMind" and install
-5. Restart Home Assistant
-6. Go to **Settings > Devices & Services > Add Integration > RoomMind**
+2. Search for "RoomMind" and install
+3. Restart Home Assistant
+4. Go to **Settings > Devices & Services > Add Integration > RoomMind**
 
 ### Manual
 
@@ -101,6 +107,10 @@ Until calibrated (~60 idle + ~20 active samples), RoomMind falls back to simple 
 |--------|-------------|
 | `sensor.roommind_{area_id}_target_temp` | Current target temperature |
 | `sensor.roommind_{area_id}_mode` | Current mode: `idle`, `heating`, or `cooling` |
+| `climate.roommind_{area_id}_override` | Manual override climate entity (controllable from dashboards, automations, voice) |
+| `switch.roommind_vacation` | Global vacation mode toggle |
+| `switch.roommind_{area_id}_cover_auto` | Per-room automatic cover control toggle |
+| `binary_sensor.roommind_{area_id}_cover_paused` | On when manual cover override is detected |
 
 These can be used in HA automations, dashboards, or other integrations.
 
@@ -121,7 +131,3 @@ These can be used in HA automations, dashboards, or other integrations.
 - Optional: temperature sensor, humidity sensor, window sensors, weather entity, schedule helpers, person entities
 
 No cloud services required - everything runs locally.
-
-## License
-
-[MIT](LICENSE) - Copyright (c) 2026 SnazzyBean

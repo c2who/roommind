@@ -26,6 +26,7 @@ export interface PassiveDevice {
 
 export interface CoverScheduleEntry {
   entity_id: string;
+  mode?: "force" | "gate";
 }
 
 export interface RoomLiveData {
@@ -72,12 +73,22 @@ export interface DeviceConfig {
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
 }
 
+export type ConflictResolution =
+  | "heating_priority"
+  | "cooling_priority"
+  | "majority"
+  | "outdoor_temp";
+
 export interface CompressorGroup {
   id: string;
   name: string;
   members: string[];
   min_run_minutes: number;
   min_off_minutes: number;
+  master_entity: string;
+  conflict_resolution: ConflictResolution;
+  action_script: string;
+  enforce_uniform_mode: boolean;
 }
 
 export interface RoomConfig {
@@ -115,9 +126,15 @@ export interface RoomConfig {
   covers_override_minutes?: number;
   cover_schedules?: CoverScheduleEntry[];
   cover_schedule_selector_entity?: string;
+  cover_orientations?: Record<string, number>;
+  covers_outdoor_min_temp?: number | null;
   covers_night_close?: boolean;
   covers_night_position?: number;
   covers_sensor_only?: boolean;
+  covers_night_close_elevation?: number;
+  covers_night_close_offset_minutes?: number;
+  covers_snap_deploy?: boolean;
+  cover_min_positions?: Record<string, number>;
   ignore_presence?: boolean;
   is_outdoor?: boolean;
   valve_protection_exclude?: string[];
@@ -227,6 +244,7 @@ export interface AnalyticsDataPoint {
   planned_mode?: string;
   solar_irradiance: number | null;
   blind_position?: number | null;
+  cover_reason?: string;
   device_setpoint?: number | null;
 }
 

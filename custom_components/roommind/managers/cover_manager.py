@@ -15,6 +15,7 @@ from ..const import (
     COVER_POS_DEADBAND,
     COVER_POS_SCALE,
     COVER_SOLAR_MIN,
+    COVER_TRANSITION_SETTLE_S,
     COVER_USER_CONFLICT_THRESHOLD,
     COVER_USER_OVERRIDE_MINUTES,
 )
@@ -58,6 +59,7 @@ class _RoomCoverState:
     last_commanded_position: int | None = None  # None = never commanded yet
     user_override_until: float = 0.0  # Unix timestamp; 0 = no override
     last_was_forced: bool = False  # True after forced position (schedule/night close)
+    last_command_ts: float = 0.0  # timestamp of last issued command (for transit settling)
 
 
 class CoverManager:
@@ -93,18 +95,23 @@ class CoverManager:
             # Reset last_commanded_position to avoid phantom overrides if
             # sensor-only is later toggled off.
             state.last_commanded_position = None
-        elif (
-            state.last_commanded_position is not None
-            and abs(position - state.last_commanded_position) > COVER_USER_CONFLICT_THRESHOLD
-        ):
-            state.user_override_until = time.time() + override_minutes * 60
-            _LOGGER.info(
-                "Cover user override detected [%s]: position %d vs commanded %d → pausing %d min",
-                area_id,
-                position,
-                state.last_commanded_position,
-                override_minutes,
+            _drift = False
+        else:
+            _drift = (
+                state.last_commanded_position is not None
+                and abs(position - state.last_commanded_position) > COVER_USER_CONFLICT_THRESHOLD
+                and (time.time() - state.last_command_ts) >= COVER_TRANSITION_SETTLE_S
             )
+        if _drift and override_minutes > 0:
+            if state.user_override_until <= time.time() or position != state.current_position:
+                state.user_override_until = time.time() + override_minutes * 60
+                _LOGGER.info(
+                    "Cover user override detected [%s]: position %d vs commanded %d → pausing %d min",
+                    area_id,
+                    position,
+                    state.last_commanded_position,
+                    override_minutes,
+                )
         state.current_position = position
 
     def get_current_position(self, area_id: str) -> int:
@@ -123,6 +130,7 @@ class CoverManager:
         cover_entity_ids: list[str],
         covers_deploy_threshold: float,
         covers_min_position: int,
+        covers_snap_deploy: bool = False,
         predicted_peak_temp: float | None,
         target_temp: float,
         q_solar: float,
@@ -131,6 +139,7 @@ class CoverManager:
         forced_reason: str = "",
         sensor_only: bool = False,
         current_temp: float | None = None,
+        solar_gated: bool = True,
     ) -> CoverDecision:
         """Evaluate whether to change cover positions this cycle.
 
@@ -140,23 +149,17 @@ class CoverManager:
         state = self._get_state(area_id)
         current = state.current_position
 
-        # Gate 1: Feature disabled or no covers configured
-        if not covers_auto_enabled or not cover_entity_ids:
+        # Gate 0: No covers configured — nothing to do
+        if not cover_entity_ids:
             return CoverDecision(target_position=current, changed=False, reason="disabled")
 
-        # Gate 2: Manual override — never fight the user
-        if has_active_override:
-            return CoverDecision(target_position=current, changed=False, reason="manual_override_active")
-
-        # Gate 2b: User manually moved cover (e.g. opened for balcony)
-        # Skip in sensor-only mode — no physical covers to track
-        if not sensor_only and state.user_override_until > time.time():
-            return CoverDecision(target_position=current, changed=False, reason="user_override_active")
-
-        # Gate 2c: Forced position (schedule or night close) — immediate, no rate limit
-        # User-defined schedules and night close should always apply instantly.
-        # Rate limiting only applies to thermal/solar MPC-based decisions below.
+        # Gate 1: Forced position (schedule or night close) — immediate, no rate limit.
+        # Note: the orchestrator returns early when covers_auto_enabled=False, so this gate
+        # is only reached when auto control is on (or when evaluate() is called directly).
+        # Only user manual override (Gate 1b) can block a forced position.
         if forced_position is not None:
+            if state.user_override_until > time.time():
+                return CoverDecision(target_position=current, changed=False, reason="user_override_active")
             state.last_was_forced = True
             if abs(forced_position - current) <= 2:
                 return CoverDecision(
@@ -164,7 +167,27 @@ class CoverManager:
                 )
             return self._apply_change(state, forced_position, f"forced({forced_reason})")
 
-        # Gate 3: Safety check — predicted_peak_temp must be available
+        # Gate 2: Auto control disabled — no solar/thermal decisions
+        if not covers_auto_enabled:
+            return CoverDecision(target_position=current, changed=False, reason="disabled")
+
+        # Gate 2.5: Schedule gate — a gate-mode schedule is off, suppress solar logic
+        # Retract covers (open) when gate is inactive, subject to rate limit.
+        if not solar_gated:
+            state.last_was_forced = False
+            if current < 100 and (time.time() - state.last_change_ts) >= COVER_MIN_HOLD_SECONDS:
+                return self._apply_change(state, 100, "gate_retract")
+            return CoverDecision(target_position=current, changed=False, reason="gate_inactive")
+
+        # Gate 3: Manual override — never fight the user
+        if has_active_override:
+            return CoverDecision(target_position=current, changed=False, reason="manual_override_active")
+
+        # Gate 3b: User manually moved cover (e.g. opened for balcony)
+        if state.user_override_until > time.time():
+            return CoverDecision(target_position=current, changed=False, reason="user_override_active")
+
+        # Gate 4: Safety check — predicted_peak_temp must be available
         if predicted_peak_temp is None:
             return CoverDecision(target_position=current, changed=False, reason="no_prediction")
 
@@ -190,8 +213,11 @@ class CoverManager:
         retract_threshold = covers_deploy_threshold - COVER_HYSTERESIS
 
         if excess > covers_deploy_threshold:
-            raw_close_pct = min(100, int((excess - covers_deploy_threshold) * COVER_POS_SCALE))
-            desired_pos = max(covers_min_position, 100 - raw_close_pct)
+            if covers_snap_deploy:
+                desired_pos = covers_min_position
+            else:
+                raw_close_pct = min(100, int((excess - covers_deploy_threshold) * COVER_POS_SCALE))
+                desired_pos = max(covers_min_position, 100 - raw_close_pct)
         elif excess < retract_threshold:
             desired_pos = 100
         else:
@@ -214,11 +240,17 @@ class CoverManager:
         """Clean up state when a room is deleted."""
         self._states.pop(area_id, None)
 
+    def set_commanded_position(self, area_id: str, position: int) -> None:
+        """Correct last_commanded_position after per-cover clamping."""
+        state = self._get_state(area_id)
+        state.last_commanded_position = position
+
     @staticmethod
     async def async_apply(
         hass: HomeAssistant,
         cover_entity_ids: list[str],
         target_position: int,
+        cover_min_positions: dict[str, int] | None = None,
     ) -> None:
         """Call HA cover service to set position on all configured cover entities."""
         position_eids: list[str] = []
@@ -238,12 +270,26 @@ class CoverManager:
                 binary_close_eids.append(eid)
 
         if position_eids:
-            await hass.services.async_call(
-                "cover",
-                "set_cover_position",
-                {"entity_id": position_eids, "position": target_position},
-                blocking=False,
-            )
+            if cover_min_positions:
+                pos_groups: dict[int, list[str]] = {}
+                for eid in position_eids:
+                    min_pos = cover_min_positions.get(eid, 0)
+                    effective = max(min_pos, target_position)
+                    pos_groups.setdefault(effective, []).append(eid)
+                for pos, eids in pos_groups.items():
+                    await hass.services.async_call(
+                        "cover",
+                        "set_cover_position",
+                        {"entity_id": eids, "position": pos},
+                        blocking=False,
+                    )
+            else:
+                await hass.services.async_call(
+                    "cover",
+                    "set_cover_position",
+                    {"entity_id": position_eids, "position": target_position},
+                    blocking=False,
+                )
         if binary_open_eids:
             await hass.services.async_call(
                 "cover",
@@ -272,4 +318,5 @@ class CoverManager:
         state.current_position = position
         state.last_commanded_position = position
         state.last_change_ts = time.time()
+        state.last_command_ts = time.time()
         return CoverDecision(target_position=position, changed=True, reason=reason)

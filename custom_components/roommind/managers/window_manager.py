@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import logging
 import time
-
-_LOGGER = logging.getLogger(__name__)
 
 
 class WindowManager:
@@ -15,6 +12,7 @@ class WindowManager:
         self._open_since: dict[str, float] = {}
         self._closed_since: dict[str, float] = {}
         self._paused: dict[str, bool] = {}
+        self._seen: set[str] = set()
 
     def is_paused(self, area_id: str) -> bool:
         """Return True if climate control is paused due to open window."""
@@ -27,15 +25,23 @@ class WindowManager:
         """
         now = time.time()
         was_paused = self._paused.get(area_id, False)
+        first_observation = area_id not in self._seen
+        self._seen.add(area_id)
 
         if raw_open:
             self._closed_since.pop(area_id, None)
             if not was_paused:
-                if area_id not in self._open_since:
-                    self._open_since[area_id] = now
-                if now - self._open_since[area_id] >= open_delay:
+                if first_observation:
+                    # Window already open on first observation (e.g. after HA
+                    # restart).  Skip open_delay — the window has been open for
+                    # an unknown duration that certainly exceeds any configured
+                    # delay.
                     self._paused[area_id] = True
-                    _LOGGER.info("[%s] Window open confirmed after %ds -> climate paused", area_id, open_delay)
+                else:
+                    if area_id not in self._open_since:
+                        self._open_since[area_id] = now
+                    if now - self._open_since[area_id] >= open_delay:
+                        self._paused[area_id] = True
         else:
             open_duration = now - self._open_since[area_id] if area_id in self._open_since else 0
             was_in_open_delay = area_id in self._open_since and not was_paused
@@ -88,3 +94,4 @@ class WindowManager:
         self._open_since.pop(area_id, None)
         self._closed_since.pop(area_id, None)
         self._paused.pop(area_id, None)
+        self._seen.discard(area_id)

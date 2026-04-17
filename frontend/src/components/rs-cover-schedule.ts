@@ -19,6 +19,29 @@ export class RsCoverSchedule extends RsScheduleBase {
         color: var(--text-primary-color);
         flex-shrink: 0;
       }
+      .gate-badge {
+        font-size: 0.8em;
+        padding: 1px 6px;
+        border-radius: 10px;
+        background: var(--accent-color, var(--primary-color));
+        color: var(--text-primary-color);
+        opacity: 0.8;
+        flex-shrink: 0;
+      }
+      .mode-row {
+        display: flex;
+        gap: 8px;
+        padding: 4px 8px 4px 28px;
+        flex-wrap: wrap;
+      }
+      .mode-option {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.85em;
+        cursor: pointer;
+        color: var(--primary-text-color);
+      }
     `,
   ];
 
@@ -36,7 +59,8 @@ export class RsCoverSchedule extends RsScheduleBase {
       <div class="schedule-list">
         ${this.schedules.map((entry, index) => {
           const state = this._getScheduleState(index, this.schedules.length);
-          const pos = this._getBlockPosition(entry.entity_id);
+          const isGate = entry.mode === "gate";
+          const pos = !isGate ? this._getBlockPosition(entry.entity_id) : null;
           return html`
             <div class="schedule-row ${state}">
               ${hasMultiple ? html`<span class="schedule-number">${index + 1}</span>` : nothing}
@@ -46,7 +70,13 @@ export class RsCoverSchedule extends RsScheduleBase {
                 @click=${() => this._openEntityInfo(entry.entity_id)}
                 >${this._getFriendlyName(entry.entity_id)}</span
               >
-              ${pos !== null ? html`<span class="pos-badge">${pos}%</span>` : nothing}
+              ${isGate
+                ? html`<span class="gate-badge"
+                    >${localize("covers.schedule_mode_gate_short", l)}</span
+                  >`
+                : pos !== null
+                  ? html`<span class="pos-badge">${pos}%</span>`
+                  : nothing}
               <span class="schedule-status">${this._statusText(state, l)}</span>
             </div>
           `;
@@ -82,6 +112,22 @@ export class RsCoverSchedule extends RsScheduleBase {
                       (i, dir) => this._moveSchedule(i, dir),
                       (i) => this._removeSchedule(i),
                     )}
+                  </div>
+                  <div class="mode-row">
+                    <label class="mode-option">
+                      <ha-radio
+                        .checked=${(entry.mode ?? "force") === "force"}
+                        @change=${() => this._updateMode(index, "force")}
+                      ></ha-radio>
+                      ${localize("covers.schedule_mode_force", l)}
+                    </label>
+                    <label class="mode-option">
+                      <ha-radio
+                        .checked=${entry.mode === "gate"}
+                        @change=${() => this._updateMode(index, "gate")}
+                      ></ha-radio>
+                      ${localize("covers.schedule_mode_gate", l)}
+                    </label>
                   </div>
                 `;
               })}
@@ -123,7 +169,7 @@ export class RsCoverSchedule extends RsScheduleBase {
   // ─── Schedule management ─────────────────────────────────────────
 
   private _addSchedule(entityId: string) {
-    this._emitSchedules([...this.schedules, { entity_id: entityId }]);
+    this._emitSchedules([...this.schedules, { entity_id: entityId, mode: "force" }]);
   }
 
   private _removeSchedule(index: number) {
@@ -135,6 +181,11 @@ export class RsCoverSchedule extends RsScheduleBase {
     if (target < 0 || target >= this.schedules.length) return;
     const next = [...this.schedules];
     [next[index], next[target]] = [next[target], next[index]];
+    this._emitSchedules(next);
+  }
+
+  private _updateMode(index: number, mode: "force" | "gate") {
+    const next = this.schedules.map((entry, i) => (i === index ? { ...entry, mode } : entry));
     this._emitSchedules(next);
   }
 

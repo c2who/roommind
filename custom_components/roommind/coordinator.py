@@ -20,6 +20,7 @@ from .const import (
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    DEFAULT_OUTDOOR_HEATING_MAX,
     DOMAIN,
     HEATING_BOOST_TARGET,
     HEATING_DEMAND_OFF_DELAY,
@@ -34,20 +35,28 @@ from .const import (
     SCHEDULE_STATE_ON,
     THERMAL_SAVE_CYCLES,
     UPDATE_INTERVAL,
-    VALVE_PROTECTION_CHECK_CYCLES,
     TargetTemps,
     build_override_live,
+    is_override_active,
+    make_roommind_context,
 )
 from .control.mpc_controller import (
+    DEFAULT_OUTDOOR_TEMP_FALLBACK,
     MPCController,
     check_acs_can_heat,
     get_can_heat_cool,
+    is_mpc_active,
 )
 from .control.solar import compute_q_solar_norm
 from .control.thermal_model import RoomModelManager
 from .device import get_area_name as _get_area_name
-from .managers.compressor_group_manager import CompressorGroupManager
-from .managers.cover_orchestrator import CoverOrchestrator
+from .managers.compressor_group_manager import (
+    CompressorGroupConfig,
+    CompressorGroupManager,
+    CompressorGroupState,
+    resolve_master_action,
+)
+from .managers.cover_orchestrator import CoverOrchestrator, CoverResult
 from .managers.ekf_training_manager import EkfTrainingManager
 from .managers.heat_source_orchestrator import HeatSourcePlan, evaluate_heat_sources
 from .managers.mold_manager import MoldManager
@@ -60,6 +69,7 @@ from .utils.device_utils import (
     get_all_entity_ids,
     get_direct_setpoint_eids,
     get_trv_eids,
+    room_contributes_to_group,
 )
 from .utils.history_store import HistoryStore
 from .utils.schedule_utils import resolve_schedule_index
@@ -209,6 +219,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Room '%s': processing failed, skipping", area_id)
 
+        # Control master devices based on aggregate room demand
+        await self._async_control_master_devices(room_states, rooms, settings)
+
         # Record to history store (throttled)
         learning_disabled = set(settings.get("learning_disabled_rooms", []))
         self._history_write_count += 1
@@ -238,6 +251,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                             "heating_power": rs.get("heating_power", 0),
                             "solar_irradiance": round(self._current_q_solar, 3),
                             "blind_position": rs.get("blind_position"),
+                            "cover_reason": rs.get("cover_reason", ""),
                             "device_setpoint": rs.get("device_setpoint"),
                             "occupancy": rs.get("q_occupancy", 0.0) > 0,
                         },
@@ -303,14 +317,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         await self._valve_manager.async_finish_cycles()
 
         # Valve protection: check for stale valves (throttled)
-        self._valve_manager._check_count += 1
-        if self._valve_manager._check_count >= VALVE_PROTECTION_CHECK_CYCLES:
-            self._valve_manager._check_count = 0
+        if self._valve_manager.should_run_cycle_check():
             await self._valve_manager.async_check_and_cycle(rooms, settings)
 
         # Persist valve actuation timestamps (piggyback on thermal save cycle)
         if self._valve_manager.actuation_dirty and self._thermal_save_count == 0:
-            await store.async_save_settings({"valve_last_actuation": self._valve_manager._last_actuation})
+            await store.async_save_settings({"valve_last_actuation": self._valve_manager.get_actuation_data()})
             self._valve_manager.actuation_dirty = False
 
         # Aggregate heating demand across all rooms (forecast-aware state machine)
@@ -384,10 +396,15 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             return guard_reason.lower()
         return guard_reason
 
-    async def _async_process_room(self, room: dict, settings: dict, outdoor_forecast: list[dict]) -> dict:
-        """Process a single room: read sensor, evaluate schedule, apply control."""
-        area_id = room.get("area_id", "unknown")
+    def _read_room_sensors(
+        self,
+        room: dict,
+        area_id: str,
+    ) -> tuple[float | None, float | None, float | None, bool]:
+        """Read temperature and humidity sensors for a room.
 
+        Returns (current_temp, current_temp_raw, current_humidity, has_external_sensor).
+        """
         temp_sensor_id = room.get("temperature_sensor")
         has_external_sensor = bool(temp_sensor_id)
 
@@ -420,6 +437,37 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 del self._last_valid_temps[area_id]
 
         current_humidity = read_sensor_value(self.hass, room.get("humidity_sensor"), area_id, "humidity")
+
+        return current_temp, current_temp_raw, current_humidity, has_external_sensor
+
+    async def _evaluate_mold_risk(
+        self,
+        area_id: str,
+        current_temp: float | None,
+        current_humidity: float | None,
+        settings: dict,
+    ) -> tuple[str, float | None, bool, float]:
+        """Evaluate mold risk for a room.
+
+        Returns (mold_risk_level, mold_surface_rh, mold_prevention_active, mold_prevention_delta).
+        """
+        mold = await self._mold_manager.evaluate(
+            area_id,
+            _get_area_name(self.hass, area_id),
+            current_temp,
+            current_humidity,
+            self.outdoor_temp,
+            settings,
+            celsius_delta_to_ha_fn=lambda d: celsius_delta_to_ha(self.hass, d),  # type: ignore[misc]
+            ha_temp_unit_str_fn=lambda: ha_temp_unit_str(self.hass),  # type: ignore[misc]
+        )
+        return mold.risk_level, mold.surface_rh, mold.prevention_active, mold.prevention_delta
+
+    async def _async_process_room(self, room: dict, settings: dict, outdoor_forecast: list[dict]) -> dict:
+        """Process a single room: read sensor, evaluate schedule, apply control."""
+        area_id = room.get("area_id", "unknown")
+
+        current_temp, current_temp_raw, current_humidity, has_external_sensor = self._read_room_sensors(room, area_id)
 
         # --- Outdoor room: skip all control logic ---
         if room.get("is_outdoor", False):
@@ -454,27 +502,31 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "cover_auto_paused": False,
                 "cover_forced_reason": "",
                 "active_cover_schedule_index": -1,
+                "q_occupancy": 0.0,
+                "active_heat_sources": None,
             }
 
         # --- Mold risk calculation ---
-        mold = await self._mold_manager.evaluate(
-            area_id,
-            _get_area_name(self.hass, area_id),
-            current_temp,
-            current_humidity,
-            self.outdoor_temp,
-            settings,
-            celsius_delta_to_ha_fn=lambda d: celsius_delta_to_ha(self.hass, d),  # type: ignore[misc]
-            ha_temp_unit_str_fn=lambda: ha_temp_unit_str(self.hass),  # type: ignore[misc]
+        (
+            mold_risk_level,
+            mold_surface_rh,
+            mold_prevention_active_room,
+            mold_prevention_temp_delta,
+        ) = await self._evaluate_mold_risk(area_id, current_temp, current_humidity, settings)
+
+        # Load schedule blocks once — used for both target temp resolution and MPC lookahead.
+        from .utils.schedule_utils import (
+            get_active_schedule_entity,
+            make_target_resolver,
+            read_schedule_blocks,
         )
-        mold_risk_level = mold.risk_level
-        mold_surface_rh = mold.surface_rh
-        mold_prevention_active_room = mold.prevention_active
-        mold_prevention_temp_delta = mold.prevention_delta
+
+        schedule_entity_id = get_active_schedule_entity(self.hass, room)
+        schedule_blocks = await read_schedule_blocks(self.hass, schedule_entity_id) if schedule_entity_id else None
 
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
-        targets = self._resolve_target_temps(room, settings)
+        targets = self._resolve_target_temps(room, settings, schedule_blocks, schedule_entity_id)
 
         # Apply mold prevention temperature delta (heating target only).
         # Safety: mold prevention overrides "off" to prevent structural damage.
@@ -493,12 +545,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     heat=targets.heat + mold_prevention_temp_delta,
                     cool=targets.cool,
                 )
-
-        # Read schedule blocks for MPC lookahead (pre-heating/pre-cooling)
-        from .utils.schedule_utils import get_active_schedule_entity, make_target_resolver, read_schedule_blocks
-
-        schedule_entity_id = get_active_schedule_entity(self.hass, room)
-        schedule_blocks = await read_schedule_blocks(self.hass, schedule_entity_id) if schedule_entity_id else None
         presence_away = not room.get("ignore_presence", False) and self._is_presence_away(room, settings)
         target_resolver = make_target_resolver(
             schedule_blocks,
@@ -618,10 +664,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         else:
             self._prediction_forecasts.pop(area_id, None)
 
-        # observed_mode/observed_pf: only populated when climate control is off
-        observed_mode: str | None = None
-        observed_pf = 0.0
-
         climate_active = settings.get("climate_control_active", True) and room.get("climate_control_enabled", True)
 
         # --- Residual heat transition tracking ---
@@ -657,7 +699,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         ac_device_max_temp = min(ac_max_temps) if ac_max_temps else None
 
         # Exclude TRVs currently being valve-protection-cycled from normal control
-        cycling_eids = {eid for eid in get_trv_eids(room.get("devices", [])) if eid in self._valve_manager._cycling}
+        cycling_eids = {
+            eid for eid in get_trv_eids(room.get("devices", [])) if self._valve_manager.is_entity_cycling(eid)
+        }
 
         # Heat source orchestration: smart routing for rooms with both TRVs and ACs
         heat_source_plan = None
@@ -680,6 +724,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             )
             if heat_source_plan is not None:
                 self._heat_source_states[area_id] = heat_source_plan.active_sources
+            else:
+                # Orchestrator returned None (e.g. missing current/target temp).
+                # The non-orchestrated async_apply path commands all devices,
+                # so clear stale state to prevent the master-demand filter
+                # from acting on a previous orchestration decision.
+                self._heat_source_states.pop(area_id, None)
         else:
             # Orchestration not active for this room — remove stale state
             # so re-enabling starts fresh.
@@ -697,6 +747,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 if mode != MODE_IDLE:
                     if not self._compressor_manager.check_can_activate(eid):
                         compressor_forced_off.add(eid)
+                    else:
+                        enforced = self._compressor_manager.get_enforced_action(eid)
+                        if enforced is not None and enforced != "idle":
+                            if (mode == MODE_HEATING and enforced == "cool") or (
+                                mode == MODE_COOLING and enforced == "heat"
+                            ):
+                                compressor_forced_off.add(eid)
                 else:
                     if self._compressor_manager.check_must_stay_active(eid):
                         compressor_forced_on.add(eid)
@@ -728,67 +785,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     exc_info=True,
                 )
         else:
-            # Global climate control disabled (learn-only) — do NOT send commands,
-            # do NOT touch mode/power_fraction (used for internal tracking).
-            observed_mode, observed_pf = self._observe_device_action(room)
-            if observed_mode is None and self._devices_lack_hvac_action(room):
-                inferred = self._infer_device_mode(room)
-                observed_mode = inferred
-                observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
-            if observed_mode is not None and observed_mode != MODE_IDLE:
-                _LOGGER.debug(
-                    "Room '%s': device self-regulating (%s), using for training",
-                    area_id,
-                    observed_mode,
-                )
+            # Climate control disabled — do NOT send commands.
             mode = MODE_IDLE
             power_fraction = 0.0
 
-        # Update compressor group member states (always, regardless of control path)
-        for eid in all_device_eids:
-            if self._compressor_manager.get_group_for_entity(eid) is None:
-                continue
-            if eid in cycling_eids:
-                continue
-            if eid in compressor_forced_off:
-                self._compressor_manager.update_member(eid, False)
-            elif eid in compressor_forced_on:
-                # Verify device is actually running before tracking as active.
-                # If user manually turned it off, respect that.
-                dev_state = self.hass.states.get(eid)
-                actually_on = dev_state is not None and dev_state.state not in (
-                    "off",
-                    "unavailable",
-                    "unknown",
-                )
-                self._compressor_manager.update_member(eid, actually_on)
-            elif mode != MODE_IDLE:
-                self._compressor_manager.update_member(eid, True)
-            else:
-                self._compressor_manager.update_member(eid, False)
-
-        # For Managed Mode rooms, observe actual device state for display + training.
-        # The controller's mode is "intent" (device told to heat), but the device
-        # self-regulates and may be idle at setpoint.  See #69.
-        managed_display_mode: str | None = None
-        managed_display_pf = 0.0
-        if climate_active and not has_external_sensor:
-            obs_mode, obs_pf = self._observe_device_action(room)
-            if obs_mode is not None:
-                managed_display_mode = obs_mode
-                managed_display_pf = obs_pf
-            else:
-                managed_display_mode = self._infer_device_mode(room)
-                managed_display_pf = 1.0 if managed_display_mode != MODE_IDLE else 0.0
-
         # --- Cover/blind automatic control ---
-        _ov_temp = room.get("override_temp")
-        _ov_heat = room.get("override_heat")
-        _ov_cool = room.get("override_cool")
-        _ov_until = room.get("override_until")
-        has_override = (_ov_temp is not None or (_ov_heat is not None and _ov_cool is not None)) and (
-            _ov_until is None or _ov_until > time.time()
-        )
+        has_override = is_override_active(room)
         cover_result = await self._cover_orchestrator.async_process(
             area_id=area_id,
             room=room,
@@ -807,6 +809,133 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             excluded = set(room.get("valve_protection_exclude", []))
             heating_eids = [eid for eid in get_trv_eids(room.get("devices", [])) if eid not in excluded]
             self._valve_manager.record_heating(heating_eids)
+
+        mpc_active = False
+        if has_external_sensor:
+            try:
+                _ch, _cc = get_can_heat_cool(
+                    room,
+                    self.outdoor_temp,
+                    acs_can_heat=check_acs_can_heat(self.hass, room),
+                    override_active=is_override_active(room),
+                )
+                _T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
+                mpc_active = is_mpc_active(
+                    self._model_manager,
+                    area_id,
+                    _ch,
+                    _cc,
+                    current_temp or 20.0,
+                    _T_out,
+                )
+            except Exception:  # noqa: BLE001
+                mpc_active = False
+
+        display_mode, display_pf = await self._observe_and_train(
+            area_id=area_id,
+            room=room,
+            settings=settings,
+            current_temp_raw=current_temp_raw,
+            mode=mode,
+            power_fraction=power_fraction,
+            window_open=window_open,
+            raw_open=raw_open,
+            q_residual=q_residual,
+            shading_factor=shading_factor,
+            q_occupancy=q_occupancy,
+            has_external_sensor=has_external_sensor,
+            heat_source_plan=heat_source_plan,
+            climate_active=climate_active,
+        )
+
+        return self._build_room_state_dict(
+            area_id=area_id,
+            room=room,
+            current_temp=current_temp,
+            current_temp_raw=current_temp_raw,
+            current_humidity=current_humidity,
+            target_temp=target_temp,
+            targets=targets,
+            display_mode=display_mode,
+            display_pf=display_pf,
+            heat_source_plan=heat_source_plan,
+            device_max_temp=device_max_temp,
+            ac_device_max_temp=ac_device_max_temp,
+            device_min_temp=device_min_temp,
+            has_external_sensor=has_external_sensor,
+            window_open=window_open,
+            presence_away=presence_away,
+            force_off=force_off,
+            mode=mode,
+            power_fraction=power_fraction,
+            mold_risk_level=mold_risk_level,
+            mold_surface_rh=mold_surface_rh,
+            mold_prevention_active_room=mold_prevention_active_room,
+            mold_prevention_temp_delta=mold_prevention_temp_delta,
+            shading_factor=shading_factor,
+            q_occupancy=q_occupancy,
+            cover_eids=cover_eids,
+            cover_result=cover_result,
+            mpc_active=mpc_active,
+        )
+
+    async def _observe_and_train(
+        self,
+        *,
+        area_id: str,
+        room: dict,
+        settings: dict,
+        current_temp_raw: float | None,
+        mode: str,
+        power_fraction: float,
+        window_open: bool,
+        raw_open: bool,
+        q_residual: float,
+        shading_factor: float | None,
+        q_occupancy: float,
+        has_external_sensor: bool,
+        heat_source_plan: Any | None,
+        climate_active: bool,
+    ) -> tuple[str, float]:
+        """Observe device state, train EKF, compute display mode.
+
+        Returns (display_mode, display_pf).
+        """
+        # observed_mode/observed_pf: only populated when climate control is off
+        observed_mode: str | None = None
+        observed_pf = 0.0
+
+        if not climate_active:
+            # Climate control disabled (learn-only) — observe device state
+            # for training and display.
+            observed_mode, observed_pf = self._observe_device_action(room)
+            if observed_mode is None and self._devices_lack_hvac_action(room):
+                # No hvac_action on any device — fall back to temp-vs-setpoint
+                # inference for approximate training (better than skipping).
+                # Don't infer for other None reasons (conflicts, unavailable).
+                inferred = self._infer_device_mode(room)
+                observed_mode = inferred
+                observed_pf = 1.0 if inferred != MODE_IDLE else 0.0
+            if observed_mode is not None and observed_mode != MODE_IDLE:
+                _LOGGER.debug(
+                    "Room '%s': device self-regulating (%s), using for training",
+                    area_id,
+                    observed_mode,
+                )
+
+        # For Managed Mode rooms, observe actual device state for display + training.
+        # The controller's mode is "intent" (device told to heat), but the device
+        # self-regulates and may be idle at setpoint.  See #69.
+        managed_display_mode: str | None = None
+        managed_display_pf = 0.0
+        if climate_active and not has_external_sensor:
+            obs_mode, obs_pf = self._observe_device_action(room)
+            if obs_mode is not None:
+                managed_display_mode = obs_mode
+                managed_display_pf = obs_pf
+            else:
+                managed_display_mode = self._infer_device_mode(room)
+                managed_display_pf = 1.0 if managed_display_mode != MODE_IDLE else 0.0
 
         # Determine mode for EKF training: use observed device state when
         # RoomMind doesn't directly control the device (see #36, #69).
@@ -855,7 +984,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 window_open=window_open,
                 raw_open=raw_open,
                 q_residual=q_residual,
-                shading_factor=shading_factor,
+                shading_factor=shading_factor if shading_factor is not None else 0.0,
                 q_solar=self._current_q_solar,
                 can_heat=can_heat,
                 can_cool=can_cool,
@@ -872,9 +1001,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         elif mode == MODE_IDLE:
             self._mode_on_since.pop(area_id, None)
         self._previous_modes[area_id] = mode
-
-        # Reuse MPC active status computed by cover orchestrator
-        mpc_active = cover_result.mpc_active
 
         # Compute display mode: show actual device state when RoomMind doesn't
         # directly control the device, without affecting internal tracking
@@ -981,7 +1107,43 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             else:
                 _LOGGER.info("[%s] %s | %s", area_id, summary, debug)
         self._previous_decisions[area_id] = decision
+        return display_mode, display_pf
 
+    def _build_room_state_dict(
+        self,
+        *,
+        area_id: str,
+        room: dict,
+        current_temp: float | None,
+        current_temp_raw: float | None,
+        current_humidity: float | None,
+        target_temp: float | None,
+        targets: TargetTemps,
+        display_mode: str,
+        display_pf: float,
+        heat_source_plan: HeatSourcePlan | None,
+        device_max_temp: float | None,
+        ac_device_max_temp: float | None,
+        device_min_temp: float | None,
+        has_external_sensor: bool,
+        window_open: bool,
+        presence_away: bool,
+        force_off: bool,
+        mode: str,
+        power_fraction: float,
+        mold_risk_level: str | None,
+        mold_surface_rh: float | None,
+        mold_prevention_active_room: bool,
+        mold_prevention_temp_delta: float,
+        shading_factor: float | None,
+        q_occupancy: float,
+        cover_eids: list[str],
+        cover_result: CoverResult,
+        mpc_active: bool,
+        raw_open: bool,
+        covers_sensor_only: bool,
+    ) -> dict:
+        """Build the final room state dictionary."""
         _room_devices = room.get("devices", [])
         _direct_eids = get_direct_setpoint_eids(_room_devices)
         _devs_with_eid = [d for d in _room_devices if d.get("entity_id")]
@@ -996,6 +1158,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "heat_target": targets.heat,
             "cool_target": targets.cool,
             "mode": display_mode,
+            "commanded_mode": mode,
             "heating_power": round(display_pf * 100) if display_mode not in (MODE_IDLE, MODE_DISABLED) else 0,
             "device_setpoint": self._compute_device_setpoint_orchestrated(
                 heat_source_plan,
@@ -1052,6 +1215,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 cover_result.active_cover_schedule_index if (cover_eids or covers_sensor_only) else -1
             ),
             "climate_control_enabled": room.get("climate_control_enabled", True),
+            "cover_reason": (cover_result.decision.reason if cover_eids else ""),
             "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
                 room.get("covers_auto_enabled", False) and cover_result.decision.target_position < 100
@@ -1320,7 +1484,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         return resolve_schedule_index(self.hass, room)
 
-    def _resolve_target_temps(self, room: dict, settings: dict) -> TargetTemps:
+    def _resolve_target_temps(
+        self,
+        room: dict,
+        settings: dict,
+        schedule_blocks: dict | None = None,
+        schedule_entity_id: str | None = None,
+    ) -> TargetTemps:
         """Resolve dual heat/cool target temperatures.
 
         Priority: override > vacation > presence away > schedule block temp > comfort/eco.
@@ -1328,6 +1498,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         Sets self._last_resolve_reason[area_id] as a side effect.
         """
         area_id = room.get("area_id", "unknown")
+        from .utils.schedule_utils import find_active_block
 
         # 1. Override — dual-target or single-point
         override_temp = room.get("override_temp")
@@ -1402,6 +1573,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         schedules = room.get("schedules", [])
         schedule_entity_id = schedules[idx].get("entity_id", "")
 
+        # schedule_entity_id is pre-resolved by the caller when available to avoid
+        # a second resolve_schedule_index() call that could diverge if selector state changes.
         if not schedule_entity_id:
             self._last_resolve_reason[area_id] = "comfort"
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
@@ -1413,9 +1586,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         if state.state == SCHEDULE_STATE_ON:
             self._last_resolve_reason[area_id] = "schedule_on"
-            # Check for split heat/cool temps first
-            heat_temp = state.attributes.get("heat_temperature")
-            cool_temp = state.attributes.get("cool_temperature")
+            if schedule_blocks is not None:
+                # Read all temperature fields from block data.
+                # HA does not expose custom data keys (heat_temperature, cool_temperature)
+                # as entity state attributes, so schedule.get_schedule is required.
+                block_data = find_active_block(schedule_blocks, time.time()) or {}
+                heat_temp = block_data.get("heat_temperature")
+                cool_temp = block_data.get("cool_temperature")
+                block_temp = block_data.get("temperature")
+            else:
+                # Fallback when schedule.get_schedule is unavailable (non-schedule.* entity
+                # or service failure). Works for temperature; heat/cool split will not resolve.
+                heat_temp = state.attributes.get("heat_temperature")
+                cool_temp = state.attributes.get("cool_temperature")
+                block_temp = state.attributes.get("temperature")
             if heat_temp is not None or cool_temp is not None:
                 h = comfort_heat
                 c = comfort_cool
@@ -1430,7 +1614,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                     except (ValueError, TypeError):
                         pass
                 return TargetTemps(heat=h, cool=c)
-            block_temp = state.attributes.get("temperature")
             if block_temp is not None:
                 try:
                     t = ha_temp_to_celsius(self.hass, float(block_temp))
@@ -1610,3 +1793,362 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         for eid in to_remove:
             _LOGGER.info("Removing orphaned entity: %s", eid)
             registry.async_remove(eid)
+
+    # ------------------------------------------------------------------
+    # Public thermal API
+    # ------------------------------------------------------------------
+
+    def reset_thermal_room(self, area_id: str) -> None:
+        """Reset thermal model, EKF state, and residual tracking for one room."""
+        self._model_manager.remove_room(area_id)
+        self._ekf_training.last_temps.pop(area_id, None)
+        self._residual_tracker.clear_room(area_id)
+
+    def reset_thermal_all(self) -> list[str]:
+        """Reset all thermal models. Returns list of affected room IDs."""
+        room_ids = self._model_manager.get_room_ids()
+        self._model_manager = RoomModelManager()
+        self._ekf_training.set_model_manager(self._model_manager)
+        self._cover_orchestrator.set_model_manager(self._model_manager)
+        self._ekf_training.last_temps.clear()
+        self._residual_tracker.clear_all()
+        return room_ids
+
+    def boost_learning(self, area_id: str) -> int:
+        """Boost EKF covariance for a room. Returns n_observations."""
+        return self._model_manager.boost_learning(area_id)
+
+    @property
+    def history_store(self) -> HistoryStore | None:
+        """Access to history store for cleanup operations."""
+        return self._history_store
+
+    # ------------------------------------------------------------------
+    # Master device control
+    # ------------------------------------------------------------------
+
+    def _collect_member_room_modes(
+        self,
+        members: list[str],
+        room_states: dict[str, dict],
+        rooms_config: dict[str, dict],
+        settings: dict,
+    ) -> list[str]:
+        """Collect room modes for rooms containing group member devices.
+
+        When heat-source orchestration is active for a room, the room is
+        only counted if the orchestration decision includes this group's
+        device types.  Prevents a boiler master from activating when only
+        the AC (secondary) is heating, and vice versa. (#168)
+        """
+        if not settings.get("climate_control_active", True):
+            return []
+        member_set = set(members)
+        modes: list[str] = []
+        for area_id, room in rooms_config.items():
+            if not room.get("climate_control_enabled", True):
+                continue
+            if room.get("is_outdoor", False):
+                continue
+            device_eids = {d.get("entity_id", "") for d in room.get("devices", [])}
+            if not (device_eids & member_set):
+                continue
+            rs = room_states.get(area_id)
+            if not rs:
+                continue
+            commanded = rs.get("commanded_mode", rs.get("mode", MODE_IDLE))
+
+            # Orchestration filter (heating only): skip this room when its
+            # active heat sources don't include this group's device types.
+            if (
+                commanded == MODE_HEATING
+                and room.get("heat_source_orchestration", False)
+                and not room_contributes_to_group(
+                    room.get("devices", []),
+                    member_set,
+                    rs.get("active_heat_sources"),
+                )
+            ):
+                continue
+
+            modes.append(commanded)
+        return modes
+
+    def _resolve_master_hvac_mode(self, master_entity: str, action: str) -> str | None:
+        """Map action to supported hvac_mode for master entity. Returns None if unsupported."""
+        state = self.hass.states.get(master_entity)
+        if state is None or state.state in ("unavailable", "unknown"):
+            return None
+        supported = state.attributes.get("hvac_modes", [])
+        if action == "idle":
+            if "off" in supported:
+                return "off"
+            _LOGGER.warning(
+                "Master '%s': 'off' not supported, cannot turn idle (available: %s)",
+                master_entity,
+                supported,
+            )
+            return None
+        if action in supported:
+            return action
+        if "heat_cool" in supported:
+            return "heat_cool"
+        if "auto" in supported:
+            return "auto"
+        _LOGGER.warning(
+            "Master '%s': mode '%s' not supported (available: %s)",
+            master_entity,
+            action,
+            supported,
+        )
+        return None
+
+    async def _async_wake_member_zone(
+        self,
+        group: CompressorGroupConfig,
+        room_states: dict[str, dict],
+        rooms_config: dict[str, dict],
+    ) -> None:
+        """Pre-activate a member zone for ducted multi-zone systems.
+
+        Ducted systems (e.g. AirTouch) require at least one active zone
+        before the outdoor unit can start.  When all zones are off, set
+        one to fan_only (always available) to enable outdoor unit startup.
+        """
+        for eid in group.members:
+            state = self.hass.states.get(eid)
+            if state is not None and state.state not in ("off", "unavailable", "unknown"):
+                return
+
+        member_set = set(group.members)
+        wake_eid: str | None = None
+
+        for area_id, room in rooms_config.items():
+            if not room.get("climate_control_enabled", True):
+                continue
+            if room.get("is_outdoor", False):
+                continue
+            rs = room_states.get(area_id)
+            if not rs:
+                continue
+            commanded = rs.get("commanded_mode", rs.get("mode", MODE_IDLE))
+            if commanded == MODE_IDLE:
+                continue
+            for dev in room.get("devices", []):
+                eid = dev.get("entity_id", "")
+                if eid not in member_set:
+                    continue
+                zone_state = self.hass.states.get(eid)
+                if zone_state and "fan_only" in (zone_state.attributes.get("hvac_modes") or []):
+                    wake_eid = eid
+                    break
+            if wake_eid:
+                break
+
+        if not wake_eid:
+            for eid in group.members:
+                zone_state = self.hass.states.get(eid)
+                if zone_state and "fan_only" in (zone_state.attributes.get("hvac_modes") or []):
+                    wake_eid = eid
+                    break
+
+        if not wake_eid:
+            _LOGGER.debug(
+                "Group '%s': no zone supports fan_only for pre-activation",
+                group.name,
+            )
+            return
+
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": wake_eid, "hvac_mode": "fan_only"},
+                blocking=True,
+                context=make_roommind_context(),
+            )
+            self._compressor_manager.update_member(wake_eid, True)
+            _LOGGER.debug(
+                "Master '%s' (group '%s'): pre-activated zone '%s' (fan_only)",
+                group.master_entity,
+                group.name,
+                wake_eid,
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning(
+                "Master '%s' (group '%s'): failed to pre-activate zone '%s'",
+                group.master_entity,
+                group.name,
+                wake_eid,
+                exc_info=True,
+            )
+
+    async def _async_control_master_devices(
+        self,
+        room_states: dict[str, dict],
+        rooms_config: dict[str, dict],
+        settings: dict,
+    ) -> None:
+        """Control master devices based on aggregate demand from member rooms.
+
+        Groups with master_entity get climate commands + optional script.
+        Groups with only action_script (no master_entity) get script-only mode.
+        """
+        if not settings.get("climate_control_active", True):
+            return
+        for gid, group in self._compressor_manager.get_groups().items():
+            if not group.master_entity and not group.action_script and not group.enforce_uniform_mode:
+                continue
+            try:
+                has_master = bool(group.master_entity)
+
+                # 1. Check master entity availability (only when configured)
+                master_state = None
+                if has_master:
+                    master_state = self.hass.states.get(group.master_entity)
+                    if master_state is None or master_state.state in (
+                        "unavailable",
+                        "unknown",
+                    ):
+                        _LOGGER.warning(
+                            "Master '%s' (group '%s'): entity unavailable, skipping",
+                            group.master_entity,
+                            group.name,
+                        )
+                        continue
+
+                # 2. Collect member room modes
+                modes = self._collect_member_room_modes(
+                    group.members,
+                    room_states,
+                    rooms_config,
+                    settings,
+                )
+
+                # 3. Resolve desired action
+                new_action = resolve_master_action(
+                    modes,
+                    group.conflict_resolution,
+                    self.outdoor_temp,
+                    settings.get("outdoor_heating_max", DEFAULT_OUTDOOR_HEATING_MAX),
+                )
+
+                # 4. Get previous state for transition detection
+                state = self._compressor_manager.get_state(gid)
+                prev_action = state.master_action if state else None
+
+                # 5. Control master climate entity (when configured)
+                if has_master:
+                    # Min-run/min-off guard: prevent master short-cycling
+                    if not self._compressor_manager.check_master_can_switch(gid, new_action):
+                        continue
+
+                    resolved_mode = self._resolve_master_hvac_mode(group.master_entity, new_action)
+
+                    # Skip when mode is unsupported
+                    if resolved_mode is None:
+                        if new_action != "idle":
+                            _LOGGER.warning(
+                                "Master '%s' (group '%s'): cannot resolve mode for action '%s', skipping",
+                                group.master_entity,
+                                group.name,
+                                new_action,
+                            )
+                        continue
+
+                    # Redundancy check — compare resolved mode with actual entity state
+                    if master_state is not None and master_state.state == resolved_mode:
+                        self._compressor_manager.set_master_action(gid, new_action)
+                        # Still call script if action changed
+                        if new_action != prev_action and group.action_script:
+                            await self._call_action_script(group, state, new_action)
+                        continue
+
+                    # Pre-activate a zone for ducted multi-zone systems where
+                    # the outdoor unit requires at least one active zone (#135).
+                    if new_action != "idle" and (prev_action is None or prev_action == "idle"):
+                        await self._async_wake_member_zone(group, room_states, rooms_config)
+
+                    # Send climate command
+                    try:
+                        await self.hass.services.async_call(
+                            "climate",
+                            "set_hvac_mode",
+                            {
+                                "entity_id": group.master_entity,
+                                "hvac_mode": resolved_mode,
+                            },
+                            blocking=True,
+                            context=make_roommind_context(),
+                        )
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.warning(
+                            "Master '%s' (group '%s'): failed to set hvac_mode '%s'",
+                            group.master_entity,
+                            group.name,
+                            resolved_mode,
+                            exc_info=True,
+                        )
+                        continue  # don't update state on failed command
+
+                # 6. Call action script on transition
+                if new_action != prev_action and group.action_script:
+                    await self._call_action_script(group, state, new_action)
+
+                # 7. Update state + log transition
+                if new_action != prev_action:
+                    label = group.master_entity or group.action_script or f"group:{group.id}"
+                    _LOGGER.info(
+                        "Master '%s' (group '%s'): %s -> %s",
+                        label,
+                        group.name,
+                        prev_action,
+                        new_action,
+                    )
+                self._compressor_manager.set_master_action(gid, new_action)
+
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Master device control failed for group '%s'",
+                    group.name,
+                    exc_info=True,
+                )
+
+    async def _call_action_script(
+        self,
+        group: CompressorGroupConfig,
+        state: CompressorGroupState | None,
+        new_action: str,
+    ) -> None:
+        """Call the group's action script with transition variables."""
+        script_state = self.hass.states.get(group.action_script)
+        if script_state is None:
+            _LOGGER.warning(
+                "Master group '%s': action script '%s' not found",
+                group.name,
+                group.action_script,
+            )
+            return
+        try:
+            await self.hass.services.async_call(
+                "script",
+                "turn_on",
+                {
+                    "entity_id": group.action_script,
+                    "variables": {
+                        "action": new_action,
+                        "master_entity": group.master_entity,
+                        "members": group.members,
+                        "active_members": [eid for eid in group.members if state and eid in state.active_members],
+                    },
+                },
+                blocking=False,
+                context=make_roommind_context(),
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.warning(
+                "Master group '%s': action script '%s' failed",
+                group.name,
+                group.action_script,
+                exc_info=True,
+            )

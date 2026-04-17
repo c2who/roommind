@@ -12,6 +12,7 @@ from custom_components.roommind.websocket_api import (
     _safe_float,
     websocket_delete_room,
     websocket_get_analytics,
+    websocket_get_diagnostics,
     websocket_get_settings,
     websocket_list_rooms,
     websocket_override_clear,
@@ -36,6 +37,7 @@ _save_settings = websocket_save_settings.__wrapped__
 _thermal_reset = websocket_thermal_reset.__wrapped__
 _thermal_reset_all = websocket_thermal_reset_all.__wrapped__
 _get_analytics = websocket_get_analytics.__wrapped__
+_get_diagnostics = websocket_get_diagnostics.__wrapped__
 
 
 @pytest.fixture
@@ -809,26 +811,14 @@ async def test_save_settings_vacation_clear(ws_hass, store, connection):
 
 
 def _make_coordinator_with_model(ws_hass):
-    """Create a coordinator mock with thermal model data."""
-    from custom_components.roommind.control.thermal_model import RoomModelManager
-
+    """Create a coordinator mock with public thermal API methods."""
     mock_coordinator = MagicMock()
-    mgr = RoomModelManager()
-    mgr.update("room_a", 20.5, 5.0, "heating", 5)
-    mgr.update("room_b", 24.5, 30.0, "cooling", 5)
-    mock_coordinator._model_manager = mgr
-    mock_coordinator._ekf_training = MagicMock()
-    mock_coordinator._ekf_training.last_temps = {"room_a": 20.5, "room_b": 24.5}
-    mock_coordinator._cover_orchestrator = MagicMock()
-    mock_coordinator._history_store = MagicMock()
-    mock_coordinator._history_store.remove_room = MagicMock()
-
-    def _replace_model_manager(new):
-        mock_coordinator._model_manager = new
-        mock_coordinator._ekf_training._model_manager = new
-        mock_coordinator._cover_orchestrator._model_manager = new
-
-    mock_coordinator._replace_model_manager = _replace_model_manager
+    mock_coordinator.reset_thermal_room = MagicMock()
+    mock_coordinator.reset_thermal_all = MagicMock(return_value=["room_a", "room_b"])
+    mock_coordinator.boost_learning = MagicMock(return_value=42)
+    mock_history = MagicMock()
+    mock_history.remove_room = MagicMock()
+    mock_coordinator.history_store = mock_history
     ws_hass.data[DOMAIN]["coordinator"] = mock_coordinator
     return mock_coordinator
 
@@ -848,12 +838,10 @@ async def test_thermal_reset_room(ws_hass, store, connection):
 
     connection.send_result.assert_called_once_with(20, {"success": True})
 
-    # room_a cleared from model manager
-    assert "room_a" not in coordinator._model_manager._estimators
-    # room_b still present
-    assert "room_b" in coordinator._model_manager._estimators
+    # Public API called for room_a
+    coordinator.reset_thermal_room.assert_called_once_with("room_a")
     # History cleared for room_a
-    coordinator._history_store.remove_room.assert_called_once_with("room_a")
+    coordinator.history_store.remove_room.assert_called_once_with("room_a")
     # Persisted thermal data cleared for room_a
     assert "room_a" not in store.get_thermal_data()
     assert "room_b" in store.get_thermal_data()
@@ -874,14 +862,12 @@ async def test_thermal_reset_all(ws_hass, store, connection):
 
     connection.send_result.assert_called_once_with(21, {"success": True})
 
-    # All estimators cleared
-    assert len(coordinator._model_manager._estimators) == 0
-    # History cleared for all rooms
-    assert coordinator._history_store.remove_room.call_count == 2
+    # Public API called
+    coordinator.reset_thermal_all.assert_called_once()
+    # History cleared for all rooms returned by reset_thermal_all
+    assert coordinator.history_store.remove_room.call_count == 2
     # Persisted thermal data empty
     assert store.get_thermal_data() == {}
-    # last_temps cleared
-    assert len(coordinator._ekf_training.last_temps) == 0
 
 
 @pytest.mark.asyncio
@@ -1387,7 +1373,7 @@ def test_register_websocket_commands(hass):
 
     with patch("custom_components.roommind.websocket_api.websocket_api.async_register_command") as mock_reg:
         async_register_websocket_commands(hass)
-        assert mock_reg.call_count == 11
+        assert mock_reg.call_count == 12
 
 
 # ---------------------------------------------------------------------------
@@ -1602,14 +1588,13 @@ async def test_boost_learning_success(ws_hass, store, connection):
     await store.async_load()
 
     mock_coordinator = MagicMock()
-    mock_coordinator._model_manager = MagicMock()
-    mock_coordinator._model_manager.boost_learning = MagicMock(return_value=42)
+    mock_coordinator.boost_learning = MagicMock(return_value=42)
     ws_hass.data[DOMAIN]["coordinator"] = mock_coordinator
 
     msg = {"id": 1, "type": "roommind/model/boost_learning", "area_id": "living_room"}
     await _boost_learning(ws_hass, connection, msg)
 
-    mock_coordinator._model_manager.boost_learning.assert_called_once_with("living_room")
+    mock_coordinator.boost_learning.assert_called_once_with("living_room")
     connection.send_result.assert_called_once_with(1, {"success": True, "n_observations": 42})
 
 
@@ -1970,6 +1955,218 @@ async def test_save_settings_compressor_groups_invalid_member(ws_hass, store, co
 
 
 # ---------------------------------------------------------------------------
+# Compressor group master device validation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_master_entity_valid(ws_hass, store, connection):
+    """Master entity saves successfully."""
+    await store.async_load()
+
+    msg = {
+        "id": 30,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Test",
+                "members": ["climate.ac1"],
+                "master_entity": "climate.boiler",
+                "conflict_resolution": "heating_priority",
+                "action_script": "",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_result.assert_called_once()
+    result = connection.send_result.call_args[0][1]
+    saved = result["settings"]["compressor_groups"][0]
+    assert saved["master_entity"] == "climate.boiler"
+    assert saved["conflict_resolution"] == "heating_priority"
+    assert saved["action_script"] == ""
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_master_non_climate(ws_hass, store, connection):
+    """Master entity must be a climate entity."""
+    await store.async_load()
+
+    msg = {
+        "id": 31,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Test",
+                "members": ["climate.ac1"],
+                "master_entity": "switch.boiler",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_master_entity"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_master_in_own_members(ws_hass, store, connection):
+    """Master entity cannot be a member of its own group."""
+    await store.async_load()
+
+    msg = {
+        "id": 32,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Test",
+                "members": ["climate.boiler"],
+                "master_entity": "climate.boiler",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "master_in_members"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_master_in_other_members(ws_hass, store, connection):
+    """Master entity cannot be a member of another group."""
+    await store.async_load()
+
+    msg = {
+        "id": 33,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "G1",
+                "members": ["climate.ac1"],
+            },
+            {
+                "id": "g2",
+                "name": "G2",
+                "members": ["climate.ac2"],
+                "master_entity": "climate.ac1",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "master_is_other_member"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_duplicate_masters(ws_hass, store, connection):
+    """Same master entity cannot be in multiple groups."""
+    await store.async_load()
+
+    msg = {
+        "id": 34,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "G1",
+                "members": ["climate.ac1"],
+                "master_entity": "climate.boiler",
+            },
+            {
+                "id": "g2",
+                "name": "G2",
+                "members": ["climate.ac2"],
+                "master_entity": "climate.boiler",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "duplicate_master"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_invalid_action_script(ws_hass, store, connection):
+    """Action script must be a script entity."""
+    await store.async_load()
+
+    msg = {
+        "id": 35,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Test",
+                "members": ["climate.ac1"],
+                "action_script": "automation.foo",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "invalid_action_script"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_valid_action_script(ws_hass, store, connection):
+    """Valid action script saves successfully."""
+    await store.async_load()
+
+    msg = {
+        "id": 36,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Test",
+                "members": ["climate.ac1"],
+                "action_script": "script.boiler_control",
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    connection.send_result.assert_called_once()
+    result = connection.send_result.call_args[0][1]
+    saved = result["settings"]["compressor_groups"][0]
+    assert saved["action_script"] == "script.boiler_control"
+
+
+@pytest.mark.asyncio
+async def test_save_settings_compressor_backward_compat(ws_hass, store, connection):
+    """Groups without new fields save successfully (no validation errors)."""
+    await store.async_load()
+
+    msg = {
+        "id": 37,
+        "type": "roommind/settings/save",
+        "compressor_groups": [
+            {
+                "id": "g1",
+                "name": "Test",
+                "members": ["climate.ac1"],
+            },
+        ],
+    }
+    await _save_settings(ws_hass, connection, msg)
+
+    # No error — old-format groups pass validation
+    connection.send_result.assert_called_once()
+    result = connection.send_result.call_args[0][1]
+    saved = result["settings"]["compressor_groups"][0]
+    assert saved["id"] == "g1"
+    # New fields not present (schema defaults only applied via decorator)
+    assert "master_entity" not in saved or saved["master_entity"] == ""
+
+
+# ---------------------------------------------------------------------------
 # V11: Legacy-only save syncs devices
 # ---------------------------------------------------------------------------
 
@@ -2001,3 +2198,73 @@ async def test_save_room_with_legacy_only_syncs_devices(ws_hass, store, connecti
     assert trv_devices[0]["entity_id"] == "climate.trv1"
     assert len(ac_devices) == 1
     assert ac_devices[0]["entity_id"] == "climate.ac1"
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics WS endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_diagnostics_returns_full_structure(ws_hass, store, connection):
+    """roommind/diagnostics/get returns full integration diagnostics."""
+    await store.async_load()
+
+    # Mock config_entries.async_entries to return a fake config entry
+    mock_entry = MagicMock()
+    mock_entry.entry_id = "test_entry_id"
+    ws_hass.config_entries = MagicMock()
+    ws_hass.config_entries.async_entries = MagicMock(return_value=[mock_entry])
+
+    # Wire up coordinator
+    coordinator = MagicMock()
+    coordinator.rooms = {}
+    coordinator.outdoor_temp = 10.0
+    coordinator.outdoor_humidity = 60.0
+    coordinator._previous_modes = {}
+    coordinator._mode_on_since = {}
+    coordinator._last_valid_temps = {}
+    coordinator._residual_tracker = MagicMock()
+    coordinator._model_manager = MagicMock()
+    coordinator._model_manager._estimators = {}
+    coordinator._window_manager = MagicMock()
+    coordinator._window_manager._states = {}
+    coordinator._cover_orchestrator = MagicMock()
+    coordinator._cover_orchestrator._cover_managers = {}
+    coordinator._heat_source_states = {}
+    coordinator._weather_manager = MagicMock()
+    coordinator._weather_manager._outdoor_forecast = []
+    coordinator._history_store = None
+    coordinator._compressor_manager = MagicMock()
+    coordinator._compressor_manager._groups = {}
+    coordinator._compressor_manager._member_states = {}
+    coordinator._valve_manager = MagicMock()
+    coordinator._valve_manager._cycling = {}
+    coordinator._valve_manager._last_actuation = {}
+    ws_hass.data[DOMAIN]["coordinator"] = coordinator
+    ws_hass.config = MagicMock()
+    ws_hass.config.units = MagicMock()
+    ws_hass.config.units.temperature_unit = "°C"
+
+    await _get_diagnostics(ws_hass, connection, {"id": 1, "type": "roommind/diagnostics/get"})
+
+    connection.send_result.assert_called_once()
+    result = connection.send_result.call_args[0][1]
+    assert "integration" in result
+    assert "settings" in result
+    assert "rooms" in result
+    assert "outdoor" in result
+    assert "presence" in result
+    assert result["integration"]["domain"] == "roommind"
+
+
+@pytest.mark.asyncio
+async def test_get_diagnostics_no_config_entry(ws_hass, store, connection):
+    """roommind/diagnostics/get returns error when no config entry exists."""
+    ws_hass.config_entries = MagicMock()
+    ws_hass.config_entries.async_entries = MagicMock(return_value=[])
+
+    await _get_diagnostics(ws_hass, connection, {"id": 1, "type": "roommind/diagnostics/get"})
+
+    connection.send_error.assert_called_once()
+    assert connection.send_error.call_args[0][1] == "not_found"

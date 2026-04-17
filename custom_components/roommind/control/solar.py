@@ -18,11 +18,12 @@ from datetime import UTC
 _SOLAR_CONSTANT: float = 1361.0
 
 
-def _solar_elevation(latitude: float, longitude: float, timestamp: float) -> float:
-    """Return solar elevation angle in degrees for a given location and time.
+def _solar_position(latitude: float, longitude: float, timestamp: float) -> tuple[float, float]:
+    """Return (elevation_deg, azimuth_deg) for a given location and time.
 
+    Azimuth uses meteorological convention: 0=N, 90=E, 180=S, 270=W.
     Uses the NOAA simplified solar position equations.
-    Negative values mean the sun is below the horizon (night).
+    Negative elevation means the sun is below the horizon (night).
     """
     from datetime import datetime
 
@@ -62,12 +63,50 @@ def _solar_elevation(latitude: float, longitude: float, timestamp: float) -> flo
     lat_rad = math.radians(latitude)
     sin_elev = math.sin(lat_rad) * math.sin(decl) + math.cos(lat_rad) * math.cos(decl) * math.cos(ha)
     sin_elev = max(-1.0, min(1.0, sin_elev))
-    return math.degrees(math.asin(sin_elev))
+    elevation_deg = math.degrees(math.asin(sin_elev))
+
+    # Solar azimuth (meteorological: 0=N, 90=E, 180=S, 270=W)
+    # NOAA convention: morning (ha<0) → 180+acos(…); afternoon (ha≥0) → (540-acos(…)) mod 360
+    cos_elev = math.cos(math.radians(elevation_deg))
+    if abs(cos_elev) < 1e-10:
+        azimuth_deg = 180.0  # Sun directly overhead — arbitrary
+    else:
+        cos_az = (math.sin(lat_rad) * sin_elev - math.sin(decl)) / (cos_elev * math.cos(lat_rad))
+        cos_az = max(-1.0, min(1.0, cos_az))
+        arc = math.degrees(math.acos(cos_az))
+        # ha < 0 = morning (sun in the east): azimuth ∈ [0°,180°]
+        # ha ≥ 0 = afternoon/noon (sun in the south/west): azimuth ∈ [180°,360°]
+        azimuth_deg = (540.0 - arc) % 360.0 if ha < 0 else 180.0 + arc
+
+    return elevation_deg, azimuth_deg
+
+
+def _solar_elevation(latitude: float, longitude: float, timestamp: float) -> float:
+    """Return solar elevation angle in degrees (negative = below horizon)."""
+    return _solar_position(latitude, longitude, timestamp)[0]
 
 
 def solar_elevation(latitude: float, longitude: float, timestamp: float) -> float:
     """Public API: solar elevation angle in degrees (negative = below horizon)."""
-    return _solar_elevation(latitude, longitude, timestamp)
+    return _solar_position(latitude, longitude, timestamp)[0]
+
+
+def solar_azimuth(latitude: float, longitude: float, timestamp: float) -> float:
+    """Solar azimuth in degrees (0=N, 90=E, 180=S, 270=W)."""
+    return _solar_position(latitude, longitude, timestamp)[1]
+
+
+def surface_irradiance_factor(solar_az_deg: float, solar_el_deg: float, surface_az_deg: float) -> float:
+    """Fraction of GHI that hits a vertical surface facing *surface_az_deg*.
+
+    Returns 0–1. Night (elevation ≤ 0) or sun behind the surface → 0.
+    """
+    if solar_el_deg <= 0:
+        return 0.0
+    return max(
+        0.0,
+        math.cos(math.radians(solar_el_deg)) * math.cos(math.radians(solar_az_deg - surface_az_deg)),
+    )
 
 
 def _clear_sky_ghi(elevation_deg: float) -> float:
@@ -184,3 +223,44 @@ def build_solar_series(
         cc = clouds[i] if i < len(clouds) else None
         series.append(compute_q_solar_norm(latitude, longitude, block_ts, cc))
     return series
+
+
+def build_oriented_solar_series(
+    latitude: float,
+    longitude: float,
+    n_blocks: int,
+    surface_azimuths: list[float],
+    dt_minutes: float = 5.0,
+    *,
+    start_ts: float | None = None,
+    cloud_series: list[float | None] | None = None,
+) -> list[float]:
+    """Like *build_solar_series* but scaled by the average orientation factor.
+
+    For each time step, the GHI is multiplied by the mean of
+    ``surface_irradiance_factor(solar_az, solar_el, s)`` across all surface
+    azimuths in *surface_azimuths*.  This correctly handles corner rooms with
+    windows on multiple walls — each cover facing a different direction
+    contributes equally to the average solar gain.
+
+    Args:
+        surface_azimuths: list of surface azimuths in degrees (0=N, 90=E …).
+            Must not be empty.
+    """
+    ts = start_ts if start_ts is not None else time.time()
+    base = build_solar_series(
+        latitude,
+        longitude,
+        n_blocks,
+        dt_minutes,
+        start_ts=ts,
+        cloud_series=cloud_series,
+    )
+    dt_sec = dt_minutes * 60.0
+    result: list[float] = []
+    for i, q in enumerate(base):
+        step_ts = ts + i * dt_sec
+        el, az = _solar_position(latitude, longitude, step_ts)
+        avg_factor = sum(surface_irradiance_factor(az, el, s) for s in surface_azimuths) / len(surface_azimuths)
+        result.append(q * avg_factor)
+    return result

@@ -52,6 +52,8 @@ def _build_device_states(hass: HomeAssistant, devices: list[dict]) -> list[dict[
             entry["hvac_modes"] = attrs.get("hvac_modes", [])
             entry["current_temperature"] = attrs.get("current_temperature")
             entry["temperature"] = attrs.get("temperature")
+            entry["min_temp"] = attrs.get("min_temp")
+            entry["max_temp"] = attrs.get("max_temp")
             entry["target_temp_low"] = attrs.get("target_temp_low")
             entry["target_temp_high"] = attrs.get("target_temp_high")
             entry["fan_mode"] = attrs.get("fan_mode")
@@ -95,8 +97,11 @@ def _build_cover_state(coordinator: Any, area_id: str) -> dict[str, Any] | None:
     }
     if cs.last_change_ts:
         result["last_change_ago_s"] = round(now - cs.last_change_ts)
+    if cs.last_command_ts:
+        result["last_command_ago_s"] = round(now - cs.last_command_ts)
     if cs.user_override_until > now:
         result["user_override_remaining_s"] = round(cs.user_override_until - now)
+
     return result
 
 
@@ -116,6 +121,15 @@ def _build_compressor_state(coordinator: Any) -> dict[str, Any]:
             entry["on_for_s"] = round(now - state.compressor_on_since)
         if state.compressor_off_since:
             entry["off_for_s"] = round(now - state.compressor_off_since)
+        if group_cfg and (group_cfg.master_entity or group_cfg.enforce_uniform_mode):
+            entry["master_entity"] = group_cfg.master_entity
+            entry["master_action"] = state.master_action
+            entry["conflict_resolution"] = group_cfg.conflict_resolution
+            entry["enforce_uniform_mode"] = group_cfg.enforce_uniform_mode
+            if group_cfg.action_script:
+                entry["action_script"] = group_cfg.action_script
+            if state.master_on_since:
+                entry["master_on_for_s"] = round(now - state.master_on_since)
         groups[gid] = entry
     return groups
 
