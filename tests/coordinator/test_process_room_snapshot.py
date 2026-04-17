@@ -44,9 +44,12 @@ NORMAL_ROOM_KEYS = {
     "heating_power",
     "device_setpoint",
     "window_open",
+    "raw_window_open",
     "override_active",
     "override_type",
     "override_temp",
+    "override_heat",
+    "override_cool",
     "override_until",
     "active_schedule_index",
     "confidence",
@@ -65,7 +68,10 @@ NORMAL_ROOM_KEYS = {
     "cover_forced_reason",
     "cover_reason",
     "active_cover_schedule_index",
+    "climate_control_enabled",
     "active_heat_sources",
+    "cover_shading_active",
+    "cover_shading_position",
 }
 
 OUTDOOR_ROOM_KEYS = {
@@ -220,7 +226,7 @@ class TestProcessRoomSnapshot:
 
     @pytest.mark.asyncio
     async def test_climate_control_disabled(self, hass, mock_config_entry):
-        """climate_control_enabled=False: mode=idle, heating_power=0."""
+        """climate_control_enabled=False: mode=disabled, heating_power=0."""
         room = {**SAMPLE_ROOM, "climate_control_enabled": False}
         coordinator, store = _setup_coordinator(
             hass,
@@ -234,7 +240,7 @@ class TestProcessRoomSnapshot:
         settings = store.get_settings()
         result = await coordinator._async_process_room(room, settings, [])
 
-        assert result["mode"] == "idle"
+        assert result["mode"] == "disabled"
         assert result["heating_power"] == 0
         # All normal keys should still be present
         assert set(result.keys()) == NORMAL_ROOM_KEYS

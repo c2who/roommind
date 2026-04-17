@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from datetime import timedelta
@@ -522,7 +523,13 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         )
 
         schedule_entity_id = get_active_schedule_entity(self.hass, room)
-        schedule_blocks = await read_schedule_blocks(self.hass, schedule_entity_id) if schedule_entity_id else None
+        schedule_blocks: dict | None = None
+        if schedule_entity_id:
+            maybe_blocks = read_schedule_blocks(self.hass, schedule_entity_id)
+            if inspect.isawaitable(maybe_blocks):
+                schedule_blocks = await maybe_blocks
+            else:
+                schedule_blocks = maybe_blocks
 
         # Determine dual heat/cool target temperatures
         # Returns TargetTemps(heat, cool). None values mean "force off".
@@ -846,6 +853,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             has_external_sensor=has_external_sensor,
             heat_source_plan=heat_source_plan,
             climate_active=climate_active,
+            targets=targets,
+            mpc_active=mpc_active,
+            presence_away=presence_away,
+            mold_prevention_active_room=mold_prevention_active_room,
+            force_off=force_off,
+            controller=controller,
         )
 
         return self._build_room_state_dict(
@@ -877,6 +890,8 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             cover_eids=cover_eids,
             cover_result=cover_result,
             mpc_active=mpc_active,
+            raw_open=raw_open,
+            covers_sensor_only=covers_sensor_only,
         )
 
     async def _observe_and_train(
@@ -896,6 +911,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         has_external_sensor: bool,
         heat_source_plan: Any | None,
         climate_active: bool,
+        targets: TargetTemps,
+        mpc_active: bool,
+        presence_away: bool,
+        mold_prevention_active_room: bool,
+        force_off: bool,
+        controller: MPCController | None,
     ) -> tuple[str, float]:
         """Observe device state, train EKF, compute display mode.
 
@@ -1097,7 +1118,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                         reason += (", " if reason else "") + f"drift → {drift_temp:.2f} in {drift_minutes:.0f}min"
 
             # Debug suffix
-            temp_s = f"{current_temp:.2f}" if current_temp is not None else "n/a"
+            temp_s = f"{current_temp_raw:.2f}" if current_temp_raw is not None else "n/a"
             ht_s = f"{targets.heat:.2f}" if targets.heat is not None else "off"
             ct_s = f"{targets.cool:.2f}" if targets.cool is not None else "off"
             debug = f"temp={temp_s} targets={ht_s}/{ct_s} ({target_reason}) pf={display_pf * 100:.0f}% mpc={mpc_active}"

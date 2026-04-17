@@ -628,7 +628,7 @@ def _entity_allowed_cool(hass: HomeAssistant, entity_id: str, entity_modes: dict
     state = hass.states.get(entity_id)
     if state is None:
         return True
-    hvac_modes = state.attributes.get("hvac_modes", [])
+    hvac_modes = _effective_ac_modes(state)
     if not hvac_modes:
         return True
     return bool({"cool", "heat_cool", "auto"} & set(hvac_modes))

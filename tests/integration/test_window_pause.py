@@ -183,6 +183,9 @@ class TestWindowPause:
         base_time = 1000.0
 
         with patch("custom_components.roommind.managers.window_manager.time") as mock_time:
+            # Simulate a prior closed-cycle observation so open_delay logic
+            # applies instead of the first-observation "already open" shortcut.
+            coordinator._window_manager._seen.add("living_room")
             # Window opens
             mock_time.time.return_value = base_time
             coordinator.hass.states.get = MagicMock(
@@ -231,6 +234,9 @@ class TestWindowPause:
         base_time = 1000.0
 
         with patch("custom_components.roommind.managers.window_manager.time") as mock_time:
+            # Simulate a prior closed-cycle observation so open_delay logic
+            # applies instead of the first-observation "already open" shortcut.
+            coordinator._window_manager._seen.add("living_room")
             # Window opens
             mock_time.time.return_value = base_time
             coordinator.hass.states.get = MagicMock(

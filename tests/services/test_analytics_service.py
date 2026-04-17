@@ -580,7 +580,7 @@ class TestBuildAnalyticsShadingFactor:
             ) as mock_shading,
             patch(
                 "custom_components.roommind.control.analytics_simulator.simulate_prediction",
-                return_value=[21.0],
+                return_value=([21.0], ["idle"]),
             ) as mock_sim,
         ):
             await build_analytics_data(hass, "room1", "12h", store, coordinator)
@@ -671,7 +671,7 @@ class TestBuildAnalyticsOccupancy:
             ),
             patch(
                 "custom_components.roommind.control.analytics_simulator.simulate_prediction",
-                return_value=[21.0],
+                return_value=([21.0], ["idle"]),
             ) as mock_sim,
         ):
             await build_analytics_data(hass, "room1", "12h", store, coordinator)
@@ -755,7 +755,7 @@ class TestBuildAnalyticsOccupancy:
             ),
             patch(
                 "custom_components.roommind.control.analytics_simulator.simulate_prediction",
-                return_value=[21.0],
+                return_value=([21.0], ["idle"]),
             ) as mock_sim,
         ):
             await build_analytics_data(hass, "room1", "12h", store, coordinator)

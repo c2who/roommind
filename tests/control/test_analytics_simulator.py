@@ -279,8 +279,11 @@ class TestSimulateMPC:
             settings=settings,
         )
         assert len(temps_with_solar) == 5
-        # Solar gain should produce higher temperatures
-        assert temps_with_solar[-1] > temps_no_solar[-1]
+        # Solar gain should keep the passive trajectory warmer and reduce
+        # required heating demand. The final temperature may be lower if the
+        # no-solar case eventually needs an active heating block.
+        assert max(temps_with_solar[:-1]) > max(temps_no_solar[:-1])
+        assert actions_with_solar.count("heating") <= actions_no_solar.count("heating")
 
     def test_temperatures_clamped(self):
         """Output temps are clamped between 5 and 40."""
@@ -809,19 +812,18 @@ class TestSimulateMPCEdgeCases:
             heating_system_type="underfloor",
         )
         assert len(temps) == 10
-        # With Q_heat=5000, temp exceeds target (21) after block 1, but
-        # underfloor min_run=6 forces continued heating. Verify at least 6
-        # consecutive temperature increases from the start.
-        consecutive_increases = 0
-        prev = 15.0
-        for t in temps:
-            if t > prev:
-                consecutive_increases += 1
+        # With Q_heat=5000, temperature clamps at 40°C almost immediately, so
+        # temperature increases are no longer a reliable proxy. Assert the
+        # actual control behavior instead: min_run keeps heating active for at
+        # least 6 consecutive blocks from the start.
+        consecutive_heating = 0
+        for action in actions:
+            if action == "heating":
+                consecutive_heating += 1
             else:
                 break
-            prev = t
-        assert consecutive_increases >= 6, (
-            f"Expected >= 6 consecutive heating blocks (underfloor min_run), got {consecutive_increases}"
+        assert consecutive_heating >= 6, (
+            f"Expected >= 6 consecutive heating blocks (underfloor min_run), got {consecutive_heating}"
         )
 
     def test_cooling_action_applies_negative_q(self):

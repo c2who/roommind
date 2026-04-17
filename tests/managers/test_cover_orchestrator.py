@@ -116,7 +116,7 @@ class TestReadPositions:
         result = orch.read_positions("living_room", room)
 
         assert result.positions == [75]
-        cm.update_position.assert_called_once_with("living_room", 75, override_minutes=60)
+        cm.update_position.assert_called_once_with("living_room", 75, override_minutes=60, sensor_only=False)
 
     def test_multiple_covers_average(self):
         hass = _make_hass()
@@ -131,7 +131,7 @@ class TestReadPositions:
 
         assert result.positions == [60, 40]
         # Average is 50
-        cm.update_position.assert_called_once_with("living_room", 50, override_minutes=60)
+        cm.update_position.assert_called_once_with("living_room", 50, override_minutes=60, sensor_only=False)
 
     def test_no_covers_returns_shading_factor_1(self):
         orch = CoverOrchestrator(_make_hass(), _make_cover_manager(), _make_model_manager())
@@ -155,7 +155,7 @@ class TestReadPositions:
         result = orch.read_positions("living_room", room)
 
         assert result.positions == [80]
-        cm.update_position.assert_called_once_with("living_room", 80, override_minutes=60)
+        cm.update_position.assert_called_once_with("living_room", 80, override_minutes=60, sensor_only=False)
 
     def test_closed_state_fallback(self):
         hass = _make_hass()
@@ -168,7 +168,7 @@ class TestReadPositions:
         result = orch.read_positions("living_room", room)
 
         assert result.positions == [0]
-        cm.update_position.assert_called_once_with("living_room", 0, override_minutes=60)
+        cm.update_position.assert_called_once_with("living_room", 0, override_minutes=60, sensor_only=False)
 
     def test_open_state_fallback(self):
         hass = _make_hass()
@@ -181,7 +181,7 @@ class TestReadPositions:
         result = orch.read_positions("living_room", room)
 
         assert result.positions == [100]
-        cm.update_position.assert_called_once_with("living_room", 100, override_minutes=60)
+        cm.update_position.assert_called_once_with("living_room", 100, override_minutes=60, sensor_only=False)
 
     def test_custom_override_minutes(self):
         hass = _make_hass()
@@ -193,7 +193,7 @@ class TestReadPositions:
 
         orch.read_positions("living_room", room)
 
-        cm.update_position.assert_called_once_with("living_room", 50, override_minutes=120)
+        cm.update_position.assert_called_once_with("living_room", 50, override_minutes=120, sensor_only=False)
 
     def test_no_positions_skips_update(self):
         """When all covers are unavailable, update_position is not called."""
