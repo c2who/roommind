@@ -1230,12 +1230,18 @@ class MPCController:
     def _get_can_heat_cool(self) -> tuple[bool, bool]:
         """Determine whether heating/cooling are allowed based on climate mode."""
         _override = is_override_active(self.room_config)
+        acs_can_heat = check_acs_can_heat(self.hass, self.room_config)
+        base_can_heat, base_can_cool = get_can_heat_cool(
+            self.room_config,
+            acs_can_heat=acs_can_heat,
+            override_active=_override,
+        )
         can_heat, can_cool = get_can_heat_cool(
             self.room_config,
             self.outdoor_temp,
             self.outdoor_cooling_min,
             self.outdoor_heating_max,
-            acs_can_heat=check_acs_can_heat(self.hass, self.room_config),
+            acs_can_heat=acs_can_heat,
             override_active=_override,
         )
 
@@ -1251,14 +1257,14 @@ class MPCController:
                     self.outdoor_heating_max,
                 )
             elif not _override:
-                if self.outdoor_temp < self.outdoor_cooling_min:
+                if base_can_cool and not can_cool:
                     _LOGGER.debug(
                         "%s: outdoor gate blocking cooling (outdoor=%.1f < cooling_min=%.1f)",
                         self._area_id,
                         self.outdoor_temp,
                         self.outdoor_cooling_min,
                     )
-                if self.outdoor_temp > self.outdoor_heating_max:
+                if base_can_heat and not can_heat:
                     _LOGGER.debug(
                         "%s: outdoor gate blocking heating (outdoor=%.1f > heating_max=%.1f)",
                         self._area_id,
