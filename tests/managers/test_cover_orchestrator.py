@@ -38,6 +38,7 @@ def _make_cover_manager() -> MagicMock:
     cm.evaluate = MagicMock(return_value=CoverDecision(target_position=100, changed=False, reason="disabled"))
     cm.update_position = MagicMock()
     cm.get_current_position = MagicMock(return_value=50)
+    cm.get_recommended_position = MagicMock(return_value=50)
     cm.is_user_override_active = MagicMock(return_value=False)
     cm.remove_room = MagicMock()
     return cm
@@ -302,6 +303,14 @@ class TestDelegation:
 
         assert orch.get_current_position("bedroom") == 42
         cm.get_current_position.assert_called_once_with("bedroom")
+
+    def test_get_recommended_position_delegates(self):
+        cm = _make_cover_manager()
+        cm.get_recommended_position.return_value = 100
+        orch = CoverOrchestrator(_make_hass(), cm, _make_model_manager())
+
+        assert orch.get_recommended_position("bedroom") == 100
+        cm.get_recommended_position.assert_called_once_with("bedroom")
 
     def test_is_user_override_active_delegates(self):
         cm = _make_cover_manager()

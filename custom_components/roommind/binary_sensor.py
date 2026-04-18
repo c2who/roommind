@@ -116,7 +116,7 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
 
     ON = shading active (cover should be partially/fully closed).
     OFF = no shading needed (cover fully open).
-    Attribute ``target_position`` shows the recommended cover position (0-100).
+    Attribute ``recommended_position`` shows the recommended cover position (0-100).
     """
 
     _attr_has_entity_name = True
@@ -144,7 +144,7 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return True if shading is recommended (target position < 100)."""
+        """Return True if shading is recommended (recommended position < 100)."""
         if self.coordinator.data is None:
             return False
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
@@ -153,12 +153,12 @@ class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return target_position as attribute."""
+        """Return recommended_position as attribute."""
         if self.coordinator.data is None:
-            return {"target_position": None}
+            return {"recommended_position": None}
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if not room:
-            return {"target_position": None}
+            return {"recommended_position": None}
         per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {})
-        target = per_cover.get("target_position", room.get("cover_shading_position"))
-        return {"target_position": target}
+        target = per_cover.get("recommended_position", room.get("cover_shading_position"))
+        return {"recommended_position": target}

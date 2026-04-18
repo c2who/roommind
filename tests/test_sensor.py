@@ -180,7 +180,7 @@ def test_shading_position_sensor_uses_per_cover_debug():
         {
             "living_room": {
                 "cover_shading_position": 30,
-                "cover_debug": {"cover.living_blinds": {"target_position": 45}},
+                "cover_debug": {"cover.living_blinds": {"recommended_position": 45}},
             }
         }
     )
@@ -194,7 +194,7 @@ def test_shading_position_sensor_does_not_log_on_read(caplog):
         {
             "living_room": {
                 "cover_shading_position": 30,
-                "cover_debug": {"cover.living_blinds": {"target_position": 45}},
+                "cover_debug": {"cover.living_blinds": {"recommended_position": 45}},
             }
         }
     )

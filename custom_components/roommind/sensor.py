@@ -114,7 +114,7 @@ class RoomMindModeSensor(_RoomMindBaseSensor):
 
 
 class RoomMindCoverShadingPositionSensor(CoordinatorEntity, SensorEntity):
-    """Sensor showing the target cover shading position (0-100%) for debugging.
+    """Sensor showing the recommended cover shading position (0-100%) for debugging.
 
     One sensor per cover entity. Currently reads room-level position;
     will read per-cover position once orientation-based control is added.
@@ -151,13 +151,13 @@ class RoomMindCoverShadingPositionSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self) -> int | None:
-        """Return the target shading position."""
+        """Return the recommended shading position."""
         if self.coordinator.data is None:
             return None
         room = self.coordinator.data.get("rooms", {}).get(self._area_id)
         if room:
             per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {})
-            val = per_cover.get("target_position", room.get("cover_shading_position"))
+            val = per_cover.get("recommended_position", room.get("cover_shading_position"))
             return val if isinstance(val, (int, float)) else None
         return None
 

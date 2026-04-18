@@ -55,6 +55,7 @@ class _RoomCoverState:
     """Per-room mutable state."""
 
     current_position: int = 100
+    recommended_position: int | None = None
     last_change_ts: float = 0.0  # 0 = never changed, allows first action immediately
     last_commanded_position: int | None = None  # None = never commanded yet
     user_override_until: float = 0.0  # Unix timestamp; 0 = no override
@@ -118,6 +119,11 @@ class CoverManager:
         """Return the last-known cover position for a room (100 if unknown)."""
         return self._get_state(area_id).current_position
 
+    def get_recommended_position(self, area_id: str) -> int:
+        """Return the last recommended cover position for a room."""
+        state = self._get_state(area_id)
+        return state.recommended_position if state.recommended_position is not None else state.current_position
+
     def is_user_override_active(self, area_id: str) -> bool:
         """Return True if user manual override is currently active."""
         return self._get_state(area_id).user_override_until > time.time()
@@ -158,6 +164,7 @@ class CoverManager:
         # is only reached when auto control is on (or when evaluate() is called directly).
         # Only user manual override (Gate 1b) can block a forced position.
         if forced_position is not None:
+            state.recommended_position = forced_position
             if state.user_override_until > time.time():
                 return CoverDecision(target_position=current, changed=False, reason="user_override_active")
             state.last_was_forced = True
@@ -169,11 +176,13 @@ class CoverManager:
 
         # Gate 2: Auto control disabled — no solar/thermal decisions
         if not covers_auto_enabled:
+            state.recommended_position = current
             return CoverDecision(target_position=current, changed=False, reason="disabled")
 
         # Gate 2.5: Schedule gate — a gate-mode schedule is off, suppress solar logic
         # Retract covers (open) when gate is inactive, subject to rate limit.
         if not solar_gated:
+            state.recommended_position = 100
             state.last_was_forced = False
             if current < 100 and (time.time() - state.last_change_ts) >= COVER_MIN_HOLD_SECONDS:
                 return self._apply_change(state, 100, "gate_retract")
@@ -181,14 +190,17 @@ class CoverManager:
 
         # Gate 3: Manual override — never fight the user
         if has_active_override:
+            state.recommended_position = current
             return CoverDecision(target_position=current, changed=False, reason="manual_override_active")
 
         # Gate 3b: User manually moved cover (e.g. opened for balcony)
         if state.user_override_until > time.time():
+            state.recommended_position = current
             return CoverDecision(target_position=current, changed=False, reason="user_override_active")
 
         # Gate 4: Safety check — predicted_peak_temp must be available
         if predicted_peak_temp is None:
+            state.recommended_position = current
             return CoverDecision(target_position=current, changed=False, reason="no_prediction")
 
         # After forced section: allow immediate transition back to normal control
@@ -202,6 +214,7 @@ class CoverManager:
             )
             if solar_threat:
                 return CoverDecision(target_position=current, changed=False, reason="low_solar_but_peak_predicted")
+            state.recommended_position = 100
             if current < 100:
                 if not was_forced and (time.time() - state.last_change_ts) < COVER_MIN_HOLD_SECONDS:
                     return CoverDecision(target_position=current, changed=False, reason="min_hold_time")
@@ -223,6 +236,8 @@ class CoverManager:
         else:
             # Hysteresis band — hold
             return CoverDecision(target_position=current, changed=False, reason="hysteresis_hold")
+
+        state.recommended_position = desired_pos
 
         # Rate-limit: minimum hold time between changes (skip after forced)
         now = time.time()
@@ -316,6 +331,7 @@ class CoverManager:
 
     def _apply_change(self, state: _RoomCoverState, position: int, reason: str) -> CoverDecision:
         state.current_position = position
+        state.recommended_position = position
         state.last_commanded_position = position
         state.last_change_ts = time.time()
         state.last_command_ts = time.time()

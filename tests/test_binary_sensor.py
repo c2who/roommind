@@ -200,7 +200,7 @@ def test_shading_sensor_on(mock_coordinator):
     mock_coordinator.data = {"rooms": {"living_room": {"cover_shading_active": True, "cover_shading_position": 30}}}
     sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
     assert sensor.is_on is True
-    assert sensor.extra_state_attributes == {"target_position": 30}
+    assert sensor.extra_state_attributes == {"recommended_position": 30}
 
 
 def test_shading_sensor_off(mock_coordinator):
@@ -208,7 +208,7 @@ def test_shading_sensor_off(mock_coordinator):
     mock_coordinator.data = {"rooms": {"living_room": {"cover_shading_active": False, "cover_shading_position": 100}}}
     sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
     assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {"target_position": 100}
+    assert sensor.extra_state_attributes == {"recommended_position": 100}
 
 
 def test_shading_sensor_uses_per_cover_debug(mock_coordinator):
@@ -221,7 +221,7 @@ def test_shading_sensor_uses_per_cover_debug(mock_coordinator):
                 "cover_debug": {
                     "cover.living_blinds": {
                         "shading_active": True,
-                        "target_position": 45,
+                        "recommended_position": 45,
                     }
                 },
             }
@@ -229,7 +229,7 @@ def test_shading_sensor_uses_per_cover_debug(mock_coordinator):
     }
     sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
     assert sensor.is_on is True
-    assert sensor.extra_state_attributes == {"target_position": 45}
+    assert sensor.extra_state_attributes == {"recommended_position": 45}
 
 
 def test_shading_sensor_does_not_log_on_state_reads(mock_coordinator, caplog):
@@ -242,7 +242,7 @@ def test_shading_sensor_does_not_log_on_state_reads(mock_coordinator, caplog):
                 "cover_debug": {
                     "cover.living_blinds": {
                         "shading_active": True,
-                        "target_position": 45,
+                        "recommended_position": 45,
                     }
                 },
             }
@@ -252,7 +252,7 @@ def test_shading_sensor_does_not_log_on_state_reads(mock_coordinator, caplog):
 
     with caplog.at_level(logging.DEBUG):
         assert sensor.is_on is True
-        assert sensor.extra_state_attributes == {"target_position": 45}
+        assert sensor.extra_state_attributes == {"recommended_position": 45}
 
     assert caplog.text == ""
 
@@ -262,7 +262,7 @@ def test_shading_sensor_missing_room(mock_coordinator):
     mock_coordinator.data = {"rooms": {}}
     sensor = RoomMindCoverShadingSensor(mock_coordinator, "nonexistent", "cover.blinds")
     assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {"target_position": None}
+    assert sensor.extra_state_attributes == {"recommended_position": None}
 
 
 def test_shading_sensor_coordinator_none(mock_coordinator):
@@ -270,7 +270,7 @@ def test_shading_sensor_coordinator_none(mock_coordinator):
     mock_coordinator.data = None
     sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.blinds")
     assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {"target_position": None}
+    assert sensor.extra_state_attributes == {"recommended_position": None}
 
 
 def test_shading_sensor_unique_id_and_entity_id(mock_coordinator):

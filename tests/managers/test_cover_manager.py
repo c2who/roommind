@@ -1080,6 +1080,42 @@ def test_evaluate_with_multiple_cover_entities(mock_t):
     assert d.target_position < 100
 
 
+@patch("custom_components.roommind.managers.cover_manager.time")
+def test_sensor_only_recommended_position_survives_external_drift_during_hold(mock_t):
+    """Sensor-only mode should keep publishing the recommended target during min-hold."""
+    mgr = CoverManager()
+    state = mgr._get_state("lr")
+    state.current_position = 15
+    state.last_change_ts = 0.0
+
+    mock_t.time.return_value = 1000.0
+    first = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        sensor_only=True,
+        **_BASE_KWARGS,
+    )
+    assert first.changed is True
+    assert first.target_position == 100
+    assert mgr.get_recommended_position("lr") == 100
+
+    mgr.update_position("lr", 15, sensor_only=True)
+
+    mock_t.time.return_value = 1001.0
+    second = mgr.evaluate(
+        "lr",
+        predicted_peak_temp=22.0,
+        target_temp=22.0,
+        sensor_only=True,
+        **_BASE_KWARGS,
+    )
+    assert second.changed is False
+    assert second.reason == "min_hold_time"
+    assert second.target_position == 15
+    assert mgr.get_recommended_position("lr") == 100
+
+
 @pytest.mark.asyncio
 @patch("custom_components.roommind.managers.cover_manager.time")
 async def test_async_apply_mixed_availability(mock_t):

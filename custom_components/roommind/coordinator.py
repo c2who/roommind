@@ -1175,14 +1175,18 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         cover_debug: dict[str, dict[str, Any]] = {}
         cover_min_positions: dict[str, int] = room.get("cover_min_positions", {})
         cover_orientations: dict[str, int] = room.get("cover_orientations", {})
-        room_target_position = cover_result.decision.target_position if room.get("covers_auto_enabled", False) else None
+        room_target_position = (
+            self._cover_orchestrator.get_recommended_position(area_id)
+            if room.get("covers_auto_enabled", False)
+            else None
+        )
         for eid in cover_eids:
             effective_target = None
             if room_target_position is not None:
                 effective_target = max(cover_min_positions.get(eid, 0), room_target_position)
             cover_debug[eid] = {
                 "current_position": cover_pos_result.positions_by_cover.get(eid),
-                "target_position": effective_target,
+                "recommended_position": effective_target,
                 "shading_active": bool(effective_target is not None and effective_target < 100),
                 "orientation": cover_orientations.get(eid),
                 "min_position": cover_min_positions.get(eid, 0),
@@ -1257,11 +1261,11 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             "cover_reason": (cover_result.decision.reason if cover_eids else ""),
             "active_heat_sources": self._heat_source_states.get(area_id),
             "cover_shading_active": (
-                room.get("covers_auto_enabled", False) and cover_result.decision.target_position < 100
+                room.get("covers_auto_enabled", False)
+                and room_target_position is not None
+                and room_target_position < 100
             ),
-            "cover_shading_position": (
-                cover_result.decision.target_position if room.get("covers_auto_enabled", False) else None
-            ),
+            "cover_shading_position": (room_target_position if room.get("covers_auto_enabled", False) else None),
             "cover_debug": cover_debug,
         }
         return live_state

@@ -467,6 +467,10 @@ class CoverOrchestrator:
         """Delegate to CoverManager.get_current_position."""
         return self._cover_manager.get_current_position(area_id)
 
+    def get_recommended_position(self, area_id: str) -> int:
+        """Delegate to CoverManager.get_recommended_position."""
+        return self._cover_manager.get_recommended_position(area_id)
+
     def is_user_override_active(self, area_id: str) -> bool:
         """Delegate to CoverManager.is_user_override_active."""
         return self._cover_manager.is_user_override_active(area_id)

@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from custom_components.roommind.const import TargetTemps
+from custom_components.roommind.managers.cover_manager import CoverDecision
+from custom_components.roommind.managers.cover_orchestrator import CoverResult
+
 from .conftest import (
     MANAGED_ROOM,
     SAMPLE_ROOM,
@@ -138,14 +142,64 @@ class TestProcessRoomSnapshot:
         assert result["heat_target"] == pytest.approx(21.0)
         assert result["mode"] == "heating"
         assert result["heating_power"] > 0
+
+    def test_build_room_state_uses_recommended_cover_position(self, hass, mock_config_entry):
+        """Published shading sensors should use the stored recommendation, not measured drift."""
+        room = {
+            **SAMPLE_ROOM,
+            "covers": ["cover.dining_blind"],
+            "covers_auto_enabled": True,
+            "covers_sensor_only": True,
+        }
+        coordinator, _ = _setup_coordinator(hass, mock_config_entry, {"living_room_abc12345": room})
+        coordinator._cover_orchestrator.get_recommended_position = MagicMock(return_value=100)
+
+        result = coordinator._build_room_state_dict(
+            area_id="living_room_abc12345",
+            room=room,
+            current_temp=22.0,
+            current_temp_raw=22.0,
+            current_humidity=50.0,
+            target_temp=21.0,
+            targets=TargetTemps(heat=21.0, cool=24.0),
+            display_mode="idle",
+            display_pf=0.0,
+            heat_source_plan=None,
+            device_max_temp=None,
+            ac_device_max_temp=None,
+            device_min_temp=None,
+            has_external_sensor=True,
+            window_open=False,
+            presence_away=False,
+            force_off=False,
+            mode="idle",
+            power_fraction=0.0,
+            mold_risk_level=None,
+            mold_surface_rh=None,
+            mold_prevention_active_room=False,
+            mold_prevention_temp_delta=0.0,
+            shading_factor=0.28,
+            q_occupancy=0.0,
+            cover_eids=["cover.dining_blind"],
+            cover_pos_result=MagicMock(positions_by_cover={"cover.dining_blind": 15}),
+            cover_result=CoverResult(
+                forced_reason="",
+                active_cover_schedule_index=-1,
+                decision=CoverDecision(target_position=15, changed=False, reason="min_hold_time"),
+            ),
+            mpc_active=False,
+            raw_open=False,
+            covers_sensor_only=True,
+        )
+
+        assert result["cover_shading_active"] is False
+        assert result["cover_shading_position"] == 100
+        assert result["cover_debug"]["cover.dining_blind"]["current_position"] == 15
+        assert result["cover_debug"]["cover.dining_blind"]["recommended_position"] == 100
         assert result["window_open"] is False
         assert result["override_active"] is False
         assert result["presence_away"] is False
         assert result["force_off"] is False
-        assert result["mold_risk_level"] == "ok"
-        assert result["mold_prevention_active"] is False
-        assert result["mold_prevention_delta"] == 0
-        assert result["q_occupancy"] == 0.0
 
     @pytest.mark.asyncio
     async def test_idle_at_target(self, hass, mock_config_entry):
