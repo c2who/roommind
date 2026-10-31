@@ -22,7 +22,7 @@ export class RsAnalyticsChart extends LitElement {
   @property({ type: String }) public language = "en";
   @property({ type: Boolean }) public isOutdoor = false;
 
-  @state() private _hiddenSeries = new Set(["outdoor_temp"]);
+  @state() private _hiddenSeries = new Set(["outdoor_temp", "device_target"]);
   @state() private _chartInfoExpanded = false;
 
   render() {
@@ -84,26 +84,30 @@ export class RsAnalyticsChart extends LitElement {
             }}
           ></ha-icon>
         </div>
-        ${this._chartInfoExpanded
-          ? html`<div class="chart-info-panel">
-              ${this._renderMarkdown(localize("analytics.chart_info_body", l))}
-            </div>`
-          : nothing}
-        ${points.length > 0
-          ? html`
-              <ha-chart-base
-                .hass=${this.hass}
-                .data=${displaySeries}
-                .options=${options}
-                .height=${"300px"}
-                style="height: 300px"
-              ></ha-chart-base>
-              ${this._renderSeriesLegend(allSeries)}
-            `
-          : html`<div class="chart-empty">
-              <ha-icon icon="mdi:chart-line"></ha-icon>
-              <span>${localize("analytics.no_data", l)}</span>
-            </div>`}
+        ${
+          this._chartInfoExpanded
+            ? html`<div class="chart-info-panel">
+                ${this._renderMarkdown(localize("analytics.chart_info_body", l))}
+              </div>`
+            : nothing
+        }
+        ${
+          points.length > 0
+            ? html`
+                <ha-chart-base
+                  .hass=${this.hass}
+                  .data=${displaySeries}
+                  .options=${options}
+                  .height=${"300px"}
+                  style="height: 300px"
+                ></ha-chart-base>
+                ${this._renderSeriesLegend(allSeries)}
+              `
+            : html`<div class="chart-empty">
+                <ha-icon icon="mdi:chart-line"></ha-icon>
+                <span>${localize("analytics.no_data", l)}</span>
+              </div>`
+        }
       </ha-card>
     `;
   }

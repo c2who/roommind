@@ -13,18 +13,19 @@ from custom_components.roommind.diagnostics import (
     _build_model_info,
     async_get_config_entry_diagnostics,
 )
+from custom_components.roommind.managers.ac_coil_dry_manager import AcCoilDryManager
 
 
 def _make_estimator():
     """Build a mock ThermalEKF estimator."""
     est = MagicMock()
-    est._x = [20.0, 0.5, 100.0, 80.0, 10.0, 0.3]
+    est._x = [20.0, 0.5, 100.0, 80.0, 10.0, 0.3, 12.0]
     est._n_updates = 200
     est._n_idle = 120
     est._n_heating = 60
     est._n_cooling = 20
     est._applicable_modes = {"idle", "heating"}
-    est._P = [[0.01 * (i == j) for j in range(6)] for i in range(6)]
+    est._P = [[0.01 * (i == j) for j in range(7)] for i in range(7)]
     est.prediction_std.return_value = 0.25
     est.confidence = 0.85
     rc = MagicMock()
@@ -79,6 +80,9 @@ def _make_coordinator(
     coordinator._valve_manager._cycling = valve_cycling or {}
     coordinator._valve_manager._last_actuation = valve_last_actuation or {}
 
+    # Coil dry manager
+    coordinator._coil_dry_manager.get_state.return_value = {}
+
     return coordinator
 
 
@@ -90,12 +94,13 @@ def test_build_model_info():
     assert info["alpha"] == 0.5
     assert info["beta_h"] == 100.0
     assert info["beta_c"] == 80.0
+    assert info["beta_f"] == 12.0
     assert info["n_updates"] == 200
     assert info["n_idle"] == 120
     assert info["n_heating"] == 60
     assert info["n_cooling"] == 20
     assert info["applicable_modes"] == ["heating", "idle"]  # sorted
-    assert len(info["P_diagonal"]) == 6
+    assert len(info["P_diagonal"]) == 7
     assert info["confidence"] == 0.85
     assert "model_params" in info
 
@@ -172,6 +177,8 @@ async def test_diagnostics_with_coordinator_and_model(hass, mock_config_entry):
     assert result["outdoor"]["forecast_available"] is False
     assert result["presence"]["enabled"] is True
     assert result["presence"]["person_states"]["person.alice"] == "home"
+    # control_mode was never saved: the export shows the effective default
+    assert result["settings"]["control_mode"] == "mpc"
 
 
 @pytest.mark.asyncio
@@ -434,6 +441,8 @@ async def test_diagnostics_cover_state_no_override(hass, mock_config_entry):
     cover_state.last_was_forced = False
     cover_state.last_change_ts = 0
     cover_state.user_override_until = 0
+    cover_state.owned = False
+    cover_state.baseline_position = None
 
     coordinator = _make_coordinator(cover_states={"room_a": cover_state})
     hass.data[DOMAIN] = {"store": store, "coordinator": coordinator}
@@ -443,6 +452,8 @@ async def test_diagnostics_cover_state_no_override(hass, mock_config_entry):
     cover = result["rooms"]["room_a"]["cover"]
     assert "user_override_remaining_s" not in cover
     assert "last_change_ago_s" not in cover
+    assert cover["owned"] is False
+    assert cover["baseline_position"] is None
 
 
 @pytest.mark.asyncio
@@ -466,7 +477,7 @@ async def test_diagnostics_compressor_groups(hass, mock_config_entry):
     store.get_settings.return_value = {}
     store.get_rooms.return_value = {}
 
-    now = time.time()
+    now = time.monotonic()
     group_cfg = MagicMock()
     group_cfg.min_run_seconds = 180
     group_cfg.min_off_seconds = 300
@@ -499,7 +510,7 @@ async def test_diagnostics_compressor_master_device(hass, mock_config_entry):
     store.get_settings.return_value = {}
     store.get_rooms.return_value = {}
 
-    now = time.time()
+    now = time.monotonic()
     group_cfg = MagicMock()
     group_cfg.min_run_seconds = 180
     group_cfg.min_off_seconds = 300
@@ -575,7 +586,7 @@ async def test_diagnostics_compressor_off_since(hass, mock_config_entry):
     store.get_settings.return_value = {}
     store.get_rooms.return_value = {}
 
-    now = time.time()
+    now = time.monotonic()
     group_cfg = MagicMock()
     group_cfg.min_run_seconds = 180
     group_cfg.min_off_seconds = 300
@@ -711,3 +722,43 @@ async def test_diagnostics_cover_with_last_command_ts(hass, mock_config_entry):
     cover = result["rooms"]["room_a"]["cover"]
     assert 198 <= cover["last_command_ago_s"] <= 202
     assert "last_change_ago_s" not in cover
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_include_coil_dry(hass, mock_config_entry):
+    """Device coil dry config and runtime state must show up in diagnostics."""
+    store = MagicMock()
+    store.get_settings.return_value = {}
+    store.get_rooms.return_value = {
+        "living_room": {
+            "devices": [
+                {
+                    "entity_id": "climate.living_ac",
+                    "type": "ac",
+                    "role": "auto",
+                    "coil_dry": "on",
+                    "coil_dry_minutes": 15,
+                    "coil_dry_mode": "fan_only",
+                    "coil_dry_fan_mode": "high",
+                }
+            ],
+        }
+    }
+
+    hass.states.get = MagicMock(return_value=None)
+
+    coil_dry_manager = AcCoilDryManager(hass)
+    coil_dry_manager.load_state({"climate.living_ac": {"wet_seconds": 600.0, "phase": "blow", "phase_until": 9e12}})
+
+    coordinator = _make_coordinator()
+    coordinator._coil_dry_manager = coil_dry_manager
+    hass.data[DOMAIN] = {"store": store, "coordinator": coordinator}
+
+    result = await async_get_config_entry_diagnostics(hass, mock_config_entry)
+
+    dev = result["rooms"]["living_room"]["device_states"][0]
+    assert dev["coil_dry"] == "on"
+    assert dev["coil_dry_minutes"] == 15
+    assert dev["coil_dry_mode"] == "fan_only"
+    assert dev["coil_dry_fan_mode"] == "high"
+    assert result["coil_dry_state"]["climate.living_ac"]["phase"] == "blow"

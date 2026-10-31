@@ -218,6 +218,40 @@ async def test_settings_migration_from_old_store(store):
 
 
 @pytest.mark.asyncio
+async def test_orphan_settings_removed_on_load(store):
+    """Legacy heating_threshold/cooling_threshold are stripped and persisted."""
+    store._store.async_load = AsyncMock(
+        return_value={
+            "rooms": {},
+            "settings": {
+                "outdoor_temp_sensor": "sensor.outdoor",
+                "heating_threshold": 0.3,
+                "cooling_threshold": 1,
+            },
+        }
+    )
+    await store.async_load()
+
+    settings = store.get_settings()
+    assert "heating_threshold" not in settings
+    assert "cooling_threshold" not in settings
+    assert settings["outdoor_temp_sensor"] == "sensor.outdoor"
+    saved_data = store._store.async_save.call_args[0][0]
+    assert "heating_threshold" not in saved_data["settings"]
+    assert "cooling_threshold" not in saved_data["settings"]
+
+
+@pytest.mark.asyncio
+async def test_orphan_settings_load_without_them_no_save(store):
+    """Clean settings don't trigger a migration save."""
+    store._store.async_load = AsyncMock(
+        return_value={"rooms": {}, "settings": {"outdoor_temp_sensor": "sensor.outdoor"}}
+    )
+    await store.async_load()
+    assert not store._store.async_save.called
+
+
+@pytest.mark.asyncio
 async def test_thermal_data_persistence(store):
     """Thermal data can be saved and retrieved."""
     await store.async_load()
@@ -463,6 +497,10 @@ async def test_migration_legacy_room_gets_devices(store):
         "idle_action": "off",
         "idle_fan_mode": "low",
         "setpoint_mode": "proportional",
+        "coil_dry": "inherit",
+        "coil_dry_minutes": 0,
+        "coil_dry_mode": "",
+        "coil_dry_fan_mode": "",
     }
     assert room["devices"][2] == {
         "entity_id": "climate.ac1",
@@ -472,6 +510,10 @@ async def test_migration_legacy_room_gets_devices(store):
         "idle_action": "off",
         "idle_fan_mode": "low",
         "setpoint_mode": "proportional",
+        "coil_dry": "inherit",
+        "coil_dry_minutes": 0,
+        "coil_dry_mode": "",
+        "coil_dry_fan_mode": "",
     }
     # Legacy keys are consistent
     assert room["thermostats"] == ["climate.trv1", "climate.trv2"]
@@ -678,3 +720,87 @@ async def test_migration_heat_pump_to_ac(store):
     # heat_pump should be migrated to ac
     assert room["devices"][1]["type"] == "ac"
     assert room["acs"] == ["climate.hp1"]
+
+
+def test_migrate_override_auto_creates_dead_band():
+    from custom_components.roommind.store import _migrate_override_fields
+
+    room = {"climate_mode": "auto", "comfort_cool": 24.0, "override_temp": 21.0}
+    _migrate_override_fields(room)
+    assert "override_temp" not in room
+    assert room["override_heat"] == 21.0
+    assert room["override_cool"] == 24.0
+
+
+def test_migrate_override_auto_legacy_above_comfort_cool():
+    from custom_components.roommind.store import _migrate_override_fields
+
+    room = {"climate_mode": "auto", "comfort_cool": 24.0, "override_temp": 26.0}
+    _migrate_override_fields(room)
+    assert room["override_heat"] == 26.0
+    assert room["override_cool"] == 26.0
+
+
+def test_migrate_override_heat_only():
+    from custom_components.roommind.store import _migrate_override_fields
+
+    room = {"climate_mode": "heat_only", "override_temp": 22.0}
+    _migrate_override_fields(room)
+    assert room["override_heat"] == 22.0
+    assert room["override_cool"] is None
+
+
+def test_migrate_override_cool_only():
+    from custom_components.roommind.store import _migrate_override_fields
+
+    room = {"climate_mode": "cool_only", "override_temp": 22.0}
+    _migrate_override_fields(room)
+    assert room["override_heat"] is None
+    assert room["override_cool"] == 22.0
+
+
+def test_migrate_override_none_value_dropped():
+    from custom_components.roommind.store import _migrate_override_fields
+
+    room = {"climate_mode": "auto", "override_temp": None}
+    _migrate_override_fields(room)
+    assert "override_temp" not in room
+    assert "override_heat" not in room
+    assert "override_cool" not in room
+
+
+def test_migrate_override_no_legacy_is_noop():
+    from custom_components.roommind.store import _migrate_override_fields
+
+    room = {"climate_mode": "auto", "override_heat": 19.0, "override_cool": 26.0}
+    _migrate_override_fields(room)
+    assert room["override_heat"] == 19.0
+    assert room["override_cool"] == 26.0
+    assert "override_temp" not in room
+
+
+@pytest.mark.asyncio
+async def test_migration_override_temp_on_load(store):
+    """Rooms with legacy override_temp get migrated and persisted on load."""
+    stored_data = {
+        "rooms": {
+            "wohnzimmer": {
+                "area_id": "wohnzimmer",
+                "climate_mode": "auto",
+                "comfort_cool": 24.0,
+                "override_temp": 21.0,
+                "override_type": "custom",
+                "override_until": None,
+                "schedules": [],
+            }
+        }
+    }
+    store._store.async_load = AsyncMock(return_value=stored_data)
+    await store.async_load()
+
+    assert store._store.async_save.called
+
+    room = store.get_room("wohnzimmer")
+    assert "override_temp" not in room
+    assert room["override_heat"] == 21.0
+    assert room["override_cool"] == 24.0

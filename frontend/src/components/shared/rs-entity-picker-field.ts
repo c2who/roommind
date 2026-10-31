@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { inputStyles } from "../../styles/input-styles";
 import type { HomeAssistant } from "../../types";
 
 @customElement("rs-entity-picker-field")
@@ -11,21 +12,24 @@ export class RsEntityPickerField extends LitElement {
   @property({ type: String }) public currentValue = "";
   @property({ type: String }) public currentValueLabel = "";
 
-  static styles = css`
-    :host {
-      display: block;
-    }
+  static styles = [
+    inputStyles,
+    css`
+      :host {
+        display: block;
+      }
 
-    ha-entity-picker {
-      width: 100%;
-    }
+      ha-entity-picker {
+        width: 100%;
+      }
 
-    .current-value {
-      font-size: 13px;
-      color: var(--secondary-text-color);
-      margin-top: 4px;
-    }
-  `;
+      .current-value {
+        font-size: 13px;
+        color: var(--secondary-text-color);
+        margin-top: 4px;
+      }
+    `,
+  ];
 
   render() {
     return html`
@@ -37,12 +41,15 @@ export class RsEntityPickerField extends LitElement {
         allow-custom-entity
         @value-changed=${this._onValueChanged}
       ></ha-entity-picker>
-      ${this.currentValue
-        ? html`<div class="current-value">
-            ${this.currentValueLabel ? html`${this.currentValueLabel}: ` : nothing}${this
-              .currentValue}
-          </div>`
-        : nothing}
+      ${
+        this.currentValue
+          ? html`<div class="current-value">
+              ${this.currentValueLabel ? html`${this.currentValueLabel}: ` : nothing}${
+                this.currentValue
+              }
+            </div>`
+          : nothing
+      }
     `;
   }
 

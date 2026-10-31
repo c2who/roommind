@@ -522,7 +522,7 @@ async def test_bangbang_heating_idles_after_min_run():
         has_external_sensor=True,
         previous_mode=MODE_HEATING,
         heating_system_type="underfloor",
-        mode_on_since=time.time() - 2000,  # 33 min ago, past 30-min window
+            mode_on_since=time.time() - 3700,  # Past the 60-minute underfloor minimum run
     )
     mode = ctrl._evaluate_bangbang(21.5, TargetTemps(heat=21.0, cool=24.0))
     assert mode == MODE_IDLE

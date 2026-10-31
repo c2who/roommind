@@ -6,7 +6,7 @@ Pure utility module with NO dependencies on HA or other RoomMind modules.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, NamedTuple
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,7 +25,15 @@ IDLE_ACTION_OFF = "off"
 IDLE_ACTION_FAN_ONLY = "fan_only"
 DEFAULT_IDLE_FAN_MODE = "low"
 IDLE_ACTION_SETBACK = "setback"
+IDLE_ACTION_LOW = "low"
 DEFAULT_IDLE_SETBACK_OFFSET = 2.0
+
+# What the second valve entity of a TRV with direct valve control means (#482): a closing
+# degree (SONOFF TRVZB, closed position = 100 - value) or the opening while the TRV does
+# not heat (SONOFF TRV-ZBT). Missing = closing degree.
+VALVE_CLOSING_DEGREE = "closing_degree"
+VALVE_IDLE_OPENING = "idle_opening"
+VALVE_CLOSING_MODES = (VALVE_CLOSING_DEGREE, VALVE_IDLE_OPENING)
 
 SETPOINT_MODE_PROPORTIONAL = "proportional"
 SETPOINT_MODE_DIRECT = "direct"
@@ -38,7 +46,59 @@ ALLOWED_DEVICE_KEYS = {
     "idle_action",
     "idle_fan_mode",
     "setpoint_mode",
+    "setpoint_offset",
+    "coil_dry",
+    "coil_dry_minutes",
+    "coil_dry_mode",
+    "coil_dry_fan_mode",
+    "valve_opening_entity",
+    "valve_closing_entity",
+    "valve_closing_mode",
 }
+
+# Per-device offset (°C) added to the room target in direct mode, for devices
+# whose internal sensor reads differently from the room sensor (#369).
+SETPOINT_OFFSET_MIN = -5.0
+SETPOINT_OFFSET_MAX = 5.0
+SETPOINT_OFFSET_STEP = 0.5
+
+# --- Coil dry (evaporator anti-odour run) ---
+# These live here, not in const.py, because get_coil_dry_config() resolves them
+# and this module is deliberately free of HA / RoomMind imports.  Same
+# precedent as IDLE_ACTION_* above.
+COIL_DRY_INHERIT = "inherit"
+COIL_DRY_ON = "on"
+COIL_DRY_OFF = "off"
+COIL_DRY_OVERRIDES = [COIL_DRY_INHERIT, COIL_DRY_ON, COIL_DRY_OFF]
+
+COIL_DRY_MODE_FAN_ONLY = "fan_only"
+COIL_DRY_MODE_DRY = "dry"
+COIL_DRY_MODES = [COIL_DRY_MODE_FAN_ONLY, COIL_DRY_MODE_DRY]
+
+# Device-level sentinel: "" means "inherit the global setting", so an explicit
+# "keep the device's current fan speed" needs its own value.
+COIL_DRY_FAN_MODE_KEEP = "__keep__"
+
+COIL_DRY_PHASE_DRAIN = "drain"
+COIL_DRY_PHASE_BLOW = "blow"
+
+DEFAULT_COIL_DRY_MINUTES = 20  # low fan speed by default -> double the 10 min
+DEFAULT_COIL_DRY_FAN_MODE = "low"  # HA's FAN_LOW: quiet beats fast, see spec 6.4
+DEFAULT_COIL_DRY_MIN_COOLING_MINUTES = 10
+DEFAULT_COIL_DRY_DRAIN_MINUTES = 0
+COIL_DRY_STALE_SECONDS = 7200.0  # 2 h: accumulated wetness expires, run too late
+
+
+class CoilDryConfig(NamedTuple):
+    """Resolved coil dry configuration for one device."""
+
+    enabled: bool
+    minutes: int
+    mode: str
+    fan_mode: str  # "" = keep the device's current fan speed
+    min_cooling_minutes: int
+    drain_minutes: int
+
 
 # Active HVAC modes that indicate real device capabilities.
 _ACTIVE_HVAC_MODES = {"heat", "cool", "heat_cool", "auto"}
@@ -78,6 +138,10 @@ def legacy_to_devices(
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
                 "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
+                "coil_dry": COIL_DRY_INHERIT,
+                "coil_dry_minutes": 0,
+                "coil_dry_mode": "",
+                "coil_dry_fan_mode": "",
             }
         )
     for eid in acs:
@@ -90,6 +154,10 @@ def legacy_to_devices(
                 "idle_action": IDLE_ACTION_OFF,
                 "idle_fan_mode": DEFAULT_IDLE_FAN_MODE,
                 "setpoint_mode": SETPOINT_MODE_PROPORTIONAL,
+                "coil_dry": COIL_DRY_INHERIT,
+                "coil_dry_minutes": 0,
+                "coil_dry_mode": "",
+                "coil_dry_fan_mode": "",
             }
         )
     return devices
@@ -250,7 +318,82 @@ def get_idle_action(devices: list[dict], entity_id: str) -> tuple[str, str]:
 
 def get_direct_setpoint_eids(devices: list[dict]) -> set[str]:
     """Return entity IDs of devices with setpoint_mode='direct'."""
-    return {d["entity_id"] for d in devices if d.get("entity_id") and d.get("setpoint_mode") == SETPOINT_MODE_DIRECT}
+    return {d["entity_id"] for d in devices if d.get("entity_id") and _is_direct(d)}
+
+
+def _is_direct(device: dict) -> bool:
+    """Direct setpoint mode; a TRV with direct valve control (#413) always gets the boost."""
+    return device.get("setpoint_mode") == SETPOINT_MODE_DIRECT and not (
+        device.get("type") == DEVICE_TYPE_TRV
+        and device.get("valve_opening_entity")
+        and device.get("valve_closing_entity")
+    )
+
+
+def get_setpoint_offset(devices: list[dict], entity_id: str) -> float:
+    """Return the direct-mode setpoint offset (°C) of a device, 0.0 if unset, invalid or not direct."""
+    dev = get_device_by_eid(devices, entity_id)
+    if dev is None or not _is_direct(dev):
+        return 0.0
+    try:
+        offset = float(dev.get("setpoint_offset") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if offset != offset:  # NaN
+        return 0.0
+    return max(SETPOINT_OFFSET_MIN, min(SETPOINT_OFFSET_MAX, offset))
+
+
+def get_setpoint_offsets(devices: list[dict]) -> dict[str, float]:
+    """Return {entity_id: offset} for direct-mode devices with a non-zero offset."""
+    offsets = {d["entity_id"]: get_setpoint_offset(devices, d["entity_id"]) for d in devices if d.get("entity_id")}
+    return {eid: off for eid, off in offsets.items() if off}
+
+
+class ValveEntities(NamedTuple):
+    """Number entities of a TRV with direct valve control (#413)."""
+
+    opening: str
+    closing: str
+    idle_opening: bool = False  # ``closing`` is the opening while idle, not a closing degree (#482)
+
+
+def get_valve_entities(devices: list[dict]) -> dict[str, ValveEntities]:
+    """Return {climate_entity_id: ValveEntities} for TRVs with direct valve control (#413).
+
+    Both entities are needed: the second one sets where the valve sits while the TRV's own
+    controller does not heat, so only both together pin the valve at X %.
+    """
+    result: dict[str, ValveEntities] = {}
+    for d in devices:
+        eid = d.get("entity_id")
+        opening = d.get("valve_opening_entity") or None
+        closing = d.get("valve_closing_entity") or None
+        if eid and opening and closing and d.get("type") == DEVICE_TYPE_TRV:
+            result[eid] = ValveEntities(opening, closing, d.get("valve_closing_mode") == VALVE_IDLE_OPENING)
+    return result
+
+
+def configured_valves(rooms: dict) -> dict[str, ValveEntities]:
+    """``get_valve_entities`` across all rooms."""
+    result: dict[str, ValveEntities] = {}
+    for room in rooms.values():
+        result.update(get_valve_entities(room.get("devices", [])))
+    return result
+
+
+def build_rooms_devices_map(rooms: dict) -> dict[str, list[dict]]:
+    """Return {entity_id: devices[]} map across all rooms.
+
+    Used by managers that need to resolve a device's configuration (e.g.
+    idle_action) by entity_id without carrying the full rooms dict.
+    """
+    return {
+        d["entity_id"]: room.get("devices", [])
+        for room in rooms.values()
+        for d in room.get("devices", [])
+        if d.get("entity_id")
+    }
 
 
 def migrate_heat_pump_devices(devices: list[dict]) -> bool:
@@ -304,3 +447,38 @@ def room_contributes_to_group(
         if eid and eid in member_set and dev.get("type") == required_type:
             return True
     return False
+
+
+def get_coil_dry_config(devices: list[dict], entity_id: str, settings: dict) -> CoilDryConfig:
+    """Resolve the effective coil dry config for one device.
+
+    Device fields override the global settings.  Sentinels: ``coil_dry_minutes=0``
+    and ``coil_dry_mode=""`` mean "inherit"; ``coil_dry_fan_mode=""`` means
+    "inherit" while ``"__keep__"`` means "send no set_fan_mode at all".
+    """
+    dev = get_device_by_eid(devices, entity_id) or {}
+
+    override = dev.get("coil_dry", COIL_DRY_INHERIT)
+    if override == COIL_DRY_ON:
+        enabled = True
+    elif override == COIL_DRY_OFF:
+        enabled = False
+    else:
+        enabled = bool(settings.get("coil_dry_enabled", False))
+
+    dev_fan = dev.get("coil_dry_fan_mode", "")
+    if dev_fan == COIL_DRY_FAN_MODE_KEEP:
+        fan_mode = ""
+    elif dev_fan:
+        fan_mode = dev_fan
+    else:
+        fan_mode = settings.get("coil_dry_fan_mode", DEFAULT_COIL_DRY_FAN_MODE)
+
+    return CoilDryConfig(
+        enabled=enabled,
+        minutes=int(dev.get("coil_dry_minutes") or settings.get("coil_dry_minutes", DEFAULT_COIL_DRY_MINUTES)),
+        mode=dev.get("coil_dry_mode") or settings.get("coil_dry_mode", COIL_DRY_MODE_FAN_ONLY),
+        fan_mode=fan_mode,
+        min_cooling_minutes=int(settings.get("coil_dry_min_cooling_minutes", DEFAULT_COIL_DRY_MIN_COOLING_MINUTES)),
+        drain_minutes=int(settings.get("coil_dry_drain_minutes", DEFAULT_COIL_DRY_DRAIN_MINUTES)),
+    )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import datetime
+import os
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from homeassistant.util import dt as dt_util
@@ -12,12 +14,30 @@ from custom_components.roommind.control.mpc_controller import clear_command_cach
 from custom_components.roommind.store import RoomMindStore
 
 
+@pytest.fixture(autouse=True)
+def _ha_default_timezone():
+    """Set HA's configured timezone from the ``ROOMMIND_TEST_TZ`` env var.
+
+    Autouse + function-scoped so every test starts from a known HA timezone and
+    the previous value is restored afterwards. This isolates tests that mutate
+    ``dt_util.DEFAULT_TIME_ZONE`` themselves (e.g. the schedule-resolution tests
+    in ``test_schedule_utils.py``, which pin non-UTC zones via a context manager).
+    """
+    tz_name = os.environ.get("ROOMMIND_TEST_TZ", "UTC")
+    original = dt_util.get_default_time_zone()
+    dt_util.set_default_time_zone(ZoneInfo(tz_name))
+    try:
+        yield
+    finally:
+        dt_util.set_default_time_zone(original)
+
+
 def make_mock_states_get(
     temp="18.0",
     humidity="55.0",
     schedule_state="on",
     schedule_attrs=None,
-    outdoor_temp=None,
+    outdoor_temp="5.0",
     outdoor_temp_entity="sensor.outdoor_temp",
     window_sensors=None,
     selector_state=None,

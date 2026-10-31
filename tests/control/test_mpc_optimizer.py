@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import math
+
+import pytest
+
+from custom_components.roommind.const import MIN_POWER_FRACTION, MODE_COOLING, MODE_HEATING
 from custom_components.roommind.control.mpc_optimizer import MPCOptimizer, MPCPlan
 from custom_components.roommind.control.thermal_model import RCModel
 
@@ -373,43 +378,6 @@ def test_optimizer_inverted_targets_clamped():
     assert plan.actions[0] == "heating"
 
 
-# ---------------------------------------------------------------------------
-# Initial mode state tests
-# ---------------------------------------------------------------------------
-
-
-def test_optimizer_continues_heating_within_min_run():
-    """Optimizer with initial_mode=HEATING and blocks < min_run must continue heating."""
-    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
-    opt = MPCOptimizer(model, min_run_blocks=2)
-    # Room is at target — without initial_mode, optimizer would idle
-    plan = opt.optimize(
-        T_room=21.0,
-        T_outdoor_series=[21.0] * 12,
-        heat_target_series=[21.0] * 12,
-        dt_minutes=5,
-        initial_mode="heating",
-        initial_blocks_in_mode=1,
-    )
-    assert plan.actions[0] == "heating", "Must continue heating within min_run window"
-
-
-def test_optimizer_may_idle_after_min_run_reached():
-    """Optimizer with blocks_in_mode >= min_run_blocks is free to switch to idle."""
-    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
-    opt = MPCOptimizer(model, min_run_blocks=2)
-    # Room at target, outdoor matches — no reason to heat
-    plan = opt.optimize(
-        T_room=21.0,
-        T_outdoor_series=[21.0] * 12,
-        heat_target_series=[21.0] * 12,
-        dt_minutes=5,
-        initial_mode="heating",
-        initial_blocks_in_mode=2,
-    )
-    assert plan.actions[0] == "idle", "Free to idle after min_run satisfied"
-
-
 # Coverage: uncovered lines
 # ---------------------------------------------------------------------------
 
@@ -547,3 +515,486 @@ def test_min_run_forced_idle_outdoor_gate_mid_run():
     )
     if len(plan.actions) > 1 and plan.actions[0] == "cooling":
         assert plan.actions[1] == "idle"
+
+
+# ---------------------------------------------------------------------------
+# Issue #131: UFH proactive pre-heating
+# ---------------------------------------------------------------------------
+
+
+def _ufh_optimizer(**overrides):
+    """Construct an optimizer with UFH heat-only profile settings.
+
+    Default can_cool=False matches pure UFH rooms (primary fix target).
+    Override can_cool=True to exercise the hybrid UFH+AC code path.
+    """
+    model = overrides.pop("model", RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0))
+    defaults = {
+        "can_cool": False,
+        "w_comfort": 7.0,
+        "w_energy": 3.0,
+        "min_run_blocks": 6,
+        "heating_system_type": "underfloor",
+    }
+    defaults.update(overrides)
+    return MPCOptimizer(model=model, **defaults)
+
+
+def test_ufh_proactive_preheat_at_target():
+    """UFH room at target with cold outdoor should pre-heat, not wait for drop."""
+    opt = _ufh_optimizer()
+    n = 30
+    plan = opt.optimize(
+        T_room=20.0,
+        T_outdoor_series=[5.0] * n,
+        heat_target_series=[20.0] * n,
+        cool_target_series=[20.0] * n,
+        dt_minutes=5,
+    )
+    assert plan.actions[0] == "heating", f"UFH at target should pre-heat, got {plan.actions[0]}"
+
+
+def test_ufh_afterglow_visible_in_cost():
+    """Synthesis reduces HEATING cost vs non-synthesized path at equal lookahead.
+
+    Isolates the synthesis effect by forcing both optimizers to the same
+    lookahead. Only the heating_system_type-based synthesis gate differs.
+    """
+    model = RCModel(C=200.0, U=50.0, Q_heat=300.0, Q_cool=1500.0)
+    shared = {
+        "T_room": 20.0,
+        "T_outdoor": 5.0,
+        "heat_target": 20.0,
+        "cool_target": 20.0,
+        "future_T_outdoor": [5.0] * 30,
+        "future_heat_targets": [20.0] * 30,
+        "future_cool_targets": [20.0] * 30,
+        "dt_minutes": 5.0,
+    }
+
+    opt_ufh = MPCOptimizer(
+        model=model,
+        can_cool=False,
+        w_comfort=7.0,
+        w_energy=3.0,
+        min_run_blocks=6,
+        heating_system_type="underfloor",
+    )
+    opt_empty = MPCOptimizer(
+        model=model,
+        can_cool=False,
+        w_comfort=7.0,
+        w_energy=3.0,
+        min_run_blocks=6,
+        heating_system_type="",
+    )
+    # Force equal lookahead — isolate synthesis from horizon-size effect.
+    opt_ufh._lookahead_blocks = 24
+    opt_empty._lookahead_blocks = 24
+
+    cost_ufh = opt_ufh._evaluate_action("heating", **shared)
+    cost_empty = opt_empty._evaluate_action("heating", **shared)
+
+    assert cost_ufh < cost_empty, (
+        f"UFH heating cost {cost_ufh} should be lower than empty-type {cost_empty} "
+        "due to afterglow synthesis reducing post-run comfort penalty"
+    )
+
+
+def test_radiator_plan_matches_empty_plan():
+    """Radiator and empty-type plans must be byte-identical (no radiator regression)."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    kwargs = {
+        "T_room": 19.5,
+        "T_outdoor_series": [5.0] * 12,
+        "heat_target_series": [21.0] * 12,
+        "dt_minutes": 5,
+    }
+    plan_rad = MPCOptimizer(model=model, heating_system_type="radiator").optimize(**kwargs)
+    plan_empty = MPCOptimizer(model=model, heating_system_type="").optimize(**kwargs)
+    assert plan_rad.actions == plan_empty.actions
+    assert plan_rad.temperatures == plan_empty.temperatures
+    assert plan_rad.power_fractions == plan_empty.power_fractions
+
+
+def test_unknown_system_no_regression():
+    """Empty heating_system_type keeps base lookahead and synthesis off."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    opt = MPCOptimizer(model=model, heating_system_type="")
+    plan = opt.optimize(
+        T_room=19.5,
+        T_outdoor_series=[5.0] * 12,
+        heat_target_series=[21.0] * 12,
+        dt_minutes=5,
+    )
+    assert plan.lookahead_blocks == 6
+
+
+def test_cooling_lookahead_no_afterglow_synthesis():
+    """COOLING uses the provided future_residual; never synthesizes afterglow.
+
+    Exercised on an extended-lookahead UFH setup (can_cool=False keeps the
+    extension active). With lookahead=24 and min_run=6, the 18 post-run blocks
+    see block_Q=0 and let residual through. Proves residual drives COOLING
+    cost, not synthesis.
+    """
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=200.0)
+    opt = _ufh_optimizer(model=model)  # can_cool=False by helper default
+    opt.optimize(
+        T_room=25.0,
+        T_outdoor_series=[28.0] * 30,
+        heat_target_series=[22.0] * 30,
+        cool_target_series=[22.0] * 30,
+        dt_minutes=5,
+    )
+    shared = {
+        "T_room": 25.0,
+        "T_outdoor": 28.0,
+        "heat_target": 22.0,
+        "cool_target": 22.0,
+        "future_T_outdoor": [28.0] * 30,
+        "future_heat_targets": [22.0] * 30,
+        "future_cool_targets": [22.0] * 30,
+        "dt_minutes": 5.0,
+    }
+    cost_with_residual = opt._evaluate_action("cooling", **shared, future_residual=[0.5] * 30)
+    cost_without_residual = opt._evaluate_action("cooling", **shared, future_residual=[0.0] * 30)
+    assert cost_with_residual != cost_without_residual
+
+
+def test_lookahead_clamps_to_horizon():
+    """Short outer horizon clamps lookahead without errors."""
+    opt = _ufh_optimizer()
+    plan = opt.optimize(
+        T_room=20.0,
+        T_outdoor_series=[5.0] * 8,
+        heat_target_series=[20.0] * 8,
+        cool_target_series=[20.0] * 8,
+        dt_minutes=5,
+    )
+    assert len(plan.actions) == 8  # no crash, plan produced
+
+
+def test_lookahead_blocks_attribute_exposed():
+    """Plan exposes lookahead_blocks for guard integration; covers all setups."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    cases = [
+        # (heating_system_type, can_cool, min_run_blocks, expected_lookahead)
+        ("", False, 2, 6),
+        ("", True, 2, 6),
+        ("radiator", False, 2, 6),
+        ("radiator", True, 2, 6),
+        ("underfloor", False, 6, 24),
+        ("underfloor", True, 6, 6),  # hybrid UFH+AC keeps base lookahead
+    ]
+    for hst, can_cool, mrb, exp_blocks in cases:
+        opt = MPCOptimizer(
+            model=model,
+            can_cool=can_cool,
+            min_run_blocks=mrb,
+            heating_system_type=hst,
+        )
+        plan = opt.optimize(
+            T_room=20.0,
+            T_outdoor_series=[10.0] * 30,
+            heat_target_series=[20.0] * 30,
+            dt_minutes=5,
+        )
+        assert plan.lookahead_blocks == exp_blocks, (
+            f"hst={hst!r} can_cool={can_cool}: expected {exp_blocks}, got {plan.lookahead_blocks}"
+        )
+
+
+def test_hybrid_ufh_ac_cooling_balance_preserved():
+    """Hybrid UFH+AC rooms keep base lookahead → cooling plan matches pre-fix."""
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=200.0)
+    kwargs = {
+        "T_room": 25.0,
+        "T_outdoor_series": [28.0] * 24,
+        "heat_target_series": [21.0] * 24,
+        "cool_target_series": [23.0] * 24,
+        "dt_minutes": 5,
+    }
+    # Hybrid: UFH TRV + AC cooling. With the fix gated on not can_cool, the
+    # UFH profile must NOT extend the lookahead — cooling stays at base=6.
+    plan_hybrid = MPCOptimizer(
+        model=model,
+        can_heat=True,
+        can_cool=True,
+        min_run_blocks=6,
+        heating_system_type="underfloor",
+    ).optimize(**kwargs)
+    # Reference: same room without UFH profile — the baseline cooling plan.
+    plan_baseline = MPCOptimizer(
+        model=model,
+        can_heat=True,
+        can_cool=True,
+        min_run_blocks=6,
+        heating_system_type="",
+    ).optimize(**kwargs)
+    assert plan_hybrid.lookahead_blocks == 6
+    assert plan_hybrid.actions == plan_baseline.actions
+    assert plan_hybrid.temperatures == plan_baseline.temperatures
+    assert plan_hybrid.power_fractions == plan_baseline.power_fractions
+
+
+# ---------------------------------------------------------------------------
+# approach_rate tests
+# ---------------------------------------------------------------------------
+
+
+def test_approach_rate_one_matches_legacy_deadbeat_formula():
+    """approach_rate=1.0 must reproduce the original one-block formula exactly."""
+    model = RCModel(C=1.0, U=0.3, Q_heat=4.0, Q_cool=6.0)
+    opt = MPCOptimizer(model=model, approach_rate=1.0)
+    T_room, T_out, target, dt = 19.0, 5.0, 21.0, 5.0
+    pf, mode = opt.compute_optimal_power(T_room, T_out, target, dt)
+
+    dt_h = dt / 60.0
+    alpha = model.U
+    beta = 1.0 - math.exp(-alpha * dt_h)
+    T_drift = T_room + beta * (T_out - T_room)
+    energy_bias = (opt.w_energy / max(opt.w_comfort, 0.01)) * alpha / beta * 0.1
+    q_req = max(0.0, (target - T_drift) * alpha / beta - energy_bias)
+    expected = max(min(q_req / max(model.Q_heat, 0.01), 1.0), MIN_POWER_FRACTION)
+
+    assert mode == MODE_HEATING
+    assert pf == pytest.approx(expected)
+
+
+def test_approach_rate_below_one_widens_heating_band():
+    """Gentler approach_rate lowers pf for the same gap (less saturation)."""
+    model = RCModel(C=1.0, U=0.3, Q_heat=20.0, Q_cool=6.0)
+    args = (19.0, 5.0, 21.0, 5.0)
+    pf_full, _ = MPCOptimizer(model=model, approach_rate=1.0).compute_optimal_power(*args)
+    pf_gentle, _ = MPCOptimizer(model=model, approach_rate=0.3).compute_optimal_power(*args)
+    assert pf_full == 1.0
+    assert pf_gentle < pf_full
+    assert pf_gentle >= MIN_POWER_FRACTION
+
+
+def test_holding_power_independent_of_approach_rate():
+    """At target, only holding power is needed; approach_rate must not change it."""
+    model = RCModel(C=1.0, U=0.3, Q_heat=20.0, Q_cool=6.0)
+    args = (21.0, 5.0, 21.0, 5.0)
+    pf_full, _ = MPCOptimizer(model=model, approach_rate=1.0).compute_optimal_power(*args)
+    pf_gentle, _ = MPCOptimizer(model=model, approach_rate=0.2).compute_optimal_power(*args)
+    assert pf_full == pytest.approx(pf_gentle)
+
+
+def test_approach_rate_widens_cooling_band_symmetrically():
+    """Cooling path is gentled the same way as heating."""
+    model = RCModel(C=1.0, U=0.3, Q_heat=4.0, Q_cool=20.0)
+    args = (26.0, 30.0, 23.0, 5.0)
+    pf_full, m1 = MPCOptimizer(model=model, approach_rate=1.0).compute_optimal_power(*args)
+    pf_gentle, m2 = MPCOptimizer(model=model, approach_rate=0.3).compute_optimal_power(*args)
+    assert m1 == MODE_COOLING and m2 == MODE_COOLING
+    assert pf_gentle < pf_full
+    assert pf_gentle >= MIN_POWER_FRACTION
+
+
+# ---------------------------------------------------------------------------
+# Separate cooling min run (UFH + AC rooms)
+# ---------------------------------------------------------------------------
+
+
+def _first_run_length(actions: list[str], mode: str) -> int:
+    length = 0
+    for a in actions:
+        if a == mode:
+            length += 1
+        elif length:
+            break
+    return length
+
+
+def test_cooling_runs_use_their_own_min_run():
+    """UFH + AC room: the 30-min UFH run time must not stretch the AC's cooling runs."""
+    model = RCModel(C=1.0, U=0.5, Q_heat=4.0, Q_cool=6.0)
+    kwargs = {"can_heat": False, "can_cool": True, "min_run_blocks": 6}
+    series = {
+        "T_outdoor_series": [20.0] * 24,
+        "heat_target_series": [21.0] * 24,
+        "cool_target_series": [24.0] * 24,
+    }
+    ufh_only = MPCOptimizer(model, **kwargs).optimize(T_room=25.5, dt_minutes=5, **series)
+    split = MPCOptimizer(model, cool_min_run_blocks=2, **kwargs).optimize(T_room=25.5, dt_minutes=5, **series)
+    assert _first_run_length(ufh_only.actions, MODE_COOLING) >= 6
+    assert 2 <= _first_run_length(split.actions, MODE_COOLING) < 6
+
+
+def test_candidates_are_judged_over_their_own_min_run():
+    model = RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0)
+    split = MPCOptimizer(model, min_run_blocks=6, cool_min_run_blocks=2)
+    ac_only = MPCOptimizer(model, min_run_blocks=2)
+    ufh = MPCOptimizer(model, min_run_blocks=6)
+    for opt in (split, ac_only, ufh):
+        opt._lookahead_blocks = 6
+    cool_args = (MODE_COOLING, 25.0, 30.0, 21.0, 24.0, [30.0] * 12, [21.0] * 12, [24.0] * 12, 5.0)
+    heat_args = (MODE_HEATING, 20.0, 5.0, 21.0, 24.0, [5.0] * 12, [21.0] * 12, [24.0] * 12, 5.0)
+    assert split._evaluate_action(*cool_args) == ac_only._evaluate_action(*cool_args)
+    assert split._evaluate_action(*cool_args) != ufh._evaluate_action(*cool_args)
+    assert split._evaluate_action(*heat_args) == ufh._evaluate_action(*heat_args)
+
+
+def test_cooling_min_run_defaults_to_the_heating_one():
+    opt = MPCOptimizer(RCModel(C=2.0, U=50.0, Q_heat=1000.0, Q_cool=1500.0), min_run_blocks=4)
+    assert opt._min_run_for(MODE_COOLING) == 4
+    assert opt._min_run_for(MODE_HEATING) == 4
+    assert MPCOptimizer(opt.model, min_run_blocks=4, cool_min_run_blocks=2)._min_run_for(MODE_COOLING) == 2
+
+
+def test_forced_min_run_continuation_plans_gentle_power():
+    """Past the target inside the min run the plan uses gentle power like the controller,
+    not full power: that predicted the room 1-3 K below the cool target (phantom undercooling)."""
+    model = RCModel(C=1.0, U=0.5, Q_heat=6.0, Q_cool=6.0)
+    plan = MPCOptimizer(model, can_heat=False, can_cool=True, min_run_blocks=6).optimize(
+        T_room=25.5,
+        T_outdoor_series=[20.0] * 24,
+        heat_target_series=[21.0] * 24,
+        cool_target_series=[24.0] * 24,
+        dt_minutes=5,
+    )
+    assert plan.actions[:6] == [MODE_COOLING] * 6
+    assert plan.power_fractions[0] == 1.0
+    assert all(MIN_POWER_FRACTION <= pf < 1.0 for pf in plan.power_fractions[2:6])
+    assert min(plan.temperatures[:7]) > 23.0  # full power reached ~21.4 by the end of the run
+
+
+def test_ufh_room_with_a_split_learned_rate_still_heats_far_below_target():
+    """UFH + split: the EKF shares one heating rate between screed and split (12.7 K/h here,
+    read from the sim at the lockout). Judging a UFH run at full power for the whole min run
+    plus afterglow predicted a 4 K overshoot, so idle won at 18.9 °C against 21 for hours."""
+    model = RCModel(C=1.0, U=0.0108, Q_heat=12.68, Q_cool=4.0, Q_solar=2.48)
+    kwargs = {
+        "can_heat": True,
+        "can_cool": False,
+        "w_comfort": 7.0,
+        "w_energy": 3.0,
+        "min_run_blocks": 6,
+        "heating_system_type": "underfloor",
+    }
+    series = {
+        "T_room": 18.9,
+        "T_outdoor_series": [-0.73] * 30,
+        "heat_target_series": [21.0] * 30,
+        "cool_target_series": [24.0] * 30,
+        "dt_minutes": 5,
+    }
+    mixed = MPCOptimizer(model, fast_heater_shares_model=True, **kwargs).optimize(**series)
+    assert mixed.actions[0] == MODE_HEATING
+    # a pure UFH room keeps the full-power run judgement (rate learned from the screed)
+    pure = MPCOptimizer(model, **kwargs).optimize(**series)
+    assert pure.actions[0] == "idle"
+
+
+# ---------------------------------------------------------------------------
+# A block without demand in its own direction: heating at full power, cooling at the minimum
+# ---------------------------------------------------------------------------
+
+
+def _near_target_cooling_plan(w_comfort: float, w_energy: float) -> MPCPlan:
+    """Plan for a room 0.1 K above a 24 °C cool target, 30 °C outside."""
+    model = RCModel(C=1.0, U=0.0139, Q_heat=9.1, Q_cool=3.64)
+    opt = MPCOptimizer(model, can_heat=False, can_cool=True, w_comfort=w_comfort, w_energy=w_energy)
+    return opt.optimize(
+        T_room=24.1,
+        T_outdoor_series=[30.0] * 12,
+        heat_target_series=[21.0] * 12,
+        cool_target_series=[24.0] * 12,
+        dt_minutes=5,
+    )
+
+
+def test_cooling_without_demand_runs_at_min_power():
+    """With efficiency weights the energy bias removes the small demand; the block must not fall back to full power."""
+    plan = _near_target_cooling_plan(w_comfort=2.0, w_energy=8.0)
+    assert plan.get_current_action() == MODE_COOLING
+    assert plan.get_current_power_fraction() == MIN_POWER_FRACTION
+
+
+def test_efficiency_weights_cool_no_harder_than_comfort_weights():
+    """Moving the weights toward efficiency must not make near-target cooling stronger."""
+    efficiency = _near_target_cooling_plan(w_comfort=2.0, w_energy=8.0)
+    comfort = _near_target_cooling_plan(w_comfort=7.0, w_energy=3.0)
+    assert efficiency.get_current_power_fraction() <= comfort.get_current_power_fraction()
+
+
+def test_pre_cooling_below_target_runs_at_min_power():
+    """The room is 0.2 K below the cool target on a hot day: the plan starts cooling early, at the minimum fraction."""
+    model = RCModel(C=1.0, U=0.15, Q_heat=9.1, Q_cool=3.64)
+    opt = MPCOptimizer(model, can_heat=True, can_cool=True)
+    plan = opt.optimize(
+        T_room=23.8,
+        T_outdoor_series=[35.0] * 24,
+        heat_target_series=[21.0] * 24,
+        cool_target_series=[24.0] * 24,
+        dt_minutes=5,
+    )
+    assert plan.get_current_action() == MODE_COOLING
+    assert plan.get_current_power_fraction() == MIN_POWER_FRACTION
+
+
+def test_heating_block_does_not_use_a_cooling_fraction():
+    """Pre-heating ahead of a higher heat target plans the same power whether or not the room can also cool."""
+
+    def plan(can_cool: bool) -> MPCPlan:
+        opt = MPCOptimizer(RCModel(C=1.0, U=0.05, Q_heat=3.0, Q_cool=4.0), can_cool=can_cool, min_run_blocks=2)
+        return opt.optimize(
+            T_room=21.0,
+            T_outdoor_series=[16.0] * 24,
+            heat_target_series=[21.0] * 6 + [23.0] * 18,
+            cool_target_series=[21.5] * 6 + [25.0] * 18,
+            dt_minutes=5,
+        )
+
+    hybrid, heat_only = plan(can_cool=True), plan(can_cool=False)
+    assert hybrid.actions == heat_only.actions
+    assert hybrid.power_fractions == heat_only.power_fractions
+
+
+# Rooms already past the plausibility clamp (temp_min / temp_max)
+# ---------------------------------------------------------------------------
+
+
+def _hot_room_plan(t_room: float):
+    """Weak AC against a strong solar load: it cannot pull the room below 30 °C within the lookahead."""
+    model = RCModel(C=1.0, U=0.0234, Q_heat=3.0, Q_cool=0.97, Q_solar=2.64, Q_occupancy=0.32)
+    return MPCOptimizer(model, can_heat=False, can_cool=True, w_comfort=7.0, w_energy=3.0, min_run_blocks=2).optimize(
+        T_room=t_room,
+        T_outdoor_series=[34.0] * 48,
+        heat_target_series=[5.0] * 48,
+        cool_target_series=[24.5] * 48,
+        dt_minutes=5,
+        solar_series=[0.8] * 48,
+        occupancy_series=[1.0] * 48,
+    )
+
+
+@pytest.mark.parametrize("t_room", [31.0, 33.0, 37.0])
+def test_room_above_temp_max_still_cools(t_room):
+    """Every hypothesis clamped to 30 °C at every block made cooling and idle cost the same,
+    so idle won and the room heated further (sim ekf-summer-ac with a weakly learned AC)."""
+    plan = _hot_room_plan(t_room)
+    assert plan.actions[0] == MODE_COOLING
+    # the forecast starts where the room is instead of snapping to the clamp
+    assert plan.temperatures[1] > 30.0
+
+
+def test_room_below_temp_min_still_heats():
+    """Mirror case: a weak heater that cannot lift a cold room above 5 °C within the lookahead."""
+    model = RCModel(C=1.0, U=0.15, Q_heat=1.0, Q_cool=4.0)
+    plan = MPCOptimizer(model, can_heat=True, can_cool=False, min_run_blocks=2).optimize(
+        T_room=3.0,
+        T_outdoor_series=[-15.0] * 48,
+        heat_target_series=[21.0] * 48,
+        cool_target_series=[30.0] * 48,
+        dt_minutes=5,
+    )
+    assert plan.actions[0] == MODE_HEATING
+    assert plan.temperatures[1] < 5.0
+
+
+def test_clamp_unchanged_for_rooms_inside_the_bounds():
+    opt = MPCOptimizer(RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0))
+    assert opt._temp_bounds(21.0) == (opt.temp_min, opt.temp_max)

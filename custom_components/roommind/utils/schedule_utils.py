@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
+from homeassistant.util import dt as dt_util
+
 from ..const import (
+    CLIMATE_MODE_COOL_ONLY,
+    CLIMATE_MODE_HEAT_ONLY,
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
+    MAX_TARGET_TEMP,
+    MIN_TARGET_TEMP,
+    OVERRIDE_ECO,
     TargetTemps,
 )
 
@@ -27,7 +34,7 @@ def find_active_block(schedule_blocks: dict, ts: float) -> dict[str, Any] | None
     Returns the block's ``data`` dict, or None if no block matches.
     Caller must check ``schedule_blocks is None`` before calling.
     """
-    dt = datetime.fromtimestamp(ts)
+    dt = dt_util.as_local(datetime.fromtimestamp(ts, tz=UTC))
     day_name = dt.strftime("%A").lower()
     current_time = dt.time()
     day_blocks = schedule_blocks.get(day_name, [])
@@ -39,6 +46,118 @@ def find_active_block(schedule_blocks: dict, ts: float) -> dict[str, Any] | None
         if from_time <= current_time < to_time:
             return dict(block.get("data", {}))
     return None
+
+
+def sanitize_block_temp(
+    raw: Any,
+    converter: Callable[[float], float] | None = None,
+) -> float | None:
+    """Convert a schedule block temperature to °C, or None if unusable.
+
+    Schedule blocks are free-form YAML, so a typo (110 instead of 11) reaches us
+    unchecked and would be heated against for hours (#395). Values outside
+    ``MIN_TARGET_TEMP``..``MAX_TARGET_TEMP`` are rejected so the caller can fall
+    back to comfort/eco.
+
+    The range check runs *after* ``converter``, so the bounds always apply to
+    Celsius regardless of the HA display unit (on a °F system the accepted
+    window is 41–95 °F).
+    """
+    try:
+        val = float(raw)
+    except (ValueError, TypeError):
+        return None
+    if converter is not None:
+        val = converter(val)
+    # Negated comparison also rejects NaN, which would pass `MIN <= v <= MAX`.
+    if not MIN_TARGET_TEMP <= val <= MAX_TARGET_TEMP:
+        return None
+    return val
+
+
+# Weekday order used when reporting rejected blocks, so the panel lists them
+# in calendar order rather than dict insertion order.
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+# Block data keys that carry a target temperature.
+_BLOCK_TEMP_FIELDS = ("temperature", "heat_temperature", "cool_temperature")
+
+
+def find_rejected_block_temps(
+    schedule_blocks: dict | None,
+    converter: Callable[[float], float] | None = None,
+) -> list[dict[str, Any]]:
+    """Scan *every* block of a schedule for temperatures the resolver would drop.
+
+    ``sanitize_block_temp`` only sees the block that is running right now, so a
+    typo in a block scheduled for 03:00 stays invisible until it fires (#395).
+    This walks the whole week so the panel can surface it at any time of day.
+
+    Returns one entry per rejected value, each with ``day``, ``from``, ``field``
+    and the offending ``value`` as a string (it may not be numeric at all).
+    Only values that are present but unusable are reported — an absent field is
+    not a problem, it simply falls back to comfort.
+    """
+    if not schedule_blocks:
+        return []
+
+    rejected: list[dict[str, Any]] = []
+    for day in _WEEKDAYS:
+        for block in schedule_blocks.get(day, []) or []:
+            data = block.get("data") or {}
+            for field in _BLOCK_TEMP_FIELDS:
+                raw = data.get(field)
+                if raw is None or sanitize_block_temp(raw, converter) is not None:
+                    continue
+                rejected.append(
+                    {
+                        "day": day,
+                        "from": str(block.get("from", "")),
+                        "field": field,
+                        "value": str(raw),
+                    }
+                )
+    return rejected
+
+
+def override_preset_band(room: dict, override_type: str) -> tuple[float, float]:
+    """Return the (heat, cool) band a boost/eco override stands for.
+
+    Both presets are bands in auto rooms, never a single point: collapsing eco
+    to ``eco_heat`` on both sides makes an AC cool toward the heating target (#284).
+    """
+    if override_type == OVERRIDE_ECO:
+        return (
+            room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT)),
+            room.get("eco_cool", DEFAULT_ECO_COOL),
+        )
+    return (
+        room.get("comfort_heat", room.get("comfort_temp", DEFAULT_COMFORT_HEAT)),
+        room.get("comfort_cool", DEFAULT_COMFORT_COOL),
+    )
+
+
+def mask_override_band(heat: float | None, cool: float | None, climate_mode: str) -> tuple[float | None, float | None]:
+    """Drop the side a heat_only/cool_only room cannot act on."""
+    if climate_mode == CLIMATE_MODE_HEAT_ONLY:
+        return heat, None
+    if climate_mode == CLIMATE_MODE_COOL_ONLY:
+        return None, cool
+    return heat, cool
+
+
+def cap_cool_only_heat(heat: float | None, cool: float | None, climate_mode: str) -> tuple[float | None, float | None]:
+    """Keep the unused heat side of a cool_only room from rising above the cool target.
+
+    A cool_only room configured with the legacy ``comfort_temp`` (API, old configs)
+    carried that value on the heat side next to the default ``comfort_cool``, e.g.
+    heat 24.5 / cool 24.0. The optimizer lifts the cool target to the heat side and
+    the cover target takes the higher one, while guard, hysteresis and the panel use
+    the cool target. The cool target is what the panel shows for cool_only rooms.
+    """
+    if climate_mode == CLIMATE_MODE_COOL_ONLY and heat is not None and cool is not None and heat > cool:
+        return cool, cool
+    return heat, cool
 
 
 def resolve_target_at_time(
@@ -77,11 +196,9 @@ def resolve_target_at_time(
     if data is not None:
         block_temp = data.get("temperature")
         if block_temp is not None:
-            try:
-                val = float(block_temp)
-                return block_temp_converter(val) if block_temp_converter else val
-            except (ValueError, TypeError):
-                pass
+            val = sanitize_block_temp(block_temp, block_temp_converter)
+            if val is not None:
+                return val
         return comfort_temp
     # Not in any block → eco or off
     if schedule_off_action == "off":
@@ -93,7 +210,8 @@ def resolve_targets_at_time(
     ts: float,
     schedule_blocks: dict | None,
     override_until: float | None,
-    override_temp: float | None,
+    override_heat: float | None,
+    override_cool: float | None,
     vacation_until: float | None,
     vacation_temp: float | None,
     comfort_heat: float,
@@ -104,15 +222,18 @@ def resolve_targets_at_time(
     block_temp_converter: Callable[[float], float] | None = None,
     presence_away_action: str = "eco",
     schedule_off_action: str = "eco",
+    presence_clears_override: bool = False,
+    room_vacant: bool = False,
 ) -> TargetTemps:
     """Resolve dual heat/cool target temps at a specific timestamp.
 
     Returns TargetTemps(heat, cool). None values mean "force off".
+    ``room_vacant`` caps the schedule result at eco (occupancy eco, #180).
     """
-    # 1. Override — single-point target
-    if override_temp is not None and (override_until is None or ts < override_until):
-        t = float(override_temp)
-        return TargetTemps(heat=t, cool=t)
+    # 1. Override — split heat/cool dead-band (skipped when presence-away suppresses it)
+    if (override_heat is not None or override_cool is not None) and (override_until is None or ts < override_until):
+        if not (presence_away and presence_clears_override):
+            return TargetTemps(heat=override_heat, cool=override_cool)
     # 2. Vacation — heat setback, cooling stays at eco_cool
     if vacation_until is not None and ts < vacation_until and vacation_temp is not None:
         t = float(vacation_temp)
@@ -123,6 +244,30 @@ def resolve_targets_at_time(
             return TargetTemps(heat=None, cool=None)
         return TargetTemps(heat=eco_heat, cool=eco_cool)
     # 3. Schedule blocks
+    targets = _schedule_targets_at_time(
+        ts, schedule_blocks, comfort_heat, comfort_cool, eco_heat, eco_cool, block_temp_converter, schedule_off_action
+    )
+    return cap_to_eco(targets, eco_heat, eco_cool) if room_vacant else targets
+
+
+def cap_to_eco(targets: TargetTemps, eco_heat: float, eco_cool: float) -> TargetTemps:
+    """Lower the demand of *targets* to at most eco; never raise it, "off" sides stay off."""
+    return TargetTemps(
+        heat=min(targets.heat, eco_heat) if targets.heat is not None else None,
+        cool=max(targets.cool, eco_cool) if targets.cool is not None else None,
+    )
+
+
+def _schedule_targets_at_time(
+    ts: float,
+    schedule_blocks: dict | None,
+    comfort_heat: float,
+    comfort_cool: float,
+    eco_heat: float,
+    eco_cool: float,
+    block_temp_converter: Callable[[float], float] | None,
+    schedule_off_action: str,
+) -> TargetTemps:
     if schedule_blocks is None:
         return TargetTemps(heat=comfort_heat, cool=comfort_cool)
     data = find_active_block(schedule_blocks, ts)
@@ -133,26 +278,20 @@ def resolve_targets_at_time(
             h = comfort_heat
             c = comfort_cool
             if heat_temp_raw is not None:
-                try:
-                    val = float(heat_temp_raw)
-                    h = block_temp_converter(val) if block_temp_converter else val
-                except (ValueError, TypeError):
-                    pass
+                val = sanitize_block_temp(heat_temp_raw, block_temp_converter)
+                if val is not None:
+                    h = val
             if cool_temp_raw is not None:
-                try:
-                    val = float(cool_temp_raw)
-                    c = block_temp_converter(val) if block_temp_converter else val
-                except (ValueError, TypeError):
-                    pass
+                val = sanitize_block_temp(cool_temp_raw, block_temp_converter)
+                if val is not None:
+                    c = val
             return TargetTemps(heat=h, cool=c)
         block_temp = data.get("temperature")
         if block_temp is not None:
-            try:
-                val = float(block_temp)
-                t = block_temp_converter(val) if block_temp_converter else val
-                return TargetTemps(heat=t, cool=t)
-            except (ValueError, TypeError):
-                pass
+            # Distinct name from the vacation branch's `t`, which is a plain float.
+            single = sanitize_block_temp(block_temp, block_temp_converter)
+            if single is not None:
+                return TargetTemps(heat=single, cool=single)
         return TargetTemps(heat=comfort_heat, cool=comfort_cool)
     # Not in any block → eco or off
     if schedule_off_action == "off":
@@ -215,13 +354,35 @@ def get_active_schedule_entity(
     return None
 
 
+def next_schedule_change(hass: HomeAssistant, room: dict) -> float | None:
+    """Return the timestamp of the active schedule's next block boundary, or None without one."""
+    entity_id = get_active_schedule_entity(hass, room)
+    state = hass.states.get(entity_id) if entity_id else None
+    raw = state.attributes.get("next_event") if state else None
+    if isinstance(raw, str):
+        raw = dt_util.parse_datetime(raw)
+    if not isinstance(raw, datetime):
+        return None
+    return raw.timestamp()
+
+
 async def read_schedule_blocks(
     hass: HomeAssistant,
     schedule_entity_id: str,
+    cache: dict[str, dict] | None = None,
 ) -> dict | None:
-    """Read weekly schedule blocks via schedule.get_schedule service."""
+    """Read weekly schedule blocks via schedule.get_schedule service.
+
+    When ``cache`` is provided, successful reads are stored under the entity ID
+    so subsequent failures fall back to the last good blocks. Without a cache,
+    transient service failures cause the caller's target resolution to silently
+    revert to comfort_temp (see #308).
+    """
     if not schedule_entity_id or not schedule_entity_id.startswith("schedule."):
         return None
+
+    blocks: dict | None = None
+    error: Exception | None = None
     try:
         response = await hass.services.async_call(
             "schedule",
@@ -230,11 +391,33 @@ async def read_schedule_blocks(
             blocking=True,
             return_response=True,
         )
-        if response:
-            result = response.get(schedule_entity_id, {})
-            return dict(result) if isinstance(result, dict) else None
-    except Exception:  # noqa: BLE001
-        _LOGGER.debug("schedule.get_schedule failed for %s", schedule_entity_id)
+        if response and schedule_entity_id in response:
+            result = response[schedule_entity_id]
+            if isinstance(result, dict):
+                blocks = dict(result)
+    except Exception as err:  # noqa: BLE001
+        error = err
+
+    if blocks is not None:
+        if cache is not None:
+            cache[schedule_entity_id] = blocks
+        return blocks
+
+    cached = cache.get(schedule_entity_id) if cache is not None else None
+    if cached is not None:
+        _LOGGER.debug(
+            "schedule.get_schedule unavailable for %s; using cached blocks (error=%r)",
+            schedule_entity_id,
+            error,
+        )
+        return cached
+
+    _LOGGER.warning(
+        "schedule.get_schedule unavailable for %s and no cached blocks; "
+        "target will fall back to comfort/eco (error=%r)",
+        schedule_entity_id,
+        error,
+    )
     return None
 
 
@@ -245,6 +428,7 @@ def make_target_resolver(
     hass: HomeAssistant | None = None,
     presence_away: bool = False,
     mold_prevention_delta: float = 0.0,
+    room_vacant: bool = False,
 ) -> Callable[[float], TargetTemps]:
     """Create a sync target resolver function (schedule blocks pre-fetched).
 
@@ -256,11 +440,14 @@ def make_target_resolver(
     eco_heat = room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT))
     eco_cool = room.get("eco_cool", DEFAULT_ECO_COOL)
     override_until = room.get("override_until")
-    override_temp = room.get("override_temp")
+    override_heat = room.get("override_heat")
+    override_cool = room.get("override_cool")
     vacation_until = settings.get("vacation_until")
     vacation_temp = settings.get("vacation_temp")
     presence_away_action = settings.get("presence_away_action", "eco")
     schedule_off_action = settings.get("schedule_off_action", "eco")
+    presence_clears_override = bool(settings.get("presence_clears_override", False))
+    climate_mode = room.get("climate_mode", "auto")
 
     converter: Callable[[float], float] | None = None
     if hass is not None:
@@ -274,7 +461,8 @@ def make_target_resolver(
             ts,
             schedule_blocks,
             override_until,
-            override_temp,
+            override_heat,
+            override_cool,
             vacation_until,
             vacation_temp,
             comfort_heat,
@@ -285,12 +473,17 @@ def make_target_resolver(
             block_temp_converter=converter,
             presence_away_action=presence_away_action,
             schedule_off_action=schedule_off_action,
+            presence_clears_override=presence_clears_override,
+            room_vacant=room_vacant,
         )
         if targets.heat is None and targets.cool is None:
             return targets
         return TargetTemps(
-            heat=targets.heat + mold_prevention_delta if targets.heat is not None else None,
-            cool=targets.cool if targets.cool is not None else None,
+            *cap_cool_only_heat(
+                targets.heat + mold_prevention_delta if targets.heat is not None else None,
+                targets.cool,
+                climate_mode,
+            )
         )
 
     return resolver

@@ -5,18 +5,25 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from custom_components.roommind.utils.device_utils import (
+    COIL_DRY_FAN_MODE_KEEP,
+    DEFAULT_COIL_DRY_FAN_MODE,
+    DEFAULT_COIL_DRY_MINUTES,
     SETPOINT_MODE_PROPORTIONAL,
     VALID_DEVICE_TYPES,
     VALID_HEATING_SYSTEM_TYPES,
+    build_rooms_devices_map,
     devices_to_legacy,
     ensure_room_has_devices,
     get_ac_eids,
     get_all_entity_ids,
+    get_coil_dry_config,
     get_device_by_eid,
     get_direct_setpoint_eids,
     get_entity_ids_by_type,
     get_idle_action,
     get_room_heating_system_type,
+    get_setpoint_offset,
+    get_setpoint_offsets,
     get_trv_eids,
     has_reliable_hvac_modes,
     is_ac_type,
@@ -64,6 +71,10 @@ def test_legacy_to_devices_basic():
         "idle_action": "off",
         "idle_fan_mode": "low",
         "setpoint_mode": "proportional",
+        "coil_dry": "inherit",
+        "coil_dry_minutes": 0,
+        "coil_dry_mode": "",
+        "coil_dry_fan_mode": "",
     }
     assert devices[2]["type"] == "ac"
     assert devices[2]["heating_system_type"] == ""
@@ -405,6 +416,39 @@ def test_get_idle_action_configured():
     assert fan_mode == "auto"
 
 
+def test_build_rooms_devices_map_basic():
+    """Maps every entity_id to its room's devices list across all rooms."""
+    rooms = {
+        "living_room": {
+            "devices": [
+                {"entity_id": "climate.trv1", "type": "trv"},
+                {"entity_id": "climate.ac1", "type": "ac"},
+            ],
+        },
+        "bedroom": {
+            "devices": [
+                {"entity_id": "climate.trv2", "type": "trv"},
+            ],
+        },
+    }
+    mapping = build_rooms_devices_map(rooms)
+    assert set(mapping) == {"climate.trv1", "climate.ac1", "climate.trv2"}
+    # Entities from the same room share the same devices list reference
+    assert mapping["climate.trv1"] is mapping["climate.ac1"]
+    assert mapping["climate.trv2"] is not mapping["climate.trv1"]
+
+
+def test_build_rooms_devices_map_empty_and_missing_fields():
+    """Handles empty rooms, missing devices key, and devices without entity_id."""
+    rooms = {
+        "empty": {},
+        "no_devices": {"devices": []},
+        "bad_entry": {"devices": [{"type": "trv"}, {"entity_id": "climate.ok", "type": "trv"}]},
+    }
+    mapping = build_rooms_devices_map(rooms)
+    assert mapping == {"climate.ok": rooms["bad_entry"]["devices"]}
+
+
 # ---------------------------------------------------------------------------
 # has_reliable_hvac_modes
 # ---------------------------------------------------------------------------
@@ -622,3 +666,190 @@ class TestRoomContributesToGroup:
     def test_unknown_active_sources_value(self):
         # Fail-safe: unknown orchestration state -> master stays idle.
         assert room_contributes_to_group([self.TRV], {"climate.trv1"}, "invalid") is False
+
+
+def _ac(**overrides):
+    """AC device dict with coil dry defaults."""
+    dev = {"entity_id": "climate.ac", "type": "ac", "role": "auto"}
+    dev.update(overrides)
+    return [dev]
+
+
+def test_coil_dry_config_disabled_by_default():
+    """Master switch off and device on inherit -> disabled."""
+    cfg = get_coil_dry_config(_ac(), "climate.ac", {})
+    assert cfg.enabled is False
+    assert cfg.minutes == DEFAULT_COIL_DRY_MINUTES
+    assert cfg.mode == "fan_only"
+    assert cfg.fan_mode == DEFAULT_COIL_DRY_FAN_MODE
+    assert cfg.min_cooling_minutes == 10
+    assert cfg.drain_minutes == 0
+
+
+def test_coil_dry_config_inherits_global_enable():
+    cfg = get_coil_dry_config(_ac(), "climate.ac", {"coil_dry_enabled": True})
+    assert cfg.enabled is True
+
+
+def test_coil_dry_config_device_on_overrides_disabled_global():
+    """Per-device 'on' wins over a disabled master switch."""
+    cfg = get_coil_dry_config(_ac(coil_dry="on"), "climate.ac", {"coil_dry_enabled": False})
+    assert cfg.enabled is True
+
+
+def test_coil_dry_config_device_off_overrides_enabled_global():
+    cfg = get_coil_dry_config(_ac(coil_dry="off"), "climate.ac", {"coil_dry_enabled": True})
+    assert cfg.enabled is False
+
+
+def test_coil_dry_config_device_minutes_zero_inherits():
+    """0 means inherit, not 'zero minutes'."""
+    cfg = get_coil_dry_config(_ac(coil_dry_minutes=0), "climate.ac", {"coil_dry_minutes": 30})
+    assert cfg.minutes == 30
+
+
+def test_coil_dry_config_device_minutes_override():
+    cfg = get_coil_dry_config(_ac(coil_dry_minutes=5), "climate.ac", {"coil_dry_minutes": 30})
+    assert cfg.minutes == 5
+
+
+def test_coil_dry_config_device_mode_empty_inherits():
+    cfg = get_coil_dry_config(_ac(coil_dry_mode=""), "climate.ac", {"coil_dry_mode": "dry"})
+    assert cfg.mode == "dry"
+
+
+def test_coil_dry_config_device_mode_override():
+    cfg = get_coil_dry_config(_ac(coil_dry_mode="fan_only"), "climate.ac", {"coil_dry_mode": "dry"})
+    assert cfg.mode == "fan_only"
+
+
+def test_coil_dry_config_fan_mode_device_override():
+    """Explicit per-device fan mode wins over the global setting."""
+    cfg = get_coil_dry_config(_ac(coil_dry_fan_mode="high"), "climate.ac", {"coil_dry_fan_mode": "low"})
+    assert cfg.fan_mode == "high"
+
+
+def test_coil_dry_config_fan_mode_keep_sentinel():
+    """__keep__ resolves to "" = send no set_fan_mode at all."""
+    cfg = get_coil_dry_config(
+        _ac(coil_dry_fan_mode=COIL_DRY_FAN_MODE_KEEP), "climate.ac", {"coil_dry_fan_mode": "high"}
+    )
+    assert cfg.fan_mode == ""
+
+
+def test_coil_dry_config_fan_mode_empty_inherits_global():
+    cfg = get_coil_dry_config(_ac(coil_dry_fan_mode=""), "climate.ac", {"coil_dry_fan_mode": "high"})
+    assert cfg.fan_mode == "high"
+
+
+def test_coil_dry_config_global_fan_mode_empty_means_keep():
+    cfg = get_coil_dry_config(_ac(), "climate.ac", {"coil_dry_fan_mode": ""})
+    assert cfg.fan_mode == ""
+
+
+def test_coil_dry_config_unknown_entity_falls_back_to_global():
+    """No matching device -> global settings only, never a crash."""
+    cfg = get_coil_dry_config(_ac(), "climate.other", {"coil_dry_enabled": True})
+    assert cfg.enabled is True
+
+
+def test_legacy_to_devices_sets_coil_dry_defaults():
+    from custom_components.roommind.utils.device_utils import legacy_to_devices
+
+    devices = legacy_to_devices([], ["climate.ac"])
+    assert devices[0]["coil_dry"] == "inherit"
+    assert devices[0]["coil_dry_minutes"] == 0
+    assert devices[0]["coil_dry_mode"] == ""
+    assert devices[0]["coil_dry_fan_mode"] == ""
+
+
+# ---------------------------------------------------------------------------
+# get_setpoint_offset / get_setpoint_offsets (#369)
+# ---------------------------------------------------------------------------
+
+
+class TestGetSetpointOffsets:
+    def test_direct_device_with_offset(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "setpoint_mode": "direct", "setpoint_offset": 1.5}]
+        assert get_setpoint_offset(devices, "climate.ac") == 1.5
+        assert get_setpoint_offsets(devices) == {"climate.ac": 1.5}
+
+    def test_negative_offset(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "setpoint_mode": "direct", "setpoint_offset": -2.0}]
+        assert get_setpoint_offset(devices, "climate.ac") == -2.0
+
+    def test_missing_field_is_zero(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "setpoint_mode": "direct"}]
+        assert get_setpoint_offset(devices, "climate.ac") == 0.0
+        assert get_setpoint_offsets(devices) == {}
+
+    def test_proportional_device_ignores_offset(self):
+        devices = [{"entity_id": "climate.ac", "type": "ac", "setpoint_mode": "proportional", "setpoint_offset": 2.0}]
+        assert get_setpoint_offset(devices, "climate.ac") == 0.0
+        assert get_setpoint_offsets(devices) == {}
+
+    def test_unknown_device_is_zero(self):
+        assert get_setpoint_offset([], "climate.ghost") == 0.0
+
+    def test_invalid_values_are_zero(self):
+        for bad in ("abc", None, float("nan")):
+            devices = [{"entity_id": "climate.ac", "setpoint_mode": "direct", "setpoint_offset": bad}]
+            assert get_setpoint_offset(devices, "climate.ac") == 0.0
+
+    def test_out_of_range_is_clamped(self):
+        devices = [
+            {"entity_id": "climate.a", "setpoint_mode": "direct", "setpoint_offset": 99},
+            {"entity_id": "climate.b", "setpoint_mode": "direct", "setpoint_offset": -99},
+        ]
+        assert get_setpoint_offsets(devices) == {"climate.a": 5.0, "climate.b": -5.0}
+
+    def test_device_without_entity_id_skipped(self):
+        devices = [{"setpoint_mode": "direct", "setpoint_offset": 1.0}]
+        assert get_setpoint_offsets(devices) == {}
+
+
+def test_valve_trvs_ignore_the_direct_setpoint_mode():
+    """A TRV with direct valve control always gets the boost (#413)."""
+    from custom_components.roommind.utils.device_utils import (
+        configured_valves,
+        get_direct_setpoint_eids,
+        get_setpoint_offset,
+        get_valve_entities,
+    )
+
+    devices = [
+        {
+            "entity_id": "climate.v",
+            "type": "trv",
+            "setpoint_mode": "direct",
+            "setpoint_offset": 1.0,
+            "valve_opening_entity": "number.v_open",
+            "valve_closing_entity": "number.v_close",
+        },
+        {"entity_id": "climate.d", "type": "trv", "setpoint_mode": "direct", "setpoint_offset": 1.0},
+        {"entity_id": "climate.ac", "type": "ac", "valve_opening_entity": "number.ignored"},
+        {"entity_id": "climate.c", "type": "trv", "valve_closing_entity": "number.c_close"},
+    ]
+    assert get_direct_setpoint_eids(devices) == {"climate.d"}
+    assert get_setpoint_offset(devices, "climate.v") == 0.0
+    assert get_setpoint_offset(devices, "climate.d") == 1.0
+    assert get_valve_entities(devices) == {"climate.v": ("number.v_open", "number.v_close", False)}
+    assert configured_valves({"a": {"devices": devices}, "b": {}}) == get_valve_entities(devices)
+
+
+def test_valve_closing_mode_idle_opening():
+    """SONOFF TRV-ZBT: the second entity is the opening while idle, only when the user says so (#482)."""
+    from custom_components.roommind.utils.device_utils import get_valve_entities
+
+    def device(**extra):
+        return {
+            "entity_id": "climate.v",
+            "type": "trv",
+            "valve_opening_entity": "number.v_heating",
+            "valve_closing_entity": "number.v_idle",
+            **extra,
+        }
+
+    assert get_valve_entities([device()])["climate.v"].idle_opening is False
+    assert get_valve_entities([device(valve_closing_mode="closing_degree")])["climate.v"].idle_opening is False
+    assert get_valve_entities([device(valve_closing_mode="idle_opening")])["climate.v"].idle_opening is True

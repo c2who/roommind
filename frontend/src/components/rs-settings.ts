@@ -23,6 +23,7 @@ import "./settings/rs-settings-presence";
 import "./settings/rs-settings-vacation";
 import "./settings/rs-settings-valve";
 import "./settings/rs-settings-compressor";
+import "./settings/rs-settings-coil-dry";
 import "./settings/rs-settings-mold";
 import "./settings/rs-settings-notifications";
 import "./settings/rs-settings-learning";
@@ -43,6 +44,7 @@ export class RsSettings extends LitElement {
   @state() private _controlMode: "mpc" | "bangbang" = "mpc";
   @state() private _comfortWeight = 70;
   @state() private _weatherEntity = "";
+  @state() private _outdoorUnavailableNotify = true;
   @state() private _predictionEnabled = true;
   @state() private _vacationActive = false;
   @state() private _vacationTemp = 15;
@@ -50,11 +52,13 @@ export class RsSettings extends LitElement {
   @state() private _presenceEnabled = false;
   @state() private _presencePersons: string[] = [];
   @state() private _presenceAwayAction: "eco" | "off" = "eco";
+  @state() private _presenceClearsOverride = false;
   @state() private _scheduleOffAction: "eco" | "off" = "eco";
   @state() private _valveProtectionEnabled = false;
   @state() private _valveProtectionInterval = 7;
   @state() private _moldDetectionEnabled = false;
   @state() private _moldHumidityThreshold = 70;
+  @state() private _moldFRsi = 0.8;
   @state() private _moldSustainedMinutes = 30;
   @state() private _moldNotificationCooldown = 60;
   @state() private _moldNotificationsEnabled = true;
@@ -64,6 +68,12 @@ export class RsSettings extends LitElement {
   @state() private _moldPreventionNotify = false;
   @state() private _moldPreventionNotifyTargets: NotificationTarget[] = [];
   @state() private _compressorGroups: CompressorGroup[] = [];
+  @state() private _coilDryEnabled = false;
+  @state() private _coilDryMinutes = 20;
+  @state() private _coilDryMode: "fan_only" | "dry" = "fan_only";
+  @state() private _coilDryFanMode = "low";
+  @state() private _coilDryMinCoolingMinutes = 10;
+  @state() private _coilDryDrainMinutes = 0;
   @state() private _boostAppliedAt: Record<string, number> = {};
   @state() private _loaded = false;
 
@@ -95,6 +105,7 @@ export class RsSettings extends LitElement {
       this._controlMode = s.control_mode ?? "mpc";
       this._comfortWeight = s.comfort_weight ?? 70;
       this._weatherEntity = s.weather_entity ?? "";
+      this._outdoorUnavailableNotify = s.outdoor_unavailable_notify ?? true;
       this._predictionEnabled = s.prediction_enabled ?? true;
       const vUntil = s.vacation_until;
       this._vacationActive = !!(vUntil && vUntil > Date.now() / 1000);
@@ -107,11 +118,13 @@ export class RsSettings extends LitElement {
       this._presenceEnabled = s.presence_enabled ?? false;
       this._presencePersons = s.presence_persons ?? [];
       this._presenceAwayAction = s.presence_away_action ?? "eco";
+      this._presenceClearsOverride = s.presence_clears_override ?? false;
       this._scheduleOffAction = s.schedule_off_action ?? "eco";
       this._valveProtectionEnabled = s.valve_protection_enabled ?? false;
       this._valveProtectionInterval = s.valve_protection_interval_days ?? 7;
       this._moldDetectionEnabled = s.mold_detection_enabled ?? false;
       this._moldHumidityThreshold = s.mold_humidity_threshold ?? 70;
+      this._moldFRsi = s.mold_f_rsi ?? 0.8;
       this._moldSustainedMinutes = s.mold_sustained_minutes ?? 30;
       this._moldNotificationCooldown = s.mold_notification_cooldown ?? 60;
       this._moldNotificationsEnabled = s.mold_notifications_enabled ?? true;
@@ -121,6 +134,12 @@ export class RsSettings extends LitElement {
       this._moldPreventionNotify = s.mold_prevention_notify_enabled ?? false;
       this._moldPreventionNotifyTargets = s.mold_prevention_notify_targets ?? [];
       this._compressorGroups = s.compressor_groups ?? [];
+      this._coilDryEnabled = s.coil_dry_enabled ?? false;
+      this._coilDryMinutes = s.coil_dry_minutes ?? 20;
+      this._coilDryMode = s.coil_dry_mode ?? "fan_only";
+      this._coilDryFanMode = s.coil_dry_fan_mode ?? "low";
+      this._coilDryMinCoolingMinutes = s.coil_dry_min_cooling_minutes ?? 10;
+      this._coilDryDrainMinutes = s.coil_dry_drain_minutes ?? 0;
       this._boostAppliedAt = s.boost_applied_at ?? {};
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -161,6 +180,7 @@ export class RsSettings extends LitElement {
           .outdoorTempSensor=${this._outdoorTempSensor}
           .outdoorHumiditySensor=${this._outdoorHumiditySensor}
           .weatherEntity=${this._weatherEntity}
+          .outdoorUnavailableNotify=${this._outdoorUnavailableNotify}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-sensors>
       </rs-settings-panel>
@@ -192,6 +212,7 @@ export class RsSettings extends LitElement {
           .presenceEnabled=${this._presenceEnabled}
           .presencePersons=${this._presencePersons}
           .presenceAwayAction=${this._presenceAwayAction}
+          .presenceClearsOverride=${this._presenceClearsOverride}
           @setting-changed=${this._onSettingChanged}
         ></rs-settings-presence>
       </rs-settings-panel>
@@ -235,6 +256,20 @@ export class RsSettings extends LitElement {
         ></rs-settings-compressor>
       </rs-settings-panel>
 
+      <rs-settings-panel .heading=${localize("coil_dry.title", l)} icon="mdi:air-filter">
+        <rs-settings-coil-dry
+          .hass=${this.hass}
+          .coilDryEnabled=${this._coilDryEnabled}
+          .coilDryMinutes=${this._coilDryMinutes}
+          .coilDryMode=${this._coilDryMode}
+          .coilDryFanMode=${this._coilDryFanMode}
+          .coilDryMinCoolingMinutes=${this._coilDryMinCoolingMinutes}
+          .coilDryDrainMinutes=${this._coilDryDrainMinutes}
+          .availableFanModes=${this._availableAcFanModes()}
+          @setting-changed=${this._onSettingChanged}
+        ></rs-settings-coil-dry>
+      </rs-settings-panel>
+
       <rs-settings-panel
         icon="mdi:water-alert"
         .heading=${localize("mold.title", l)}
@@ -244,6 +279,7 @@ export class RsSettings extends LitElement {
           .hass=${this.hass}
           .moldDetectionEnabled=${this._moldDetectionEnabled}
           .moldHumidityThreshold=${this._moldHumidityThreshold}
+          .moldFRsi=${this._moldFRsi}
           .moldSustainedMinutes=${this._moldSustainedMinutes}
           .moldPreventionEnabled=${this._moldPreventionEnabled}
           .moldPreventionIntensity=${this._moldPreventionIntensity}
@@ -309,6 +345,24 @@ export class RsSettings extends LitElement {
     this._autoSave();
   }
 
+  /**
+   * Union of fan_modes across every configured AC entity.
+   *
+   * The global setting has no single device to read fan_modes from, so show
+   * the speeds the user's actual hardware reports instead of a guessed list.
+   */
+  private _availableAcFanModes(): string[] {
+    const modes = new Set<string>();
+    for (const room of Object.values(this.rooms ?? {})) {
+      for (const dev of room.devices ?? []) {
+        if (dev.type !== "ac") continue;
+        const st = this.hass?.states?.[dev.entity_id];
+        for (const fm of (st?.attributes?.fan_modes ?? []) as string[]) modes.add(fm);
+      }
+    }
+    return [...modes].sort();
+  }
+
   private _tsToDatetimeLocal(ts: number): string {
     const d = new Date(ts * 1000);
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -336,6 +390,7 @@ export class RsSettings extends LitElement {
         control_mode: this._controlMode,
         comfort_weight: this._comfortWeight,
         weather_entity: this._weatherEntity,
+        outdoor_unavailable_notify: this._outdoorUnavailableNotify,
         prediction_enabled: this._predictionEnabled,
         vacation_temp: this._vacationTemp,
         vacation_until: this._vacationActive
@@ -346,12 +401,20 @@ export class RsSettings extends LitElement {
         presence_enabled: this._presenceEnabled,
         presence_persons: this._presencePersons.filter((p) => p),
         presence_away_action: this._presenceAwayAction,
+        presence_clears_override: this._presenceClearsOverride,
         schedule_off_action: this._scheduleOffAction,
         valve_protection_enabled: this._valveProtectionEnabled,
         valve_protection_interval_days: this._valveProtectionInterval,
         compressor_groups: this._compressorGroups.filter((g) => g.members.length > 0),
+        coil_dry_enabled: this._coilDryEnabled,
+        coil_dry_minutes: this._coilDryMinutes,
+        coil_dry_mode: this._coilDryMode,
+        coil_dry_fan_mode: this._coilDryFanMode,
+        coil_dry_min_cooling_minutes: this._coilDryMinCoolingMinutes,
+        coil_dry_drain_minutes: this._coilDryDrainMinutes,
         mold_detection_enabled: this._moldDetectionEnabled,
         mold_humidity_threshold: this._moldHumidityThreshold,
+        mold_f_rsi: this._moldFRsi,
         mold_sustained_minutes: this._moldSustainedMinutes,
         mold_notification_cooldown: this._moldNotificationCooldown,
         mold_notifications_enabled: this._moldNotificationsEnabled,

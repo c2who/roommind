@@ -107,7 +107,7 @@ class TestBuildOutdoorSeries:
         assert series == [DEFAULT_OUTDOOR_TEMP_FALLBACK] * 5
 
     def test_forecast_used_when_available(self):
-        """With forecast data, series uses forecast temperatures."""
+        """Block 0 = sensor, remaining blocks expand forecast[0] hourly entry."""
         hass = build_hass()
         room = make_room()
         model_mgr = RoomModelManager()
@@ -126,10 +126,11 @@ class TestBuildOutdoorSeries:
             has_external_sensor=True,
         )
         series = ctrl._build_outdoor_series(3)
-        assert series == [5.0, 6.0, 7.0]
+        # Block 0 = sensor; blocks 1-2 still within forecast[0]'s hour
+        assert series == [8.0, 5.0, 5.0]
 
     def test_forecast_padded_when_shorter_than_n_blocks(self):
-        """Forecast shorter than n_blocks should be padded with last forecast value."""
+        """Short forecast: last hourly entry is repeated for the remaining blocks."""
         hass = build_hass()
         room = make_room()
         model_mgr = RoomModelManager()
@@ -147,10 +148,11 @@ class TestBuildOutdoorSeries:
             has_external_sensor=True,
         )
         series = ctrl._build_outdoor_series(5)
-        assert series == [5.0, 6.0, 6.0, 6.0, 6.0]
+        # n_blocks=5 stays within forecast[0]'s hour after block 0 (sensor)
+        assert series == [8.0, 5.0, 5.0, 5.0, 5.0]
 
     def test_forecast_truncated_when_longer_than_n_blocks(self):
-        """Forecast longer than n_blocks should be truncated."""
+        """n_blocks smaller than one hourly slot stays within forecast[0]."""
         hass = build_hass()
         room = make_room()
         model_mgr = RoomModelManager()
@@ -171,10 +173,11 @@ class TestBuildOutdoorSeries:
             has_external_sensor=True,
         )
         series = ctrl._build_outdoor_series(3)
-        assert series == [5.0, 6.0, 7.0]
+        # n_blocks=3: block 0 sensor + 2 of forecast[0]; forecast[1..4] not reached
+        assert series == [10.0, 5.0, 5.0]
 
     def test_forecast_missing_temperature_key_uses_outdoor_temp(self):
-        """Forecast entries without 'temperature' key fall back to current outdoor_temp."""
+        """Forecast entry without 'temperature' falls back to outdoor_temp."""
         hass = build_hass()
         room = make_room()
         model_mgr = RoomModelManager()
@@ -193,10 +196,11 @@ class TestBuildOutdoorSeries:
             has_external_sensor=True,
         )
         series = ctrl._build_outdoor_series(3)
-        assert series == [5.0, 8.0, 7.0]
+        # n_blocks=3 stays within forecast[0]'s hour; block 0 = sensor
+        assert series == [8.0, 5.0, 5.0]
 
     def test_forecast_missing_temp_key_and_outdoor_none_uses_fallback(self):
-        """Forecast entry without temp + outdoor_temp=None uses DEFAULT_OUTDOOR_TEMP_FALLBACK."""
+        """Missing temperature + outdoor_temp=None falls back to DEFAULT for all blocks."""
         from custom_components.roommind.control.mpc_controller import DEFAULT_OUTDOOR_TEMP_FALLBACK
 
         hass = build_hass()
@@ -215,9 +219,83 @@ class TestBuildOutdoorSeries:
             has_external_sensor=True,
         )
         series = ctrl._build_outdoor_series(3)
-        assert series[0] == DEFAULT_OUTDOOR_TEMP_FALLBACK
-        # Padding should also use the fallback
+        # outdoor_temp None → block 0 is not overridden; whole hour uses fallback
         assert all(v == DEFAULT_OUTDOOR_TEMP_FALLBACK for v in series)
+
+    def test_block_zero_is_sensor_reading(self):
+        """Block 0 always uses the real-time sensor, not forecast[0]."""
+        hass = build_hass()
+        room = make_room()
+        model_mgr = RoomModelManager()
+        forecast = [{"temperature": 15.6}, {"temperature": 14.0}]
+        ctrl = MPCController(
+            hass,
+            room,
+            model_manager=model_mgr,
+            outdoor_temp=20.67,
+            outdoor_forecast=forecast,
+            settings={},
+            has_external_sensor=True,
+        )
+        series = ctrl._build_outdoor_series(6)
+        assert series == [20.67, 15.6, 15.6, 15.6, 15.6, 15.6]
+
+    def test_hourly_forecast_expanded_to_blocks(self):
+        """Each hourly forecast entry covers 60 // PLAN_DT_MINUTES blocks."""
+        hass = build_hass()
+        room = make_room()
+        model_mgr = RoomModelManager()
+        forecast = [{"temperature": 15.6}, {"temperature": 14.0}]
+        ctrl = MPCController(
+            hass,
+            room,
+            model_manager=model_mgr,
+            outdoor_temp=20.67,
+            outdoor_forecast=forecast,
+            settings={},
+            has_external_sensor=True,
+        )
+        series = ctrl._build_outdoor_series(24)
+        # First hour (blocks 0-11): sensor + 11 of forecast[0]
+        # Second hour (blocks 12-23): 12 of forecast[1]
+        assert series == [20.67] + [15.6] * 11 + [14.0] * 12
+
+    def test_outdoor_temp_none_uses_forecast_for_block_zero(self):
+        """When sensor reading is missing, block 0 falls back to forecast[0]."""
+        hass = build_hass()
+        room = make_room()
+        model_mgr = RoomModelManager()
+        forecast = [{"temperature": 12.3}]
+        ctrl = MPCController(
+            hass,
+            room,
+            model_manager=model_mgr,
+            outdoor_temp=None,
+            outdoor_forecast=forecast,
+            settings={},
+            has_external_sensor=True,
+        )
+        series = ctrl._build_outdoor_series(3)
+        assert series == [12.3, 12.3, 12.3]
+
+    def test_pad_with_last_value_when_forecast_exhausted(self):
+        """When n_blocks exceeds the forecast horizon, last value pads the tail."""
+        hass = build_hass()
+        room = make_room()
+        model_mgr = RoomModelManager()
+        forecast = [{"temperature": 5.0}, {"temperature": 6.0}]
+        ctrl = MPCController(
+            hass,
+            room,
+            model_manager=model_mgr,
+            outdoor_temp=8.0,
+            outdoor_forecast=forecast,
+            settings={},
+            has_external_sensor=True,
+        )
+        series = ctrl._build_outdoor_series(30)
+        # 1 sensor + 11 of forecast[0] + 12 of forecast[1] + 6 padding (= forecast[1])
+        assert series == [8.0] + [5.0] * 11 + [6.0] * 12 + [6.0] * 6
 
 
 # ---------------------------------------------------------------------------
@@ -472,8 +550,12 @@ def test_predict_idle_drift_uses_fallback_outdoor_temp():
 # ---------------------------------------------------------------------------
 
 
-def test_safety_guard_allows_heating_when_prediction_dips(monkeypatch):
-    """Safety guard allows HEATING when idle-drift predicts temp below target."""
+def test_safety_guard_no_drift_preheat_for_fast_systems(monkeypatch):
+    """A fast system at target does not start on a predicted dip; it heats once the dip happens.
+
+    The 1-node model of an AC room learns the air node relaxing into the walls as a
+    steep loss, so the drift bypass restarted the AC right after every stop.
+    """
     hass = build_hass()
     room = make_room()
     mgr = RoomModelManager()
@@ -496,12 +578,36 @@ def test_safety_guard_allows_heating_when_prediction_dips(monkeypatch):
         lambda *a, **kw: fake_plan,
     )
 
-    # current_temp=21.0 >= target=21.0 → guard entry triggers
-    # With outdoor=5, 30-min idle prediction from 21°C dips well below 21 - 0.2
-    # → guard should allow heating
+    # 30-min idle prediction from 21 °C dips below 20.8, but the system is fast
+    assert ctrl._predict_idle_drift(21.0, 30.0) < 20.8
     mode, pf = ctrl._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=25.0))
-    assert mode == MODE_HEATING
-    assert pf > 0.0
+    assert (mode, pf) == (MODE_IDLE, 0.0)
+
+
+def test_safety_guard_fast_system_keeps_heating_within_min_run(monkeypatch):
+    """Past the target a fast system continues only for its min run."""
+    hass = build_hass()
+    mgr = RoomModelManager()
+    ctrl = MPCController(
+        hass,
+        make_room(),
+        model_manager=mgr,
+        outdoor_temp=5.0,
+        settings={},
+        has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 60,
+    )
+    fake_plan = MPCPlan(actions=[MODE_HEATING] * 24, temperatures=[21.3] * 25, power_fractions=[1.0] * 24)
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+
+    assert ctrl._evaluate_mpc(21.3, TargetTemps(heat=21.0, cool=25.0)) == (MODE_HEATING, 1.0)
+
+    ctrl.previous_mode = MODE_IDLE
+    assert ctrl._evaluate_mpc(21.3, TargetTemps(heat=21.0, cool=25.0)) == (MODE_IDLE, 0.0)
 
 
 def test_safety_guard_suppresses_when_prediction_stays_warm(monkeypatch):
@@ -559,6 +665,7 @@ def test_safety_guard_adaptive_horizon_underfloor(monkeypatch):
         actions=[MODE_HEATING] * 24,
         temperatures=[21.0] * 25,
         power_fractions=[0.8] * 24,
+        lookahead_blocks=24,  # what the optimizer reports for UFH
     )
     monkeypatch.setattr(
         "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
@@ -571,8 +678,8 @@ def test_safety_guard_adaptive_horizon_underfloor(monkeypatch):
     assert mode == MODE_HEATING
 
 
-def test_safety_guard_allows_cooling_when_prediction_rises(monkeypatch):
-    """Safety guard allows COOLING when idle-drift predicts temp above target."""
+def test_safety_guard_no_drift_precool_for_fast_systems(monkeypatch):
+    """An AC at its cool target does not start on a predicted rise; it cools once the rise happens."""
     hass = build_hass()
     room = make_room(acs=["climate.ac1"], thermostats=[], climate_mode="cool_only")
     mgr = RoomModelManager()
@@ -596,11 +703,10 @@ def test_safety_guard_allows_cooling_when_prediction_rises(monkeypatch):
         lambda *a, **kw: fake_plan,
     )
 
-    # current_temp=24 <= cool_target=24 → guard entry triggers
-    # With outdoor=35 and solar=0.5, prediction rises above 24 + 0.2 → allow cooling
+    # With outdoor=35 and solar=0.5 the prediction rises above 24 + 0.2, but an AC is fast
+    assert ctrl._predict_idle_drift(24.0, 30.0) > 24.2
     mode, pf = ctrl._evaluate_mpc(24.0, TargetTemps(heat=21.0, cool=24.0))
-    assert mode == MODE_COOLING
-    assert pf > 0.0
+    assert (mode, pf) == (MODE_IDLE, 0.0)
 
 
 def test_safety_guard_suppresses_cooling_when_prediction_stays_cool(monkeypatch):
@@ -680,6 +786,8 @@ def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
         outdoor_temp=5.0,
         settings={},
         has_external_sensor=True,
+        previous_mode=MODE_HEATING,
+        mode_on_since=time.time() - 60,  # within min-run
     )
     fake_plan = MPCPlan(
         actions=[MODE_HEATING] * 24,
@@ -690,7 +798,7 @@ def test_hard_ceiling_does_not_fire_below_threshold(monkeypatch):
         "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
         lambda *a, **kw: fake_plan,
     )
-    # 21.5°C >= 21°C → model-based guard entry, outdoor=5 → prediction dips → allow
+    # 21.5°C >= 21°C → model-based guard entry, min-run keeps heating; ceiling (22) not reached
     mode, pf = ctrl._evaluate_mpc(21.5, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_HEATING
     assert pf > 0.0
@@ -1004,8 +1112,8 @@ def test_bangbang_holds_heating_below_50pct_even_above_hysteresis():
     assert mode == MODE_HEATING
 
 
-def test_bangbang_allows_exit_above_50pct_and_above_hysteresis():
-    """Bang-bang allows exit after 50% of min-run when temp exceeds hysteresis."""
+def test_bangbang_underfloor_holds_full_min_run():
+    """A slow underfloor system keeps its full minimum run while learning."""
     from custom_components.roommind.const import BANGBANG_HEAT_HYSTERESIS
 
     hass = build_hass()
@@ -1023,11 +1131,11 @@ def test_bangbang_allows_exit_above_50pct_and_above_hysteresis():
         heating_system_type="underfloor",
         mode_on_since=time.time() - 2100,
     )
-    # temp = target + hysteresis + 0.5 → above hysteresis, past 50% → should exit
+    # Above hysteresis and past 50%, but the screed still needs its full run.
     heat_target = 21.0
     temp = heat_target + BANGBANG_HEAT_HYSTERESIS + 0.5
     mode = ctrl._evaluate_bangbang(temp, TargetTemps(heat=heat_target, cool=25.0))
-    assert mode == MODE_IDLE
+    assert mode == MODE_HEATING
 
 
 def test_bangbang_holds_cooling_below_50pct():
@@ -1052,3 +1160,253 @@ def test_bangbang_holds_cooling_below_50pct():
     temp = cool_target - BANGBANG_COOL_HYSTERESIS - 0.5
     mode = ctrl._evaluate_bangbang(temp, TargetTemps(heat=19.0, cool=cool_target))
     assert mode == MODE_COOLING
+
+# Issue #131: UFH proactive pre-heating — end-to-end via _evaluate_mpc
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_mpc_ufh_preheats_before_setpoint_drop():
+    """UFH room at target with cold outdoor: _evaluate_mpc picks HEATING proactively."""
+    hass = build_hass()
+    room = make_room(heating_system_type="underfloor")
+    mgr = RoomModelManager()
+    # Stub a well-trained model and enough data for MPC to activate.
+    mgr.get_mode_counts = MagicMock(return_value=(100, 50, 0))
+    mgr.get_prediction_std = MagicMock(return_value=0.3)
+    mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0))
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=5.0,
+        settings={"comfort_weight": 70, "control_mode": "mpc"},
+        has_external_sensor=True,
+        heating_system_type="underfloor",
+    )
+    mode, pf = ctrl._evaluate_mpc(20.0, TargetTemps(heat=20.0, cool=20.0))
+    assert mode == MODE_HEATING, f"Expected HEATING, got {mode}"
+    assert pf > 0.0
+
+
+def test_mpc_guard_horizon_extended_for_ufh(monkeypatch):
+    """UFH guard uses the optimizer's extended lookahead for idle-drift prediction.
+
+    At outdoor=19°C, room=21°C, target=21°C the 30-min drift stays above the
+    20.8°C suppression threshold (would trigger old-style suppression), but the
+    120-min drift dips below it (the fix allows heating).
+    """
+    hass = build_hass()
+    room = make_room(heating_system_type="underfloor")
+    mgr = RoomModelManager()
+    mgr.get_mode_counts = MagicMock(return_value=(100, 50, 0))
+    mgr.get_prediction_std = MagicMock(return_value=0.3)
+    mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0))
+    ctrl = MPCController(
+        hass,
+        room,
+        model_manager=mgr,
+        outdoor_temp=19.0,
+        settings={"comfort_weight": 70, "control_mode": "mpc"},
+        has_external_sensor=True,
+        heating_system_type="underfloor",
+    )
+
+    fake_plan = MPCPlan(
+        actions=[MODE_HEATING] * 24,
+        temperatures=[21.0] * 25,
+        power_fractions=[0.8] * 24,
+        lookahead_blocks=24,  # UFH lookahead as per fix
+    )
+
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize",
+        lambda *a, **kw: fake_plan,
+    )
+    mode, _ = ctrl._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=25.0))
+    assert mode == MODE_HEATING, "Extended guard horizon for UFH should allow heating at mild outdoor=19°C"
+
+
+# ---------------------------------------------------------------------------
+# Occupancy is kept out of the shading peak (#418)
+# ---------------------------------------------------------------------------
+
+
+def _occupancy_controller(q_occupancy: float) -> MPCController:
+    """Controller whose model has a strong occupancy gain and a slow room."""
+    mgr = RoomModelManager()
+    mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.25, Q_heat=1.0, Q_cool=1.0, Q_occupancy=1.46))
+    return MPCController(
+        build_hass(),
+        make_room(),
+        model_manager=mgr,
+        outdoor_temp=24.0,
+        settings={},
+        has_external_sensor=True,
+        q_occupancy=q_occupancy,
+    )
+
+
+def test_simulate_plan_reproduces_the_plan_it_replays():
+    """Replaying a plan with its own inputs must return the plan's trajectory."""
+    from custom_components.roommind.control.mpc_optimizer import MPCOptimizer
+
+    model = RCModel(C=1.0, U=0.25, Q_heat=1.0, Q_cool=1.0, Q_occupancy=1.46)
+    optimizer = MPCOptimizer(model=model, can_heat=True, can_cool=True)
+    outdoor = [24.0] * 24
+    solar = [0.2] * 24
+    residual = [0.3] * 24
+    occupancy = [1.0] * 24
+    plan = optimizer.optimize(
+        T_room=22.0,
+        T_outdoor_series=outdoor,
+        heat_target_series=[21.0] * 24,
+        cool_target_series=[24.0] * 24,
+        dt_minutes=5,
+        solar_series=solar,
+        residual_series=residual,
+        occupancy_series=occupancy,
+    )
+
+    replayed = optimizer.simulate_plan(
+        plan,
+        22.0,
+        outdoor,
+        5,
+        solar_series=solar,
+        residual_series=residual,
+        occupancy_series=occupancy,
+    )
+    assert replayed == plan.temperatures
+
+
+def test_predicted_peak_excludes_occupancy_heat():
+    """The shading peak must not carry body heat, the control plan still does."""
+    ctrl = _occupancy_controller(1.0)
+    ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
+
+    assert ctrl.last_plan is not None
+    plan_peak = max(ctrl.last_plan.temperatures[1:])
+    assert ctrl.predicted_peak_temp is not None
+    assert ctrl.predicted_peak_temp < plan_peak - 1.0
+
+
+def test_control_plan_still_sees_occupancy():
+    """Removing occupancy from the peak must not change the control decision."""
+    occupied = _occupancy_controller(1.0)
+    empty = _occupancy_controller(0.0)
+    occupied._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
+    empty._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
+
+    assert occupied.last_plan is not None and empty.last_plan is not None
+    # The optimizer's own trajectory diverges because it still gets the gain.
+    assert max(occupied.last_plan.temperatures[1:]) > max(empty.last_plan.temperatures[1:])
+
+
+def test_predicted_peak_matches_empty_room_peak():
+    """An occupied and an empty room must offer the cover logic the same peak."""
+    occupied = _occupancy_controller(1.0)
+    empty = _occupancy_controller(0.0)
+    occupied._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
+    empty._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
+
+    assert occupied.predicted_peak_temp == pytest.approx(empty.predicted_peak_temp, abs=0.05)
+
+
+def test_unoccupied_room_uses_the_plan_trajectory_directly():
+    """Without occupancy there is nothing to subtract, so no replay happens."""
+    ctrl = _occupancy_controller(0.0)
+    ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=24.0))
+
+    assert ctrl._peak_temps_unoccupied is None
+    assert ctrl.last_plan is not None
+    assert ctrl.predicted_peak_temp == max(ctrl.last_plan.temperatures[1:])
+
+
+def test_simulate_plan_replays_directed_actions():
+    """Heating and cooling blocks must replay with their power, not as idle."""
+    from custom_components.roommind.control.mpc_optimizer import MPCOptimizer
+
+    model = RCModel(C=1.0, U=0.25, Q_heat=1.0, Q_cool=2.0, Q_occupancy=1.0)
+    optimizer = MPCOptimizer(model=model, can_heat=False, can_cool=True)
+    plan = MPCPlan(
+        actions=[MODE_COOLING] * 4,
+        temperatures=[28.0] * 5,
+        power_fractions=[1.0] * 4,
+    )
+    replayed = optimizer.simulate_plan(plan, 28.0, [30.0] * 4, 5)
+
+    assert replayed[0] == 28.0
+    assert replayed[-1] < 28.0  # cooling actually removed heat
+
+    heat_plan = MPCPlan(
+        actions=[MODE_HEATING] * 4,
+        temperatures=[18.0] * 5,
+        power_fractions=[1.0] * 4,
+    )
+    idle_plan = MPCPlan(
+        actions=[MODE_IDLE] * 4,
+        temperatures=[18.0] * 5,
+        power_fractions=[0.0] * 4,
+    )
+    heated = optimizer.simulate_plan(heat_plan, 18.0, [10.0] * 4, 5)
+    idled = optimizer.simulate_plan(idle_plan, 18.0, [10.0] * 4, 5)
+    assert heated[-1] > idled[-1]
+
+
+# --- an unknown outdoor temperature must not gate cooling ----------------------
+
+
+def _cool_only_ctrl(hass, outdoor_temp, outdoor_forecast=None):
+    room = make_room(thermostats=[], acs=["climate.ac"], climate_mode="cool_only")
+    model_mgr = RoomModelManager()
+    model_mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0))
+    model_mgr.get_prediction_std = MagicMock(return_value=0.1)
+    model_mgr.get_mode_counts = MagicMock(return_value=(100, 0, 40))
+    return MPCController(
+        hass,
+        room,
+        model_manager=model_mgr,
+        outdoor_temp=outdoor_temp,
+        outdoor_forecast=outdoor_forecast,
+        settings={},
+        has_external_sensor=True,
+    )
+
+
+def _ac_hass():
+    hass = build_hass()
+    ac = MagicMock()
+    ac.state = "cool"
+    ac.attributes = {"hvac_modes": ["cool", "off"], "temperature": 22.0, "min_temp": 16.0, "max_temp": 30.0}
+    hass.states.get = MagicMock(return_value=ac)
+    return hass
+
+
+@pytest.mark.asyncio
+async def test_unknown_outdoor_temp_does_not_gate_cooling():
+    """No outdoor reading and no forecast: the 10 °C placeholder must not block cooling.
+
+    The deviation is large so the verdict isolates the gate: with the cold placeholder
+    the model predicts a drift down, and for a small deviation waiting for it is a plan.
+    """
+    ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=None)
+    mode, pf = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
+    assert mode == MODE_COOLING
+    assert pf > 0.0
+
+
+@pytest.mark.asyncio
+async def test_known_cold_outdoor_temp_still_gates_cooling():
+    """A real reading below the cooling minimum still blocks cooling."""
+    ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=10.0)
+    mode, _ = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
+    assert mode == MODE_IDLE
+
+
+@pytest.mark.asyncio
+async def test_cold_forecast_still_gates_cooling_without_a_reading():
+    """A forecast is a real estimate: without a current reading it still gates."""
+    forecast = [{"temperature": 10.0}] * 24
+    ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=None, outdoor_forecast=forecast)
+    mode, _ = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
+    assert mode == MODE_IDLE

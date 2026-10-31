@@ -22,7 +22,7 @@ from custom_components.roommind.const import MODE_COOLING, MODE_HEATING, MODE_ID
 def _make_store_mock(rooms=None):
     store = MagicMock()
     store.get_rooms.return_value = rooms or {}
-    store.get_settings.return_value = {}
+    store.get_settings.return_value = {"outdoor_temp_sensor": "sensor.outdoor_temp"}
     store.get_thermal_data.return_value = {}
     store.async_save_thermal_data = AsyncMock()
     return store
@@ -396,6 +396,11 @@ def _make_room_a_states(thermostat_hvac_action="idle", passive_hvac_action="idle
     """Return a states.get mock for PASSIVE_ROOM."""
 
     def _get(entity_id):
+        if entity_id == "sensor.outdoor_temp":
+            s = MagicMock()
+            s.state = "10.0"
+            s.attributes = {}
+            return s
         if entity_id == "sensor.room_a_temp":
             s = MagicMock()
             s.state = "23.0"
@@ -435,6 +440,7 @@ class TestPassiveDeviceEKFIntegration:
 
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
+        await coordinator._async_update_data()  # first reading only synchronizes the EKF
 
         # The EKF accumulator should have recorded a 'cooling' interval,
         # not 'idle' — passive device observation was used.
@@ -456,6 +462,7 @@ class TestPassiveDeviceEKFIntegration:
 
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         acc_mode = coordinator._ekf_training._accumulated_mode.get("room_a_abc12345")
         assert acc_mode == MODE_IDLE
@@ -468,6 +475,11 @@ class TestPassiveDeviceEKFIntegration:
         hass.data = {"roommind": {"store": store}}
 
         def _states(entity_id):
+            if entity_id == "sensor.outdoor_temp":
+                s = MagicMock()
+                s.state = "10.0"
+                s.attributes = {}
+                return s
             # Room is cold → coordinator will decide to heat
             if entity_id == "sensor.room_a_temp":
                 s = MagicMock()
@@ -490,6 +502,7 @@ class TestPassiveDeviceEKFIntegration:
         hass.services.async_call = AsyncMock()
 
         coordinator = _create_coordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
         await coordinator._async_update_data()
 
         # Coordinator chose heating (18°C < 21°C target) → passive cooling ignored
@@ -518,6 +531,7 @@ class TestPassiveDeviceEKFIntegration:
 
         coordinator = _create_coordinator(hass, mock_config_entry)
         await coordinator._async_update_data()
+        await coordinator._async_update_data()
 
         acc_pf = coordinator._ekf_training._accumulated_pf.get("room_a_abc12345")
         assert acc_pf == pytest.approx(0.4)
@@ -537,6 +551,11 @@ class TestPassiveDeviceEKFIntegration:
         hass.data = {"roommind": {"store": store}}
 
         def _states(entity_id):
+            if entity_id == "sensor.outdoor_temp":
+                s = MagicMock()
+                s.state = "10.0"
+                s.attributes = {}
+                return s
             if entity_id == "sensor.room_a_temp":
                 s = MagicMock()
                 s.state = "23.0"
@@ -558,6 +577,7 @@ class TestPassiveDeviceEKFIntegration:
         hass.services.async_call = AsyncMock()
 
         coordinator = _create_coordinator(hass, mock_config_entry)
+        await coordinator._async_update_data()
         await coordinator._async_update_data()
 
         assert coordinator._ekf_training._accumulated_mode.get("room_a_abc12345") == MODE_COOLING

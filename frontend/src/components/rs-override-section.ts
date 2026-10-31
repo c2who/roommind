@@ -2,14 +2,8 @@ import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HomeAssistant, RoomConfig, ClimateMode, OverrideType } from "../types";
 import { localize } from "../utils/localize";
-import {
-  formatTemp,
-  tempUnit,
-  toDisplay,
-  toCelsius,
-  tempStep,
-  tempRange,
-} from "../utils/temperature";
+import { inputStyles } from "../styles/input-styles";
+import { tempUnit, toDisplay, toCelsius, tempStep, tempRange } from "../utils/temperature";
 
 @customElement("rs-override-section")
 export class RsOverrideSection extends LitElement {
@@ -23,157 +17,155 @@ export class RsOverrideSection extends LitElement {
   @property() public language = "en";
 
   @state() private _overridePending: OverrideType | null = null;
-  @state() private _overrideCustomTemp = 21;
+  @state() private _overrideCustomHeat = 21;
+  @state() private _overrideCustomCool = 24;
   @state() private _overrideError = "";
   @state() private _optimisticOverride: {
     type: OverrideType;
-    temp: number;
+    heat: number | null;
+    cool: number | null;
     until: number | null;
   } | null = null;
   @state() private _optimisticClear = false;
 
-  static styles = css`
-    :host {
-      display: block;
-    }
+  static styles = [
+    inputStyles,
+    css`
+      :host {
+        display: block;
+      }
 
-    .override-divider {
-      border: none;
-      border-top: 1px solid var(--divider-color, #e0e0e0);
-      margin: 16px 0 12px;
-    }
+      .override-divider {
+        border: none;
+        border-top: 1px solid var(--divider-color, #e0e0e0);
+        margin: 16px 0 12px;
+      }
 
-    .override-label {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--secondary-text-color);
-      margin-bottom: 10px;
-    }
+      .override-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+        margin-bottom: 10px;
+      }
 
-    .override-presets {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
+      .override-presets {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
 
-    .override-preset {
-      cursor: pointer;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      padding: 6px 12px;
-      font-size: 13px;
-      background: transparent;
-      color: var(--primary-text-color);
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      transition:
-        background 0.15s,
-        border-color 0.15s;
-    }
+      .override-preset {
+        cursor: pointer;
+        border: 1px solid var(--divider-color, #e0e0e0);
+        border-radius: 8px;
+        padding: 6px 12px;
+        font-size: 13px;
+        background: transparent;
+        color: var(--primary-text-color);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
 
-    .override-preset:hover {
-      background: rgba(0, 0, 0, 0.04);
-    }
+      .override-preset:hover {
+        background: rgba(0, 0, 0, 0.04);
+      }
 
-    .override-preset.pending {
-      border-color: var(--primary-color);
-      background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
-    }
+      .override-preset.pending {
+        border-color: var(--primary-color);
+        background: rgba(var(--rgb-primary-color, 33, 150, 243), 0.08);
+      }
 
-    .override-preset.active.boost {
-      border-color: var(--warning-color, #ff9800);
-      background: rgba(255, 152, 0, 0.15);
-      color: var(--warning-color, #ff9800);
-    }
+      .override-preset.active.boost {
+        border-color: var(--warning-color, #ff9800);
+        background: rgba(255, 152, 0, 0.15);
+        color: var(--warning-color, #ff9800);
+      }
 
-    .override-preset.active.eco {
-      border-color: #4caf50;
-      background: rgba(76, 175, 80, 0.15);
-      color: #4caf50;
-    }
+      .override-preset.active.eco {
+        border-color: #4caf50;
+        background: rgba(76, 175, 80, 0.15);
+        color: #4caf50;
+      }
 
-    .override-preset.active.custom {
-      border-color: #2196f3;
-      background: rgba(33, 150, 243, 0.15);
-      color: #2196f3;
-    }
+      .override-preset.active.custom {
+        border-color: #2196f3;
+        background: rgba(33, 150, 243, 0.15);
+        color: #2196f3;
+      }
 
-    .override-preset:disabled {
-      opacity: 0.35;
-      cursor: default;
-    }
+      .override-preset:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
 
-    .override-preset:disabled:hover {
-      background: transparent;
-    }
+      .override-preset:disabled:hover {
+        background: transparent;
+      }
 
-    .override-preset ha-icon {
-      --mdc-icon-size: 16px;
-    }
+      .override-preset ha-icon {
+        --mdc-icon-size: 16px;
+      }
 
-    .override-duration {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 10px;
-      align-items: center;
-    }
+      .override-target {
+        display: block;
+        width: 160px;
+        margin-top: 12px;
+      }
 
-    .override-duration-label {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
+      .override-duration {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 12px;
+        align-items: center;
+      }
 
-    .override-dur-chip {
-      cursor: pointer;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 16px;
-      padding: 4px 12px;
-      font-size: 12px;
-      background: transparent;
-      color: var(--primary-text-color);
-      transition: background 0.15s;
-    }
+      .override-duration-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--secondary-text-color);
+      }
 
-    .override-dur-chip:hover {
-      background: rgba(0, 0, 0, 0.04);
-    }
+      .override-dur-chips {
+        display: flex;
+        gap: 6px;
+      }
 
-    .override-dur-chip:disabled {
-      opacity: 0.5;
-      pointer-events: none;
-    }
+      .override-dur-chip {
+        cursor: pointer;
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-weight: 500;
+        background: var(--card-background-color);
+        color: var(--primary-text-color);
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease;
+      }
 
-    .override-custom-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 8px;
-    }
+      .override-dur-chip:hover {
+        background: rgba(255, 255, 255, 0.04);
+        border-color: rgba(3, 169, 244, 0.4);
+      }
 
-    .override-custom-row input {
-      width: 56px;
-      padding: 4px 8px;
-      border: 1px solid var(--divider-color, #e0e0e0);
-      border-radius: 8px;
-      font-size: 13px;
-      text-align: center;
-      background: transparent;
-      color: var(--primary-text-color);
-    }
+      .override-dur-chip:disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
 
-    .override-custom-row span {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-    }
-
-    .override-error {
-      color: var(--error-color, #d32f2f);
-      font-size: 12px;
-      margin-top: 6px;
-    }
-  `;
+      .override-error {
+        color: var(--error-color, #d32f2f);
+        font-size: 12px;
+        margin-top: 6px;
+      }
+    `,
+  ];
 
   updated(changedProps: Map<string, unknown>) {
     // Clear optimistic override state once server data catches up
@@ -192,17 +184,19 @@ export class RsOverrideSection extends LitElement {
   getEffectiveOverride(): {
     active: boolean;
     type: OverrideType | null;
-    temp: number | null;
+    heat: number | null;
+    cool: number | null;
     until: number | null;
   } {
     if (this._optimisticClear) {
-      return { active: false, type: null, temp: null, until: null };
+      return { active: false, type: null, heat: null, cool: null, until: null };
     }
     if (this._optimisticOverride) {
       return {
         active: true,
         type: this._optimisticOverride.type,
-        temp: this._optimisticOverride.temp,
+        heat: this._optimisticOverride.heat,
+        cool: this._optimisticOverride.cool,
         until: this._optimisticOverride.until,
       };
     }
@@ -211,11 +205,12 @@ export class RsOverrideSection extends LitElement {
       return {
         active: true,
         type: live.override_type,
-        temp: live.override_temp,
+        heat: live.override_heat,
+        cool: live.override_cool,
         until: live.override_until,
       };
     }
-    return { active: false, type: null, temp: null, until: null };
+    return { active: false, type: null, heat: null, cool: null, until: null };
   }
 
   render() {
@@ -225,9 +220,11 @@ export class RsOverrideSection extends LitElement {
       <hr class="override-divider" />
       <div class="override-label">${localize("override.label", this.language)}</div>
       ${this._renderOverrideButtons(ov)}
-      ${this._overrideError
-        ? html`<div class="override-error">${this._overrideError}</div>`
-        : nothing}
+      ${
+        this._overrideError
+          ? html`<div class="override-error">${this._overrideError}</div>`
+          : nothing
+      }
     `;
   }
 
@@ -251,55 +248,85 @@ export class RsOverrideSection extends LitElement {
               <ha-icon
                 icon=${t === "boost" ? "mdi:fire" : t === "eco" ? "mdi:leaf" : "mdi:thermometer"}
               ></ha-icon>
-              ${t === "boost"
-                ? `${localize("override.comfort", this.language)} ${formatTemp(this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat, this.hass)}${tempUnit(this.hass)}`
-                : t === "eco"
-                  ? `${localize("override.eco", this.language)} ${formatTemp(this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat, this.hass)}${tempUnit(this.hass)}`
-                  : localize("override.custom", this.language)}
+              ${
+                t === "boost"
+                  ? localize("override.comfort", this.language)
+                  : t === "eco"
+                    ? localize("override.eco", this.language)
+                    : localize("override.custom", this.language)
+              }
             </button>
           `;
         })}
       </div>
-      ${showDuration
-        ? html`
-            ${this._overridePending === "custom"
-              ? html`
-                  <div class="override-custom-row">
-                    <span>${localize("override.target", this.language)}</span>
-                    <input
-                      type="number"
-                      min=${tempRange(5, 35, this.hass).min}
-                      max=${tempRange(5, 35, this.hass).max}
-                      step=${tempStep(this.hass)}
-                      .value=${String(toDisplay(this._overrideCustomTemp, this.hass))}
-                      @input=${this._onOverrideCustomTempInput}
-                    />
-                    <span>${tempUnit(this.hass)}</span>
-                  </div>
-                `
-              : nothing}
-            <div class="override-duration">
-              <span class="override-duration-label"
-                >${localize("override.activate_for", this.language)}</span
-              >
-              ${[
-                { label: "1h", hours: 1 },
-                { label: "2h", hours: 2 },
-                { label: "4h", hours: 4 },
-              ].map(
-                (opt) => html`
-                  <button
-                    class="override-dur-chip"
-                    @click=${() => this._onOverrideActivate(opt.hours)}
-                  >
-                    ${opt.label}
-                  </button>
-                `,
-              )}
-            </div>
-          `
-        : nothing}
+      ${
+        showDuration
+          ? html`
+              ${this._overridePending === "custom" ? this._renderCustomInputs() : nothing}
+              <div class="override-duration">
+                <span class="override-duration-label"
+                  >${localize("override.activate_for", this.language)}</span
+                >
+                <div class="override-dur-chips">
+                  ${[
+                    { label: "1h", hours: 1 },
+                    { label: "2h", hours: 2 },
+                    { label: "4h", hours: 4 },
+                  ].map(
+                    (opt) => html`
+                      <button
+                        class="override-dur-chip"
+                        @click=${() => this._onOverrideActivate(opt.hours)}
+                      >
+                        ${opt.label}
+                      </button>
+                    `,
+                  )}
+                </div>
+              </div>
+            `
+          : nothing
+      }
     `;
+  }
+
+  private _renderCustomInputs() {
+    const range = tempRange(5, 35, this.hass);
+    const heatField = html`
+      <ha-textfield
+        class="override-target"
+        type="number"
+        .label=${localize(
+          this.climateMode === "auto" ? "override.heat_to" : "override.target",
+          this.language,
+        )}
+        .suffix=${tempUnit(this.hass)}
+        min=${range.min}
+        max=${range.max}
+        step=${tempStep(this.hass)}
+        .value=${String(toDisplay(this._overrideCustomHeat, this.hass))}
+        @input=${this._onCustomHeatInput}
+      ></ha-textfield>
+    `;
+    const coolField = html`
+      <ha-textfield
+        class="override-target"
+        type="number"
+        .label=${localize(
+          this.climateMode === "auto" ? "override.cool_above" : "override.target",
+          this.language,
+        )}
+        .suffix=${tempUnit(this.hass)}
+        min=${range.min}
+        max=${range.max}
+        step=${tempStep(this.hass)}
+        .value=${String(toDisplay(this._overrideCustomCool, this.hass))}
+        @input=${this._onCustomCoolInput}
+      ></ha-textfield>
+    `;
+    if (this.climateMode === "heat_only") return heatField;
+    if (this.climateMode === "cool_only") return coolField;
+    return html`${heatField} ${coolField}`;
   }
 
   private _onOverridePreset(type: OverrideType): void {
@@ -308,16 +335,23 @@ export class RsOverrideSection extends LitElement {
     } else {
       this._overridePending = type;
       if (type === "custom") {
-        this._overrideCustomTemp =
-          this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat;
+        this._overrideCustomHeat = this.comfortHeat;
+        this._overrideCustomCool = this.comfortCool;
       }
     }
     this._overrideError = "";
   }
 
-  private _onOverrideCustomTempInput(e: Event): void {
-    this._overrideCustomTemp = toCelsius(
+  private _onCustomHeatInput(e: Event): void {
+    this._overrideCustomHeat = toCelsius(
       Number((e.target as HTMLInputElement).value) || toDisplay(21, this.hass),
+      this.hass,
+    );
+  }
+
+  private _onCustomCoolInput(e: Event): void {
+    this._overrideCustomCool = toCelsius(
+      Number((e.target as HTMLInputElement).value) || toDisplay(24, this.hass),
       this.hass,
     );
   }
@@ -326,18 +360,30 @@ export class RsOverrideSection extends LitElement {
     if (!this._overridePending || !this.config) return;
 
     const pendingType = this._overridePending;
-    let temp: number;
+    let heat: number | null;
+    let cool: number | null;
     if (pendingType === "boost") {
-      temp = this.climateMode === "cool_only" ? this.comfortCool : this.comfortHeat;
+      heat = this.comfortHeat;
+      cool = this.comfortCool;
     } else if (pendingType === "eco") {
-      temp = this.climateMode === "cool_only" ? this.ecoCool : this.ecoHeat;
+      heat = this.ecoHeat;
+      cool = this.ecoCool;
     } else {
-      temp = this._overrideCustomTemp;
+      heat = this._overrideCustomHeat;
+      cool = this._overrideCustomCool;
+    }
+    if (this.climateMode === "heat_only") cool = null;
+    if (this.climateMode === "cool_only") heat = null;
+
+    if (heat != null && cool != null && cool < heat) {
+      this._overrideError = localize("override.invalid_band", this.language);
+      return;
     }
 
     this._optimisticOverride = {
       type: pendingType,
-      temp,
+      heat,
+      cool,
       until: Date.now() / 1000 + hours * 3600,
     };
     this._optimisticClear = false;
@@ -351,7 +397,8 @@ export class RsOverrideSection extends LitElement {
       duration: hours,
     };
     if (pendingType === "custom") {
-      msg.temperature = temp;
+      if (this.climateMode !== "cool_only") msg.heat = this._overrideCustomHeat;
+      if (this.climateMode !== "heat_only") msg.cool = this._overrideCustomCool;
     }
 
     try {

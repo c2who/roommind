@@ -7,6 +7,7 @@ import { customElement, property } from "lit/decorators.js";
 import type { HomeAssistant, HassEntity } from "../../types";
 import { localize } from "../../utils/localize";
 import { tempUnit } from "../../utils/temperature";
+import "../shared/rs-toggle-row";
 
 @customElement("rs-settings-sensors")
 export class RsSettingsSensors extends RsSettingsBase {
@@ -14,6 +15,7 @@ export class RsSettingsSensors extends RsSettingsBase {
   @property({ type: String }) public outdoorTempSensor = "";
   @property({ type: String }) public outdoorHumiditySensor = "";
   @property({ type: String }) public weatherEntity = "";
+  @property({ type: Boolean }) public outdoorUnavailableNotify = true;
 
   private _filterTemperature = (entity: HassEntity): boolean => {
     return entity.attributes?.device_class === "temperature";
@@ -55,18 +57,20 @@ export class RsSettingsSensors extends RsSettingsBase {
                 if (v !== this.outdoorTempSensor) this._fire("outdoorTempSensor", v);
               }}
             ></ha-entity-picker>
-            ${outdoorTemp !== null
-              ? html`<div class="current-value">
-                  ${localize("settings.outdoor_current", l, {
-                    temp: outdoorTemp.toFixed(1),
-                    unit: tempUnit(this.hass),
-                  })}
-                </div>`
-              : this.outdoorTempSensor
-                ? html`<div class="current-value muted">
-                    ${localize("settings.outdoor_waiting", l)}
+            ${
+              outdoorTemp !== null
+                ? html`<div class="current-value">
+                    ${localize("settings.outdoor_current", l, {
+                      temp: outdoorTemp.toFixed(1),
+                      unit: tempUnit(this.hass),
+                    })}
                   </div>`
-                : nothing}
+                : this.outdoorTempSensor
+                  ? html`<div class="current-value muted">
+                      ${localize("settings.outdoor_waiting", l)}
+                    </div>`
+                  : nothing
+            }
           </div>
           <div class="sensor-field">
             <ha-entity-picker
@@ -81,17 +85,19 @@ export class RsSettingsSensors extends RsSettingsBase {
                 if (v !== this.outdoorHumiditySensor) this._fire("outdoorHumiditySensor", v);
               }}
             ></ha-entity-picker>
-            ${outdoorHumidity !== null
-              ? html`<div class="current-value">
-                  ${localize("settings.outdoor_humidity_current", l, {
-                    value: String(outdoorHumidity),
-                  })}
-                </div>`
-              : this.outdoorHumiditySensor
-                ? html`<div class="current-value muted">
-                    ${localize("settings.outdoor_waiting", l)}
+            ${
+              outdoorHumidity !== null
+                ? html`<div class="current-value">
+                    ${localize("settings.outdoor_humidity_current", l, {
+                      value: String(outdoorHumidity),
+                    })}
                   </div>`
-                : nothing}
+                : this.outdoorHumiditySensor
+                  ? html`<div class="current-value muted">
+                      ${localize("settings.outdoor_waiting", l)}
+                    </div>`
+                  : nothing
+            }
           </div>
         </div>
       </div>
@@ -109,6 +115,15 @@ export class RsSettingsSensors extends RsSettingsBase {
           }}
         ></ha-entity-picker>
         <span class="field-hint">${localize("settings.weather_entity_hint", l)}</span>
+      </div>
+
+      <div class="settings-section">
+        <rs-toggle-row
+          .label=${localize("settings.outdoor_unavailable_notify", l)}
+          .hint=${localize("settings.outdoor_unavailable_notify_hint", l)}
+          .checked=${this.outdoorUnavailableNotify}
+          @toggle-changed=${(e: CustomEvent) => this._fire("outdoorUnavailableNotify", e.detail)}
+        ></rs-toggle-row>
       </div>
     `;
   }

@@ -18,17 +18,25 @@ import "./rs-climate-mode-selector";
 import "./rs-schedule-settings";
 import "./rs-device-section";
 import "./rs-sensor-section";
-import "./rs-window-section";
 import "./rs-section-card";
 import "./rs-override-section";
 import "./rs-presence-section";
 import "./rs-covers-section";
 import "./rs-heat-source-section";
 import "../components/shared/rs-toggle-row";
+import "../components/shared/rs-toggle-card";
+import "../components/shared/rs-edit-dialog";
+import "../components/shared/rs-info-icon";
 import { localize } from "../utils/localize";
 import { fireSaveStatus } from "../utils/events";
 import { resolveHeatingSystemType } from "../utils/device-utils";
+import { DEFAULT_OCCUPANCY_ECO_DELAY } from "../utils/constants";
 import type { RsOverrideSection } from "./rs-override-section";
+
+const CONTROL_DOCS_URL =
+  "https://github.com/snazzybean/roommind/blob/main/docs/control-and-devices.md";
+
+type EditableSection = "schedule" | "devices" | "sensors" | "presence" | "covers" | "heatSource";
 
 @customElement("rs-room-detail")
 export class RsRoomDetail extends LitElement {
@@ -40,12 +48,20 @@ export class RsRoomDetail extends LitElement {
   @property({ type: Boolean }) public climateControlActive = true;
 
   @property({ type: Boolean }) public valveProtectionEnabled = false;
+  @property({ type: String }) public controlMode: "mpc" | "bangbang" = "mpc";
+  @property({ type: Boolean }) public coilDryEnabled = false;
+  @property({ type: Number }) public coilDryMinutes = 20;
+  @property({ type: String }) public coilDryMode = "fan_only";
+  @property({ type: String }) public coilDryFanMode = "low";
 
   @state() private _devices: DeviceConfig[] = [];
   @state() private _entityModes: Record<string, "auto" | "heat_only" | "cool_only"> = {};
   @state() private _selectedTempSensor = "";
   @state() private _selectedHumiditySensor = "";
   @state() private _selectedOccupancySensors: Set<string> = new Set();
+  @state() private _occupancyEcoEnabled = false;
+  @state() private _preheatEnabled = true;
+  @state() private _occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
   @state() private _selectedWindowSensors: Set<string> = new Set();
   @state() private _windowOpenDelay = 0;
   @state() private _windowCloseDelay = 0;
@@ -58,11 +74,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _ecoCool = 27.0;
   @state() private _error = "";
   @state() private _dirty = false;
-  @state() private _editingSchedule = false;
-  @state() private _editingDevices = false;
-  @state() private _editingSensors = false;
-  @state() private _editingWindows = false;
-  @state() private _editingPresence = false;
+  @state() private _editing: EditableSection | null = null;
   @state() private _selectedPresencePersons: string[] = [];
   @state() private _displayName = "";
   @state() private _heatingSystemType = "";
@@ -93,6 +105,7 @@ export class RsRoomDetail extends LitElement {
   @state() private _heatSourcePrimaryDelta = 1.5;
   @state() private _heatSourceOutdoorThreshold = 5.0;
   @state() private _heatSourceAcMinOutdoor = -15.0;
+  @state() private _optimisticCoverResume = false;
 
   private _prevAreaId: string | null = null;
   private _saveDebounce?: ReturnType<typeof setTimeout>;
@@ -100,42 +113,43 @@ export class RsRoomDetail extends LitElement {
   static styles = css`
     :host {
       display: block;
-      max-width: 1100px;
+      max-width: 2400px;
       margin: 0 auto;
     }
 
     .detail-layout {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      align-items: start;
-    }
-
-    .col-left,
-    .col-right {
       display: flex;
       flex-direction: column;
       gap: 16px;
-      min-width: 0;
     }
 
-    @media (max-width: 860px) {
-      .detail-layout {
-        grid-template-columns: 1fr;
+    .detail-grid {
+      column-count: 3;
+      column-width: 360px;
+      column-gap: 16px;
+      column-fill: balance;
+    }
+
+    .detail-grid > * {
+      display: block;
+      width: 100%;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      margin-bottom: 16px;
+    }
+
+    @media (min-width: 1900px) {
+      .detail-grid {
+        column-count: 4;
       }
-    }
-
-    .outdoor-toggle-card,
-    .climate-control-toggle-card {
-      padding: 12px 16px;
     }
 
     /* Section cards handled by rs-section-card */
 
-    /* YAML code block for info panels (slotted into rs-section-card) */
+    /* YAML code block for info panels (slotted into edit dialogs) */
     .yaml-block {
-      background: var(--primary-background-color, #f5f5f5);
-      border: 1px solid var(--divider-color, #e0e0e0);
+      background: var(--code-editor-background-color, rgba(0, 0, 0, 0.35));
+      border: 1px solid var(--divider-color, rgba(255, 255, 255, 0.12));
       border-radius: 6px;
       padding: 10px 14px;
       margin: 8px 0;
@@ -147,10 +161,10 @@ export class RsRoomDetail extends LitElement {
       color: var(--primary-text-color);
     }
     .yaml-key {
-      color: #0550ae;
+      color: #82aaff;
     }
     .yaml-value {
-      color: #0a3069;
+      color: #e2a76a;
     }
 
     /* Actions */
@@ -290,6 +304,18 @@ export class RsRoomDetail extends LitElement {
       padding: 0 14px 10px;
       line-height: 1.4;
     }
+
+    .helper-link {
+      display: inline-block;
+      margin-top: 12px;
+      color: var(--primary-color);
+      font-size: 12px;
+      text-decoration: none;
+    }
+
+    .helper-link:hover {
+      text-decoration: underline;
+    }
   `;
 
   connectedCallback() {
@@ -314,6 +340,14 @@ export class RsRoomDetail extends LitElement {
       if (prevConfig === null || prevConfig === undefined) {
         this._initFromConfig();
       }
+    }
+
+    if (
+      changedProps.has("config") &&
+      this._optimisticCoverResume &&
+      !this.config?.live?.cover_auto_paused
+    ) {
+      this._optimisticCoverResume = false;
     }
   }
 
@@ -340,6 +374,9 @@ export class RsRoomDetail extends LitElement {
       this._selectedTempSensor = this.config.temperature_sensor;
       this._selectedHumiditySensor = this.config.humidity_sensor ?? "";
       this._selectedOccupancySensors = new Set(this.config.occupancy_sensors ?? []);
+      this._occupancyEcoEnabled = this.config.occupancy_eco_enabled ?? false;
+      this._preheatEnabled = this.config.preheat_enabled ?? true;
+      this._occupancyEcoDelay = this.config.occupancy_eco_delay ?? DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set(this.config.window_sensors ?? []);
       this._windowOpenDelay = this.config.window_open_delay ?? 0;
       this._windowCloseDelay = this.config.window_close_delay ?? 0;
@@ -353,7 +390,7 @@ export class RsRoomDetail extends LitElement {
       this._selectedPresencePersons = this.config.presence_persons ?? [];
       this._displayName = this.config.display_name ?? "";
       this._heatingSystemType = this.config.heating_system_type ?? "";
-      this._passiveDevices = (this.config.passive_devices ?? []).map(pd => ({ ...pd }));
+      this._passiveDevices = (this.config.passive_devices ?? []).map((pd) => ({ ...pd }));
       this._selectedCovers = new Set(this.config.covers ?? []);
       this._coversAutoEnabled = this.config.covers_auto_enabled ?? false;
       this._coversDeployThreshold = this.config.covers_deploy_threshold ?? 1.5;
@@ -384,6 +421,9 @@ export class RsRoomDetail extends LitElement {
       this._selectedTempSensor = "";
       this._selectedHumiditySensor = "";
       this._selectedOccupancySensors = new Set();
+      this._occupancyEcoEnabled = false;
+      this._preheatEnabled = true;
+      this._occupancyEcoDelay = DEFAULT_OCCUPANCY_ECO_DELAY;
       this._selectedWindowSensors = new Set();
       this._windowOpenDelay = 0;
       this._windowCloseDelay = 0;
@@ -425,22 +465,26 @@ export class RsRoomDetail extends LitElement {
     }
     this._dirty = false;
 
-    // A room is "configured" once it has at least one device.
-    // Unconfigured rooms open all panels in edit mode (setup flow).
-    // Configured rooms open all panels in display mode (user clicks pen to edit).
-    const isConfigured = this._devices.length > 0;
-    this._editingSchedule = !isConfigured;
-    this._editingDevices = !isConfigured;
-    this._editingSensors = !isConfigured;
-    this._editingWindows = !isConfigured;
-    this._editingCovers = !isConfigured;
+    // Unconfigured rooms open the device-edit dialog automatically.
+    if (this._devices.length === 0 && this._editing === null) {
+      this._editing = "devices";
+    }
   }
+
+  private _openEdit = (section: EditableSection) => () => {
+    this._editing = section;
+  };
+
+  private _closeEdit = () => {
+    this._editing = null;
+  };
 
   /** Expose effective override for hero-status via the override sub-component. */
   private _getEffectiveOverride(): {
     active: boolean;
     type: import("../types").OverrideType | null;
-    temp: number | null;
+    heat: number | null;
+    cool: number | null;
     until: number | null;
   } {
     const overrideEl = this.shadowRoot?.querySelector(
@@ -455,11 +499,12 @@ export class RsRoomDetail extends LitElement {
       return {
         active: true,
         type: live.override_type,
-        temp: live.override_temp,
+        heat: live.override_heat,
+        cool: live.override_cool,
         until: live.override_until,
       };
     }
-    return { active: false, type: null, temp: null, until: null };
+    return { active: false, type: null, heat: null, cool: null, until: null };
   }
 
   render() {
@@ -467,309 +512,529 @@ export class RsRoomDetail extends LitElement {
 
     return html`
       <div class="detail-layout">
-        <div class="col-left">
-          <rs-hero-status
-            .hass=${this.hass}
-            .area=${this.area}
-            .config=${this.config}
-            .isOutdoor=${this._isOutdoor}
-            .overrideInfo=${this._getEffectiveOverride()}
-            .climateControlActive=${this.climateControlActive && this._climateControlEnabled}
-            @display-name-changed=${this._onDisplayNameChanged}
-          ></rs-hero-status>
+        <rs-hero-status
+          .hass=${this.hass}
+          .area=${this.area}
+          .config=${this.config}
+          .isOutdoor=${this._isOutdoor}
+          .overrideInfo=${this._getEffectiveOverride()}
+          .climateControlActive=${this.climateControlActive && this._climateControlEnabled}
+          @display-name-changed=${this._onDisplayNameChanged}
+        ></rs-hero-status>
 
-          ${!this._isOutdoor
-            ? html`
-                <ha-card class="climate-control-toggle-card">
-                  <rs-toggle-row
+        <div class="detail-grid">
+          ${
+            !this._isOutdoor
+              ? html`
+                  <rs-toggle-card
+                    icon="mdi:power"
                     .label=${localize("room.climate_control_toggle", this.hass.language)}
                     .hint=${localize("room.climate_control_hint", this.hass.language)}
                     .checked=${this._climateControlEnabled}
                     @toggle-changed=${this._onClimateControlToggle}
-                  ></rs-toggle-row>
-                </ha-card>
+                  ></rs-toggle-card>
 
-                <rs-section-card
-                  icon="mdi:cog"
-                  .heading=${localize("room.section.climate_mode", this.hass.language)}
-                  hasInfo
-                >
-                  <div slot="info">
-                    <b>${localize("mode.auto", this.hass.language)}</b> —
-                    ${localize("mode.auto_desc", this.hass.language)}<br />
-                    <b>${localize("mode.heat_only", this.hass.language)}</b> —
-                    ${localize("mode.heat_only_desc", this.hass.language)}<br />
-                    <b>${localize("mode.cool_only", this.hass.language)}</b> —
-                    ${localize("mode.cool_only_desc", this.hass.language)}
-                  </div>
-                  <rs-climate-mode-selector
-                    .climateMode=${this._climateMode}
-                    .language=${this.hass.language}
-                    @mode-changed=${this._onModeChanged}
-                  ></rs-climate-mode-selector>
-                </rs-section-card>
+                  <rs-section-card
+                    icon="mdi:cog"
+                    .heading=${localize("room.section.climate_mode", this.hass.language)}
+                  >
+                    <rs-info-icon slot="header-extras">
+                      <b>${localize("mode.auto", this.hass.language)}</b> —
+                      ${localize("mode.auto_desc", this.hass.language)}<br />
+                      <b>${localize("mode.heat_only", this.hass.language)}</b> —
+                      ${localize("mode.heat_only_desc", this.hass.language)}<br />
+                      <b>${localize("mode.cool_only", this.hass.language)}</b> —
+                      ${localize("mode.cool_only_desc", this.hass.language)}
+                    </rs-info-icon>
+                    <rs-climate-mode-selector
+                      .climateMode=${this._climateMode}
+                      .language=${this.hass.language}
+                      @mode-changed=${this._onModeChanged}
+                    ></rs-climate-mode-selector>
+                  </rs-section-card>
 
-                <rs-section-card
-                  icon="mdi:calendar"
-                  .heading=${localize("room.section.schedule", this.hass.language)}
+                  <rs-section-card
+                    icon="mdi:calendar"
+                    .heading=${localize("room.section.schedule", this.hass.language)}
+                    editable
+                    @edit-click=${this._openEdit("schedule")}
+                  >
+                    <rs-schedule-settings
+                      .hass=${this.hass}
+                      .schedules=${this._schedules}
+                      .scheduleSelectorEntity=${this._scheduleSelectorEntity}
+                      .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
+                      .comfortHeat=${this._comfortHeat}
+                      .comfortCool=${this._comfortCool}
+                      .ecoHeat=${this._ecoHeat}
+                      .ecoCool=${this._ecoCool}
+                      .climateMode=${this._climateMode}
+                      .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+                      .preheatEnabled=${this._preheatEnabled}
+                      .showPreheat=${this._showPreheat()}
+                      .editing=${false}
+                      @schedules-changed=${this._onSchedulesChanged}
+                      @schedule-selector-changed=${this._onScheduleSelectorChanged}
+                      @comfort-heat-changed=${this._onComfortHeatChanged}
+                      @comfort-cool-changed=${this._onComfortCoolChanged}
+                      @eco-heat-changed=${this._onEcoHeatChanged}
+                      @eco-cool-changed=${this._onEcoCoolChanged}
+                    ></rs-schedule-settings>
+                    ${
+                      this.config
+                        ? html`
+                            <rs-override-section
+                              .hass=${this.hass}
+                              .config=${this.config}
+                              .climateMode=${this._climateMode}
+                              .comfortHeat=${this._comfortHeat}
+                              .comfortCool=${this._comfortCool}
+                              .ecoHeat=${this._ecoHeat}
+                              .ecoCool=${this._ecoCool}
+                              .language=${this.hass.language}
+                            ></rs-override-section>
+                          `
+                        : nothing
+                    }
+                  </rs-section-card>
+                `
+              : nothing
+          }
+          ${
+            !this._isOutdoor
+              ? html`
+                  <rs-section-card
+                    icon="mdi:power-plug"
+                    .heading=${localize("room.section.devices", this.hass.language)}
+                    editable
+                    @edit-click=${this._openEdit("devices")}
+                  >
+                    <rs-device-section
+                      .hass=${this.hass}
+                      .area=${this.area}
+                      .editing=${false}
+                      .devices=${this._devices}
+                      .entityModes=${this._entityModes}
+                      .selectedTempSensor=${this._selectedTempSensor}
+                      .valveProtectionExclude=${this._valveProtectionExclude}
+                      .valveProtectionEnabled=${this.valveProtectionEnabled}
+                      .coilDryEnabledGlobal=${this.coilDryEnabled}
+                      .coilDryMinutesGlobal=${this.coilDryMinutes}
+                      .coilDryModeGlobal=${this.coilDryMode}
+                      .coilDryFanModeGlobal=${this.coilDryFanMode}
+                      @device-changed=${this._onDeviceChanged}
+                      @entity-mode-change=${this._onEntityModeChange}
+                      @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
+                    ></rs-device-section>
+                  </rs-section-card>
+
+                  <rs-section-card
+                    icon="mdi:thermometer"
+                    .heading=${localize("room.section.sensors", this.hass.language)}
+                    editable
+                    @edit-click=${this._openEdit("sensors")}
+                  >
+                    <rs-sensor-section
+                      .hass=${this.hass}
+                      .area=${this.area}
+                      .editing=${false}
+                      .temperatureSensor=${this._selectedTempSensor}
+                      .humiditySensor=${this._selectedHumiditySensor}
+                      .occupancySensors=${this._selectedOccupancySensors}
+                      .occupancyEcoEnabled=${this._occupancyEcoEnabled}
+                      .occupancyEcoDelay=${this._occupancyEcoDelay}
+                      .windowSensors=${this._selectedWindowSensors}
+                      .windowOpenDelay=${this._windowOpenDelay}
+                      .windowCloseDelay=${this._windowCloseDelay}
+                      .heatingSystemType=${resolveHeatingSystemType(this._devices)}
+                      .language=${this.hass.language}
+                      @sensor-changed=${this._onSensorChanged}
+                    ></rs-sensor-section>
+                  </rs-section-card>
+
+                  ${
+                    this.presenceEnabled &&
+                    (this.presencePersons.length > 0 || this._selectedPresencePersons.length > 0)
+                      ? html`<rs-section-card
+                          icon="mdi:home-account"
+                          .heading=${localize("room.section.presence", this.hass.language)}
+                          editable
+                          @edit-click=${this._openEdit("presence")}
+                        >
+                          <rs-info-icon
+                            slot="header-extras"
+                            .text=${localize("presence.ignore_hint", this.hass.language)}
+                          ></rs-info-icon>
+                          <rs-presence-section
+                            .hass=${this.hass}
+                            .presenceEnabled=${this.presenceEnabled}
+                            .presencePersons=${this.presencePersons}
+                            .selectedPresencePersons=${this._selectedPresencePersons}
+                            .ignorePresence=${this._ignorePresence}
+                            .editing=${false}
+                            .language=${this.hass.language}
+                            @presence-persons-changed=${this._onPresencePersonsChanged}
+                            @ignore-presence-changed=${this._onIgnorePresenceChanged}
+                          ></rs-presence-section>
+                        </rs-section-card>`
+                      : nothing
+                  }
+                `
+              : nothing
+          }
+          ${
+            !this._isOutdoor
+              ? html`<rs-section-card
+                  icon="mdi:blinds-horizontal"
+                  .heading=${localize("room.section.covers", this.hass.language)}
+                  .badge=${localize("badge.beta", this.hass.language)}
+                  .badgeHint=${localize("badge.beta_hint", this.hass.language)}
                   editable
-                  .editing=${this._editingSchedule}
-                  .doneLabel=${localize("schedule.done", this.hass.language)}
-                  @edit-click=${() => {
-                    this._editingSchedule = true;
-                  }}
-                  @done-click=${() => {
-                    this._editingSchedule = false;
-                  }}
+                  @edit-click=${this._openEdit("covers")}
                 >
-                  <rs-schedule-settings
-                    .hass=${this.hass}
-                    .schedules=${this._schedules}
-                    .scheduleSelectorEntity=${this._scheduleSelectorEntity}
-                    .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
-                    .comfortHeat=${this._comfortHeat}
-                    .comfortCool=${this._comfortCool}
-                    .ecoHeat=${this._ecoHeat}
-                    .ecoCool=${this._ecoCool}
-                    .climateMode=${this._climateMode}
-                    .editing=${this._editingSchedule}
-                    @schedules-changed=${this._onSchedulesChanged}
-                    @schedule-selector-changed=${this._onScheduleSelectorChanged}
-                    @comfort-heat-changed=${this._onComfortHeatChanged}
-                    @comfort-cool-changed=${this._onComfortCoolChanged}
-                    @eco-heat-changed=${this._onEcoHeatChanged}
-                    @eco-cool-changed=${this._onEcoCoolChanged}
-                  ></rs-schedule-settings>
-                  ${this.config
-                    ? html`
-                        <rs-override-section
-                          .hass=${this.hass}
-                          .config=${this.config}
-                          .climateMode=${this._climateMode}
-                          .comfortHeat=${this._comfortHeat}
-                          .comfortCool=${this._comfortCool}
-                          .ecoHeat=${this._ecoHeat}
-                          .ecoCool=${this._ecoCool}
-                          .language=${this.hass.language}
-                        ></rs-override-section>
-                      `
-                    : nothing}
-                </rs-section-card>
-              `
-            : nothing}
-          ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
-        </div>
-
-        <div class="col-right">
-          ${!this._isOutdoor
-            ? html`
-                <rs-section-card
-                  icon="mdi:power-plug"
-                  .heading=${localize("room.section.devices", this.hass.language)}
-                  editable
-                  .editing=${this._editingDevices}
-                  .doneLabel=${localize("devices.done", this.hass.language)}
-                  @edit-click=${() => {
-                    this._editingDevices = true;
-                  }}
-                  @done-click=${() => {
-                    this._editingDevices = false;
-                  }}
-                >
-                  <rs-device-section
+                  <rs-covers-section
                     .hass=${this.hass}
                     .area=${this.area}
-                    .editing=${this._editingDevices}
-                    .devices=${this._devices}
-                    .entityModes=${this._entityModes}
-                    .selectedTempSensor=${this._selectedTempSensor}
-                    .selectedHumiditySensor=${this._selectedHumiditySensor}
-                    .selectedOccupancySensors=${this._selectedOccupancySensors}
-                    .selectedWindowSensors=${this._selectedWindowSensors}
-                    .valveProtectionExclude=${this._valveProtectionExclude}
-                    .valveProtectionEnabled=${this.valveProtectionEnabled}
-                    @device-changed=${this._onDeviceChanged}
-                    @entity-mode-change=${this._onEntityModeChange}
-                    @external-entity-added=${this._onExternalEntityAdded}
-                    @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
-                  ></rs-device-section>
-                </rs-section-card>
-
-                <rs-section-card
-                  icon="mdi:thermometer"
-                  .heading=${localize("room.section.sensors", this.hass.language)}
+                    .editing=${false}
+                    .selectedCovers=${this._selectedCovers}
+                    .autoEnabled=${this._coversAutoEnabled}
+                    .deployThreshold=${this._coversDeployThreshold}
+                    .minPosition=${this._coversMinPosition}
+                    .overrideMinutes=${this._coversOverrideMinutes}
+                    .coverSchedules=${this._coverSchedules}
+                    .coverScheduleSelectorEntity=${this._coverScheduleSelectorEntity}
+                    .activeCoverScheduleIndex=${this.config?.live?.active_cover_schedule_index ?? -1}
+                    .nightClose=${this._coversNightClose}
+                    .nightPosition=${this._coversNightPosition}
+                    .snapDeploy=${this._coversSnapDeploy}
+                    .sensorOnly=${this._coversSensorOnly}
+                    .forcedReason=${this.config?.live?.cover_forced_reason ?? ""}
+                    .autoPaused=${
+                      this._optimisticCoverResume
+                        ? false
+                        : (this.config?.live?.cover_auto_paused ?? false)
+                    }
+                    .overrideUntil=${this.config?.live?.cover_override_until ?? null}
+                    .coverOrientations=${this._coverOrientations}
+                    .nightCloseElevation=${this._coversNightCloseElevation}
+                    .nightCloseOffsetMinutes=${this._coversNightCloseOffsetMinutes}
+                    .outdoorMinTemp=${this._coversOutdoorMinTemp}
+                    .coverMinPositions=${this._coverMinPositions}
+                    @covers-toggle=${this._onCoversToggle}
+                    @setting-changed=${this._onCoverSettingChanged}
+                    @cover-resume-auto=${this._onCoverResumeAuto}
+                  ></rs-covers-section>
+                </rs-section-card>`
+              : nothing
+          }
+          ${
+            !this._isOutdoor &&
+            this._selectedTempSensor &&
+            this._devices.some((d) => d.type === "trv") &&
+            this._devices.some((d) => d.type === "ac")
+              ? html`<rs-section-card
+                  icon="mdi:swap-horizontal"
+                  .heading=${localize("room.section.heat_source", this.hass.language)}
                   editable
-                  .editing=${this._editingSensors}
-                  .doneLabel=${localize("devices.done", this.hass.language)}
-                  @edit-click=${() => {
-                    this._editingSensors = true;
-                  }}
-                  @done-click=${() => {
-                    this._editingSensors = false;
-                  }}
+                  @edit-click=${this._openEdit("heatSource")}
                 >
-                  <rs-sensor-section
+                  <rs-heat-source-section
                     .hass=${this.hass}
-                    .area=${this.area}
-                    .editing=${this._editingSensors}
-                    .temperatureSensor=${this._selectedTempSensor}
-                    .humiditySensor=${this._selectedHumiditySensor}
-                    .occupancySensors=${this._selectedOccupancySensors}
-                    .language=${this.hass.language}
-                    @sensor-changed=${this._onSensorChanged}
-                  ></rs-sensor-section>
-                </rs-section-card>
-
-                <rs-section-card
-                  icon="mdi:window-open-variant"
-                  .heading=${localize("room.section.windows", this.hass.language)}
-                  editable
-                  .editing=${this._editingWindows}
-                  .doneLabel=${localize("devices.done", this.hass.language)}
-                  @edit-click=${() => {
-                    this._editingWindows = true;
-                  }}
-                  @done-click=${() => {
-                    this._editingWindows = false;
-                  }}
-                >
-                  <rs-window-section
-                    .hass=${this.hass}
-                    .area=${this.area}
-                    .editing=${this._editingWindows}
-                    .windowSensors=${this._selectedWindowSensors}
-                    .windowOpenDelay=${this._windowOpenDelay}
-                    .windowCloseDelay=${this._windowCloseDelay}
-                    .heatingSystemType=${resolveHeatingSystemType(this._devices)}
-                    .language=${this.hass.language}
-                    @window-config-changed=${this._onWindowConfigChanged}
-                  ></rs-window-section>
-                </rs-section-card>
-
-                <rs-presence-section
-                  .hass=${this.hass}
-                  .presenceEnabled=${this.presenceEnabled}
-                  .presencePersons=${this.presencePersons}
-                  .selectedPresencePersons=${this._selectedPresencePersons}
-                  .ignorePresence=${this._ignorePresence}
-                  .editing=${this._editingPresence}
-                  .language=${this.hass.language}
-                  @presence-persons-changed=${this._onPresencePersonsChanged}
-                  @ignore-presence-changed=${this._onIgnorePresenceChanged}
-                  @editing-changed=${this._onPresenceEditingChanged}
-                ></rs-presence-section>
-              `
-            : nothing}
-          ${!this._isOutdoor
-            ? html`<rs-section-card
-                icon="mdi:blinds-horizontal"
-                .heading=${localize("room.section.covers", this.hass.language)}
-                .badge=${localize("badge.beta", this.hass.language)}
-                .badgeHint=${localize("badge.beta_hint", this.hass.language)}
-                hasInfo
-                editable
-                .editing=${this._editingCovers}
-                .doneLabel=${localize("covers.done", this.hass.language)}
-                @edit-click=${() => {
-                  this._editingCovers = true;
-                }}
-                @done-click=${() => {
-                  this._editingCovers = false;
-                }}
-              >
-                <div slot="info">
-                  <b>${localize("covers.info.selection_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.selection_body", this.hass.language)}
-                  <br /><br />
-                  <b>${localize("covers.info.schedule_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.schedule_body", this.hass.language)}
-                  <div class="yaml-block">
-                    ${unsafeHTML(
-                      '<span class="yaml-key">schedule</span>:\n' +
-                        '  <span class="yaml-key">cover_evening</span>:\n' +
-                        '    <span class="yaml-key">name</span>: <span class="yaml-value">Cover Evening</span>\n' +
-                        '    <span class="yaml-key">monday</span>:\n' +
-                        '      - <span class="yaml-key">from</span>: <span class="yaml-value">"20:00:00"</span>\n' +
-                        '        <span class="yaml-key">to</span>: <span class="yaml-value">"06:00:00"</span>\n' +
-                        '        <span class="yaml-key">data</span>:\n' +
-                        '          <span class="yaml-key">position</span>: <span class="yaml-value">10</span>',
-                    )}
-                  </div>
-                  <b>${localize("covers.info.solar_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.solar_body", this.hass.language)}
-                  <br /><br />
-                  <b>${localize("covers.info.night_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.night_body", this.hass.language)}
-                  <br /><br />
-                  <b>${localize("covers.info.override_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.override_body", this.hass.language)}
-                  <br /><br />
-                  <b>${localize("covers.info.priority_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.priority_body", this.hass.language)}
-                  <br /><br />
-                  <b>${localize("covers.info.entities_title", this.hass.language)}</b><br />
-                  ${localize("covers.info.entities_body", this.hass.language)}
-                </div>
-                <rs-covers-section
-                  .hass=${this.hass}
-                  .area=${this.area}
-                  .editing=${this._editingCovers}
-                  .selectedCovers=${this._selectedCovers}
-                  .autoEnabled=${this._coversAutoEnabled}
-                  .deployThreshold=${this._coversDeployThreshold}
-                  .minPosition=${this._coversMinPosition}
-                  .overrideMinutes=${this._coversOverrideMinutes}
-                  .coverSchedules=${this._coverSchedules}
-                  .coverScheduleSelectorEntity=${this._coverScheduleSelectorEntity}
-                  .activeCoverScheduleIndex=${this.config?.live?.active_cover_schedule_index ?? -1}
-                  .nightClose=${this._coversNightClose}
-                  .nightPosition=${this._coversNightPosition}
-                  .sensorOnly=${this._coversSensorOnly}
-                  .snapDeploy=${this._coversSnapDeploy}
-                  .forcedReason=${this.config?.live?.cover_forced_reason ?? ""}
-                  .autoPaused=${this.config?.live?.cover_auto_paused ?? false}
-                  .coverOrientations=${this._coverOrientations}
-                  .nightCloseElevation=${this._coversNightCloseElevation}
-                  .nightCloseOffsetMinutes=${this._coversNightCloseOffsetMinutes}
-                  .outdoorMinTemp=${this._coversOutdoorMinTemp}
-                  .coverMinPositions=${this._coverMinPositions}
-                  @covers-toggle=${this._onCoversToggle}
-                  @setting-changed=${this._onCoverSettingChanged}
-                ></rs-covers-section>
-              </rs-section-card>`
-            : nothing}
-          ${!this._isOutdoor &&
-          this._selectedTempSensor &&
-          this._devices.some((d) => d.type === "trv") &&
-          this._devices.some((d) => d.type === "ac")
-            ? html`<rs-section-card
-                icon="mdi:swap-horizontal"
-                .heading=${localize("room.section.heat_source", this.hass.language)}
-              >
-                <rs-heat-source-section
-                  .hass=${this.hass}
-                  .enabled=${this._heatSourceOrchestration}
-                  .primaryDelta=${this._heatSourcePrimaryDelta}
-                  .outdoorThreshold=${this._heatSourceOutdoorThreshold}
-                  .acMinOutdoor=${this._heatSourceAcMinOutdoor}
-                  @setting-changed=${this._onHeatSourceSettingChanged}
-                ></rs-heat-source-section>
-              </rs-section-card>`
-            : nothing}
-
+                    .editing=${false}
+                    .enabled=${this._heatSourceOrchestration}
+                    .primaryDelta=${this._heatSourcePrimaryDelta}
+                    .outdoorThreshold=${this._heatSourceOutdoorThreshold}
+                    .acMinOutdoor=${this._heatSourceAcMinOutdoor}
+                    @setting-changed=${this._onHeatSourceSettingChanged}
+                  ></rs-heat-source-section>
+                </rs-section-card>`
+              : nothing
+          }
           ${this._renderPassiveDevicesSection()}
 
-          <ha-card class="outdoor-toggle-card">
-            <rs-toggle-row
-              .label=${localize("room.outdoor_toggle", this.hass.language)}
-              .hint=${localize("room.outdoor_hint", this.hass.language)}
-              .checked=${this._isOutdoor}
-              @toggle-changed=${this._onOutdoorToggle}
-            ></rs-toggle-row>
-          </ha-card>
+          <rs-toggle-card
+            icon="mdi:tree"
+            .label=${localize("room.outdoor_toggle", this.hass.language)}
+            .hint=${localize("room.outdoor_hint", this.hass.language)}
+            .checked=${this._isOutdoor}
+            @toggle-changed=${this._onOutdoorToggle}
+          ></rs-toggle-card>
         </div>
+        ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
+        ${this._renderEditDialog()}
       </div>
     `;
+  }
+
+  private _renderEditDialog() {
+    if (this._editing === null) return nothing;
+    const lang = this.hass.language;
+
+    switch (this._editing) {
+      case "schedule":
+        return html`<rs-edit-dialog
+          open
+          icon="mdi:calendar"
+          .heading=${localize("room.section.schedule", lang)}
+          hasInfo
+          @rs-dialog-closed=${this._closeEdit}
+        >
+          <div slot="info">
+            <p><strong>${localize("schedule.help_temps_title", lang)}</strong></p>
+            <p>${localize("schedule.help_temps", lang)}</p>
+            <ol style="margin: 4px 0 0 0; padding-left: 20px; line-height: 1.8">
+              <li>${unsafeHTML(localize("schedule.help_temps_1", lang))}</li>
+              <li>${unsafeHTML(localize("schedule.help_temps_2", lang))}</li>
+              <li>${unsafeHTML(localize("schedule.help_temps_3", lang))}</li>
+              <li>${unsafeHTML(localize("schedule.help_temps_4", lang))}</li>
+            </ol>
+            <p style="margin-top: 12px">
+              <strong>${localize("schedule.help_block_title", lang)}</strong>
+            </p>
+            <p>${unsafeHTML(localize("schedule.help_block", lang))}</p>
+            <div class="yaml-block">
+              ${unsafeHTML(
+                '<span class="yaml-key">schedule</span>:\n' +
+                  '  <span class="yaml-key">living_room_heating</span>:\n' +
+                  '    <span class="yaml-key">name</span>: <span class="yaml-value">Living Room Heating</span>\n' +
+                  '    <span class="yaml-key">monday</span>:\n' +
+                  '      - <span class="yaml-key">from</span>: <span class="yaml-value">"06:00:00"</span>\n' +
+                  '        <span class="yaml-key">to</span>: <span class="yaml-value">"08:00:00"</span>\n' +
+                  '        <span class="yaml-key">data</span>:\n' +
+                  '          <span class="yaml-key">temperature</span>: <span class="yaml-value">23</span>\n' +
+                  '      - <span class="yaml-key">from</span>: <span class="yaml-value">"17:00:00"</span>\n' +
+                  '        <span class="yaml-key">to</span>: <span class="yaml-value">"22:00:00"</span>\n' +
+                  '        <span class="yaml-key">data</span>:\n' +
+                  '          <span class="yaml-key">temperature</span>: <span class="yaml-value">21.5</span>',
+              )}
+            </div>
+            <p style="margin-top: 8px">${unsafeHTML(localize("schedule.help_block_note", lang))}</p>
+            <p style="margin-top: 12px">
+              <strong>${localize("schedule.help_split_title", lang)}</strong>
+            </p>
+            <p>${unsafeHTML(localize("schedule.help_split", lang))}</p>
+            <div class="yaml-block">
+              ${unsafeHTML(
+                '- <span class="yaml-key">from</span>: <span class="yaml-value">"06:00:00"</span>\n' +
+                  '  <span class="yaml-key">to</span>: <span class="yaml-value">"08:00:00"</span>\n' +
+                  '  <span class="yaml-key">data</span>:\n' +
+                  '    <span class="yaml-key">heat_temperature</span>: <span class="yaml-value">21</span>\n' +
+                  '    <span class="yaml-key">cool_temperature</span>: <span class="yaml-value">24</span>',
+              )}
+            </div>
+            <p style="margin-top: 8px">${unsafeHTML(localize("schedule.help_split_note", lang))}</p>
+            <p style="margin-top: 12px">
+              <strong>${localize("schedule.help_multi_title", lang)}</strong>
+            </p>
+            <p>${unsafeHTML(localize("schedule.help_multi", lang))}</p>
+          </div>
+          <rs-schedule-settings
+            .hass=${this.hass}
+            .schedules=${this._schedules}
+            .scheduleSelectorEntity=${this._scheduleSelectorEntity}
+            .activeScheduleIndex=${this.config?.live?.active_schedule_index ?? -1}
+            .comfortHeat=${this._comfortHeat}
+            .comfortCool=${this._comfortCool}
+            .ecoHeat=${this._ecoHeat}
+            .ecoCool=${this._ecoCool}
+            .climateMode=${this._climateMode}
+            .scheduleTempWarnings=${this.config?.live?.schedule_temp_warnings ?? []}
+            .preheatEnabled=${this._preheatEnabled}
+            .showPreheat=${this._showPreheat()}
+            .editing=${true}
+            @schedules-changed=${this._onSchedulesChanged}
+            @schedule-selector-changed=${this._onScheduleSelectorChanged}
+            @comfort-heat-changed=${this._onComfortHeatChanged}
+            @comfort-cool-changed=${this._onComfortCoolChanged}
+            @eco-heat-changed=${this._onEcoHeatChanged}
+            @eco-cool-changed=${this._onEcoCoolChanged}
+            @preheat-changed=${this._onPreheatChanged}
+          ></rs-schedule-settings>
+        </rs-edit-dialog>`;
+      case "devices":
+        return html`<rs-edit-dialog
+          open
+          icon="mdi:power-plug"
+          .heading=${localize("room.section.devices", lang)}
+          hasInfo
+          @rs-dialog-closed=${this._closeEdit}
+        >
+          <div slot="info">
+            <b>${localize("devices.info.types_title", lang)}</b><br />
+            ${localize("devices.info.types_body", lang)}
+            <br /><br />
+            <b>${localize("devices.info.control_title", lang)}</b><br />
+            ${localize("devices.info.control_body", lang)}
+            <br /><br />
+            <b>${localize("devices.info.modes_title", lang)}</b><br />
+            ${localize("devices.info.modes_body", lang)}
+            <br /><br />
+            <b>${localize("devices.info.heat_source_title", lang)}</b><br />
+            ${localize("devices.info.heat_source_body", lang)}
+            <br />
+            <a class="helper-link" href=${CONTROL_DOCS_URL} target="_blank" rel="noreferrer">
+              ${localize("common.learn_more", lang)}
+            </a>
+          </div>
+          <rs-device-section
+            .hass=${this.hass}
+            .area=${this.area}
+            .editing=${true}
+            .devices=${this._devices}
+            .entityModes=${this._entityModes}
+            .selectedTempSensor=${this._selectedTempSensor}
+            .valveProtectionExclude=${this._valveProtectionExclude}
+            .valveProtectionEnabled=${this.valveProtectionEnabled}
+            .coilDryEnabledGlobal=${this.coilDryEnabled}
+            .coilDryMinutesGlobal=${this.coilDryMinutes}
+            .coilDryModeGlobal=${this.coilDryMode}
+            .coilDryFanModeGlobal=${this.coilDryFanMode}
+            @device-changed=${this._onDeviceChanged}
+            @entity-mode-change=${this._onEntityModeChange}
+            @valve-protection-exclude-toggle=${this._onValveProtectionExcludeToggle}
+          ></rs-device-section>
+        </rs-edit-dialog>`;
+      case "sensors":
+        return html`<rs-edit-dialog
+          open
+          icon="mdi:thermometer"
+          .heading=${localize("room.section.sensors", lang)}
+          @rs-dialog-closed=${this._closeEdit}
+        >
+          <rs-sensor-section
+            .hass=${this.hass}
+            .area=${this.area}
+            .editing=${true}
+            .temperatureSensor=${this._selectedTempSensor}
+            .humiditySensor=${this._selectedHumiditySensor}
+            .occupancySensors=${this._selectedOccupancySensors}
+            .occupancyEcoEnabled=${this._occupancyEcoEnabled}
+            .occupancyEcoDelay=${this._occupancyEcoDelay}
+            .windowSensors=${this._selectedWindowSensors}
+            .windowOpenDelay=${this._windowOpenDelay}
+            .windowCloseDelay=${this._windowCloseDelay}
+            .heatingSystemType=${resolveHeatingSystemType(this._devices)}
+            .language=${this.hass.language}
+            @sensor-changed=${this._onSensorChanged}
+          ></rs-sensor-section>
+        </rs-edit-dialog>`;
+      case "presence":
+        return html`<rs-edit-dialog
+          open
+          icon="mdi:home-account"
+          .heading=${localize("room.section.presence", lang)}
+          hasInfo
+          @rs-dialog-closed=${this._closeEdit}
+        >
+          <div slot="info">
+            <b>${localize("presence.room_help_header", lang)}</b><br />
+            ${localize("presence.room_help_body", lang)}
+            <br /><br />
+            <b>${localize("presence.help_ignore_title", lang)}</b><br />
+            ${localize("presence.help_ignore_body", lang)}
+          </div>
+          <rs-presence-section
+            .hass=${this.hass}
+            .presenceEnabled=${this.presenceEnabled}
+            .presencePersons=${this.presencePersons}
+            .selectedPresencePersons=${this._selectedPresencePersons}
+            .ignorePresence=${this._ignorePresence}
+            .editing=${true}
+            .language=${this.hass.language}
+            @presence-persons-changed=${this._onPresencePersonsChanged}
+            @ignore-presence-changed=${this._onIgnorePresenceChanged}
+          ></rs-presence-section>
+        </rs-edit-dialog>`;
+      case "covers":
+        return html`<rs-edit-dialog
+          open
+          icon="mdi:blinds-horizontal"
+          .heading=${localize("room.section.covers", lang)}
+          hasInfo
+          @rs-dialog-closed=${this._closeEdit}
+        >
+          <div slot="info">
+            <b>${localize("covers.info.selection_title", lang)}</b><br />
+            ${localize("covers.info.selection_body", lang)}
+            <br /><br />
+            <b>${localize("covers.info.schedule_title", lang)}</b><br />
+            ${localize("covers.info.schedule_body", lang)}
+            <div class="yaml-block">
+              ${unsafeHTML(
+                '<span class="yaml-key">schedule</span>:\n' +
+                  '  <span class="yaml-key">cover_evening</span>:\n' +
+                  '    <span class="yaml-key">name</span>: <span class="yaml-value">Cover Evening</span>\n' +
+                  '    <span class="yaml-key">monday</span>:\n' +
+                  '      - <span class="yaml-key">from</span>: <span class="yaml-value">"20:00:00"</span>\n' +
+                  '        <span class="yaml-key">to</span>: <span class="yaml-value">"06:00:00"</span>\n' +
+                  '        <span class="yaml-key">data</span>:\n' +
+                  '          <span class="yaml-key">position</span>: <span class="yaml-value">10</span>',
+              )}
+            </div>
+            <b>${localize("covers.info.solar_title", lang)}</b><br />
+            ${localize("covers.info.solar_body", lang)}
+            <br /><br />
+            <b>${localize("covers.info.night_title", lang)}</b><br />
+            ${localize("covers.info.night_body", lang)}
+            <br /><br />
+            <b>${localize("covers.info.override_title", lang)}</b><br />
+            ${localize("covers.info.override_body", lang)}
+            <br /><br />
+            <b>${localize("covers.info.priority_title", lang)}</b><br />
+            ${localize("covers.info.priority_body", lang)}
+            <br /><br />
+            <b>${localize("covers.info.entities_title", lang)}</b><br />
+            ${localize("covers.info.entities_body", lang)}
+          </div>
+          <rs-covers-section
+            .hass=${this.hass}
+            .area=${this.area}
+            .editing=${true}
+            .selectedCovers=${this._selectedCovers}
+            .autoEnabled=${this._coversAutoEnabled}
+            .deployThreshold=${this._coversDeployThreshold}
+            .minPosition=${this._coversMinPosition}
+            .overrideMinutes=${this._coversOverrideMinutes}
+            .coverSchedules=${this._coverSchedules}
+            .coverScheduleSelectorEntity=${this._coverScheduleSelectorEntity}
+            .activeCoverScheduleIndex=${this.config?.live?.active_cover_schedule_index ?? -1}
+            .nightClose=${this._coversNightClose}
+            .nightPosition=${this._coversNightPosition}
+            .snapDeploy=${this._coversSnapDeploy}
+            .sensorOnly=${this._coversSensorOnly}
+            .forcedReason=${this.config?.live?.cover_forced_reason ?? ""}
+            .autoPaused=${
+              this._optimisticCoverResume ? false : (this.config?.live?.cover_auto_paused ?? false)
+            }
+            .overrideUntil=${this.config?.live?.cover_override_until ?? null}
+            .coverOrientations=${this._coverOrientations}
+            .nightCloseElevation=${this._coversNightCloseElevation}
+            .nightCloseOffsetMinutes=${this._coversNightCloseOffsetMinutes}
+            .outdoorMinTemp=${this._coversOutdoorMinTemp}
+            .coverMinPositions=${this._coverMinPositions}
+            @covers-toggle=${this._onCoversToggle}
+            @setting-changed=${this._onCoverSettingChanged}
+            @cover-resume-auto=${this._onCoverResumeAuto}
+          ></rs-covers-section>
+        </rs-edit-dialog>`;
+      case "heatSource":
+        return html`<rs-edit-dialog
+          open
+          icon="mdi:swap-horizontal"
+          .heading=${localize("room.section.heat_source", lang)}
+          @rs-dialog-closed=${this._closeEdit}
+        >
+          <rs-heat-source-section
+            .hass=${this.hass}
+            .editing=${true}
+            .enabled=${this._heatSourceOrchestration}
+            .primaryDelta=${this._heatSourcePrimaryDelta}
+            .outdoorThreshold=${this._heatSourceOutdoorThreshold}
+            .acMinOutdoor=${this._heatSourceAcMinOutdoor}
+            @setting-changed=${this._onHeatSourceSettingChanged}
+          ></rs-heat-source-section>
+        </rs-edit-dialog>`;
+    }
   }
 
   // ---- Child event handlers ----
@@ -804,6 +1069,27 @@ export class RsRoomDetail extends LitElement {
   private _onEcoHeatChanged(e: CustomEvent<{ value: number }>) {
     this._ecoHeat = e.detail.value;
     if (this._ecoCool < this._ecoHeat) this._ecoCool = this._ecoHeat;
+    this._autoSave();
+  }
+
+  /**
+   * Only where the pre-heat lead applies: MPC with a room sensor, not cool_only. Underfloor
+   * heating pre-heats through its own control, unless an orchestrated AC heats the room.
+   */
+  private _showPreheat(): boolean {
+    if (
+      this.controlMode !== "mpc" ||
+      !this._selectedTempSensor ||
+      this._climateMode === "cool_only"
+    ) {
+      return false;
+    }
+    const acHeats = this._heatSourceOrchestration && this._devices.some((d) => d.type === "ac");
+    return resolveHeatingSystemType(this._devices) !== "underfloor" || acHeats;
+  }
+
+  private _onPreheatChanged(e: CustomEvent<{ value: boolean }>) {
+    this._preheatEnabled = e.detail.value;
     this._autoSave();
   }
 
@@ -862,7 +1148,9 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
-  private _onSensorChanged(e: CustomEvent<{ key: string; value: string | string[] }>) {
+  private _onSensorChanged(
+    e: CustomEvent<{ key: string; value: string | string[] | number | boolean }>,
+  ) {
     const { key, value } = e.detail;
     if (key === "temperature_sensor") {
       this._selectedTempSensor = value as string;
@@ -870,13 +1158,11 @@ export class RsRoomDetail extends LitElement {
       this._selectedHumiditySensor = value as string;
     } else if (key === "occupancy_sensors") {
       this._selectedOccupancySensors = new Set(value as string[]);
-    }
-    this._autoSave();
-  }
-
-  private _onWindowConfigChanged(e: CustomEvent<{ key: string; value: string[] | number }>) {
-    const { key, value } = e.detail;
-    if (key === "window_sensors") {
+    } else if (key === "occupancy_eco_enabled") {
+      this._occupancyEcoEnabled = value as boolean;
+    } else if (key === "occupancy_eco_delay") {
+      this._occupancyEcoDelay = value as number;
+    } else if (key === "window_sensors") {
       this._selectedWindowSensors = new Set(value as string[]);
     } else if (key === "window_open_delay") {
       this._windowOpenDelay = value as number;
@@ -898,29 +1184,6 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
-  private _onExternalEntityAdded(
-    e: CustomEvent<{
-      entityId: string;
-      category: "temp" | "humidity" | "window" | "occupancy";
-    }>,
-  ) {
-    const { entityId, category } = e.detail;
-    if (category === "temp") {
-      this._selectedTempSensor = entityId;
-    } else if (category === "window") {
-      const next = new Set(this._selectedWindowSensors);
-      next.add(entityId);
-      this._selectedWindowSensors = next;
-    } else if (category === "occupancy") {
-      const next = new Set(this._selectedOccupancySensors);
-      next.add(entityId);
-      this._selectedOccupancySensors = next;
-    } else {
-      this._selectedHumiditySensor = entityId;
-    }
-    this._autoSave();
-  }
-
   private _onPresencePersonsChanged(e: CustomEvent<string[]>) {
     this._selectedPresencePersons = e.detail;
     this._autoSave();
@@ -929,10 +1192,6 @@ export class RsRoomDetail extends LitElement {
   private _onIgnorePresenceChanged(e: CustomEvent<boolean>) {
     this._ignorePresence = e.detail;
     this._autoSave();
-  }
-
-  private _onPresenceEditingChanged(e: CustomEvent<{ editing: boolean }>) {
-    this._editingPresence = e.detail.editing;
   }
 
   // ---- Cover event handlers ----
@@ -985,6 +1244,18 @@ export class RsRoomDetail extends LitElement {
     this._autoSave();
   }
 
+  private async _onCoverResumeAuto() {
+    this._optimisticCoverResume = true;
+    try {
+      await this.hass.callWS({
+        type: "roommind/covers/clear_override",
+        area_id: this.area.area_id,
+      });
+    } catch {
+      this._optimisticCoverResume = false;
+    }
+  }
+
   // ---- Heat source orchestration ----
 
   private _onHeatSourceSettingChanged(e: CustomEvent<{ key: string; value: unknown }>) {
@@ -1035,6 +1306,9 @@ export class RsRoomDetail extends LitElement {
         temperature_sensor: this._selectedTempSensor,
         humidity_sensor: this._selectedHumiditySensor,
         occupancy_sensors: [...this._selectedOccupancySensors],
+        occupancy_eco_enabled: this._occupancyEcoEnabled,
+        occupancy_eco_delay: this._occupancyEcoDelay,
+        preheat_enabled: this._preheatEnabled,
         window_sensors: [...this._selectedWindowSensors],
         window_open_delay: this._windowOpenDelay,
         window_close_delay: this._windowCloseDelay,
@@ -1113,32 +1387,36 @@ export class RsRoomDetail extends LitElement {
           this._editingPassiveDevices = false;
         }}
       >
-        ${editing
-          ? html`<p class="passive-section-hint">
-              ${localize("passive_devices.section_hint", lang)}
-            </p>`
-          : nothing}
-        ${this._passiveDevices.length === 0 && !editing
-          ? html`<div style="padding: 0 14px 14px">
-              <span class="field-hint"
-                >${localize("passive_devices.none_configured", lang)}</span
-              >
-            </div>`
-          : this._passiveDevices.map((pd, i) => this._renderPassiveDeviceRow(pd, i, editing))}
-        ${editing
-          ? html`
-              <div class="passive-entity-picker-wrap">
-                <ha-entity-picker
-                  .hass=${this.hass}
-                  .includeDomains=${["climate", "binary_sensor", "input_boolean"]}
-                  .entityFilter=${this._passiveEntityFilter}
-                  .value=${""}
-                  label=${localize("passive_devices.add", lang)}
-                  @value-changed=${this._onPassiveEntityPicked}
-                ></ha-entity-picker>
-              </div>
-            `
-          : nothing}
+        ${
+          editing
+            ? html`<p class="passive-section-hint">
+                ${localize("passive_devices.section_hint", lang)}
+              </p>`
+            : nothing
+        }
+        ${
+          this._passiveDevices.length === 0 && !editing
+            ? html`<div style="padding: 0 14px 14px">
+                <span class="field-hint">${localize("passive_devices.none_configured", lang)}</span>
+              </div>`
+            : this._passiveDevices.map((pd, i) => this._renderPassiveDeviceRow(pd, i, editing))
+        }
+        ${
+          editing
+            ? html`
+                <div class="passive-entity-picker-wrap">
+                  <ha-entity-picker
+                    .hass=${this.hass}
+                    .includeDomains=${["climate", "binary_sensor", "input_boolean"]}
+                    .entityFilter=${this._passiveEntityFilter}
+                    .value=${""}
+                    label=${localize("passive_devices.add", lang)}
+                    @value-changed=${this._onPassiveEntityPicked}
+                  ></ha-entity-picker>
+                </div>
+              `
+            : nothing
+        }
       </rs-section-card>
     `;
   }
@@ -1160,75 +1438,75 @@ export class RsRoomDetail extends LitElement {
           <div class="passive-device-name">${friendlyName}</div>
           <div class="passive-device-entity">${pd.entity_id}</div>
         </div>
-        ${editing
-          ? html`
-              <div class="passive-selects">
-                <ha-select
-                  class="passive-select"
-                  outlined
-                  .value=${pd.mode}
-                  @selected=${(e: Event) => {
-                    const val =
-                      (e as CustomEvent).detail?.value ??
-                      (e.target as HTMLSelectElement).value;
-                    if (!val) return;
-                    const updated = [...this._passiveDevices];
-                    updated[i] = {
-                      ...updated[i],
-                      mode: val as "auto" | "cooling" | "heating",
-                    };
-                    this._passiveDevices = updated;
+        ${
+          editing
+            ? html`
+                <div class="passive-selects">
+                  <ha-select
+                    class="passive-select"
+                    outlined
+                    .value=${pd.mode}
+                    @selected=${(e: Event) => {
+                      const val =
+                        (e as CustomEvent).detail?.value ?? (e.target as HTMLSelectElement).value;
+                      if (!val) return;
+                      const updated = [...this._passiveDevices];
+                      updated[i] = {
+                        ...updated[i],
+                        mode: val as "auto" | "cooling" | "heating",
+                      };
+                      this._passiveDevices = updated;
+                      this._autoSave();
+                    }}
+                    @closed=${(e: Event) => e.stopPropagation()}
+                    fixedMenuPosition
+                  >
+                    <ha-list-item value="auto"
+                      >${localize("passive_devices.mode_auto", lang)}</ha-list-item
+                    >
+                    <ha-list-item value="cooling"
+                      >${localize("passive_devices.mode_cooling", lang)}</ha-list-item
+                    >
+                    <ha-list-item value="heating"
+                      >${localize("passive_devices.mode_heating", lang)}</ha-list-item
+                    >
+                  </ha-select>
+                  <ha-textfield
+                    class="passive-pf-field"
+                    type="number"
+                    min="0.01"
+                    max="5"
+                    step="0.1"
+                    .label=${localize("passive_devices.power_fraction", lang)}
+                    .value=${String(pd.power_fraction)}
+                    @change=${(e: Event) => {
+                      const val = parseFloat((e.target as HTMLInputElement).value);
+                      if (!val || val <= 0) return;
+                      const updated = [...this._passiveDevices];
+                      updated[i] = { ...updated[i], power_fraction: val };
+                      this._passiveDevices = updated;
+                      this._autoSave();
+                    }}
+                  ></ha-textfield>
+                </div>
+                <button
+                  class="passive-remove-btn"
+                  title=${localize("passive_devices.remove", lang)}
+                  @click=${() => {
+                    this._passiveDevices = this._passiveDevices.filter((_, idx) => idx !== i);
                     this._autoSave();
                   }}
-                  @closed=${(e: Event) => e.stopPropagation()}
-                  fixedMenuPosition
                 >
-                  <ha-list-item value="auto"
-                    >${localize("passive_devices.mode_auto", lang)}</ha-list-item
-                  >
-                  <ha-list-item value="cooling"
-                    >${localize("passive_devices.mode_cooling", lang)}</ha-list-item
-                  >
-                  <ha-list-item value="heating"
-                    >${localize("passive_devices.mode_heating", lang)}</ha-list-item
-                  >
-                </ha-select>
-                <ha-textfield
-                  class="passive-pf-field"
-                  type="number"
-                  min="0.01"
-                  max="5"
-                  step="0.1"
-                  .label=${localize("passive_devices.power_fraction", lang)}
-                  .value=${String(pd.power_fraction)}
-                  @change=${(e: Event) => {
-                    const val = parseFloat((e.target as HTMLInputElement).value);
-                    if (!val || val <= 0) return;
-                    const updated = [...this._passiveDevices];
-                    updated[i] = { ...updated[i], power_fraction: val };
-                    this._passiveDevices = updated;
-                    this._autoSave();
-                  }}
-                ></ha-textfield>
-              </div>
-              <button
-                class="passive-remove-btn"
-                title=${localize("passive_devices.remove", lang)}
-                @click=${() => {
-                  this._passiveDevices = this._passiveDevices.filter((_, idx) => idx !== i);
-                  this._autoSave();
-                }}
-              >
-                <ha-icon icon="mdi:close" style="--mdc-icon-size: 18px"></ha-icon>
-              </button>
-            `
-          : html`
-              <span class="passive-mode-badge">${modeBadgeLabel}</span>
-              <span
-                style="font-size:12px; color:var(--secondary-text-color); flex-shrink:0"
-                >${pd.power_fraction}×</span
-              >
-            `}
+                  <ha-icon icon="mdi:close" style="--mdc-icon-size: 18px"></ha-icon>
+                </button>
+              `
+            : html`
+                <span class="passive-mode-badge">${modeBadgeLabel}</span>
+                <span style="font-size:12px; color:var(--secondary-text-color); flex-shrink:0"
+                  >${pd.power_fraction}×</span
+                >
+              `
+        }
       </div>
     `;
   }

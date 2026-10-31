@@ -40,24 +40,46 @@ export interface RoomLiveData {
   device_setpoint: number | null; // Device target temp in Full Control mode
   override_active: boolean;
   override_type: OverrideType | null;
-  override_temp: number | null;
+  override_heat: number | null;
+  override_cool: number | null;
   override_until: number | null;
+  override_suppressed: boolean;
   active_schedule_index: number;
   window_open: boolean;
   confidence: number | null;
   mpc_active: boolean;
   presence_away: boolean;
+  occupancy_vacant?: boolean;
   mold_risk_level: "ok" | "warning" | "critical";
   mold_surface_rh: number | null;
+  mold_surface_temp: number | null;
   mold_prevention_active: boolean;
   mold_prevention_delta: number;
   blind_position: number | null;
   cover_auto_paused: boolean;
+  cover_override_until?: number | null;
   cover_forced_reason: string;
   active_cover_schedule_index: number;
   cover_shading_active: boolean;
   cover_shading_position: number | null;
   active_heat_sources: string | null;
+  learning_paused_reason: "outdoor_unavailable" | null;
+  compressor_protection_active: boolean;
+  compressor_protection_reason: "min_off" | "min_run" | null;
+  compressor_protection_until: number | null;
+  coil_dry_active: boolean;
+  coil_dry_phase: "drain" | "blow" | null;
+  coil_dry_until: number | null;
+  coil_dry_entities: string[];
+  schedule_temp_warnings: ScheduleTempWarning[];
+}
+
+/** A schedule block temperature the backend discarded as implausible (#395). */
+export interface ScheduleTempWarning {
+  day: string; // lowercase English weekday, e.g. "monday"
+  from: string; // "HH:MM:SS"
+  field: "temperature" | "heat_temperature" | "cool_temperature";
+  value: string; // the offending raw value; may not be numeric
 }
 
 export type DeviceType = "trv" | "ac";
@@ -68,16 +90,21 @@ export interface DeviceConfig {
   type: DeviceType;
   role: DeviceRole;
   heating_system_type?: string;
-  idle_action?: "off" | "fan_only" | "setback"; // default "off"
+  idle_action?: "off" | "fan_only" | "setback" | "low"; // default "off"
   idle_fan_mode?: string; // default "low"
   setpoint_mode?: "proportional" | "direct"; // default "proportional"
+  setpoint_offset?: number; // °C added to the room target in direct mode, default 0
+  coil_dry?: "inherit" | "on" | "off"; // default "inherit"
+  coil_dry_minutes?: number; // 0 = inherit global
+  coil_dry_mode?: "" | "fan_only" | "dry"; // "" = inherit global
+  coil_dry_fan_mode?: string; // "" = inherit global, "__keep__" = keep current
+  valve_opening_entity?: string; // number entity for direct valve opening degree (0-100%)
+  valve_closing_entity?: string; // number entity for direct valve closing degree (0-100%)
+  valve_closing_mode?: "closing_degree" | "idle_opening"; // idle_opening: the second entity is the opening while idle (SONOFF TRV-ZBT)
 }
 
 export type ConflictResolution =
-  | "heating_priority"
-  | "cooling_priority"
-  | "majority"
-  | "outdoor_temp";
+  "heating_priority" | "cooling_priority" | "majority" | "outdoor_temp";
 
 export interface CompressorGroup {
   id: string;
@@ -99,6 +126,9 @@ export interface RoomConfig {
   temperature_sensor: string;
   humidity_sensor: string;
   occupancy_sensors?: string[];
+  occupancy_eco_enabled?: boolean;
+  occupancy_eco_delay?: number;
+  preheat_enabled?: boolean;
   window_sensors: string[];
   window_open_delay: number;
   window_close_delay: number;
@@ -111,7 +141,8 @@ export interface RoomConfig {
   comfort_cool: number;
   eco_heat: number;
   eco_cool: number;
-  override_temp?: number | null;
+  override_heat?: number | null;
+  override_cool?: number | null;
   override_until?: number | null;
   override_type?: OverrideType | null;
   presence_persons?: string[];
@@ -154,6 +185,7 @@ export interface GlobalSettings {
   control_mode?: "mpc" | "bangbang";
   comfort_weight?: number;
   weather_entity?: string;
+  outdoor_unavailable_notify?: boolean;
   climate_control_active?: boolean;
   learning_disabled_rooms?: string[];
   hidden_rooms?: string[];
@@ -163,11 +195,19 @@ export interface GlobalSettings {
   presence_enabled?: boolean;
   presence_persons?: string[];
   presence_away_action?: "eco" | "off";
+  presence_clears_override?: boolean;
   schedule_off_action?: "eco" | "off";
   valve_protection_enabled?: boolean;
   valve_protection_interval_days?: number;
+  coil_dry_enabled?: boolean;
+  coil_dry_minutes?: number;
+  coil_dry_mode?: "fan_only" | "dry";
+  coil_dry_fan_mode?: string;
+  coil_dry_min_cooling_minutes?: number;
+  coil_dry_drain_minutes?: number;
   mold_detection_enabled?: boolean;
   mold_humidity_threshold?: number;
+  mold_f_rsi?: number;
   mold_sustained_minutes?: number;
   mold_notification_cooldown?: number;
   mold_notifications_enabled?: boolean;
@@ -254,7 +294,15 @@ export interface AnalyticsData {
   forecast?: AnalyticsDataPoint[];
   model: {
     confidence: number;
-    model: { C: number; U: number; Q_heat: number; Q_cool: number; Q_solar: number };
+    model: {
+      C: number;
+      U: number;
+      Q_heat: number;
+      Q_cool: number;
+      Q_solar: number;
+      Q_occupancy: number;
+      Q_fast?: number;
+    };
     n_samples: number;
     n_observations: number;
     n_heating: number;
@@ -264,6 +312,9 @@ export interface AnalyticsData {
     sigma_e: number;
     prediction_std_idle: number;
     prediction_std_heating: number;
+    has_occupancy_sensors: boolean;
+    solar_gain_now?: number;
+    solar_gain_today_max?: number;
   };
 }
 

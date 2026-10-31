@@ -15,7 +15,7 @@ export class RsAnalytics extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Object }) public rooms: Record<string, RoomConfig> = {};
   @property() public initialRoom = "";
-  @property() public controlMode: "mpc" | "bangbang" = "bangbang";
+  @property() public controlMode: "mpc" | "bangbang" = "mpc";
 
   @state() private _selectedRoom = "";
   @state() private _rangeStart: number = new Date(new Date().setHours(0, 0, 0, 0)).getTime();
@@ -87,33 +87,42 @@ export class RsAnalytics extends LitElement {
         @room-selected=${this._onRoomSelected}
         @range-changed=${this._onRangeChanged}
       ></rs-analytics-toolbar>
-      ${this._selectedRoom
-        ? this._loading
-          ? html`<div class="loading">${localize("panel.loading", l)}</div>`
+      ${
+        this._selectedRoom
+          ? this._loading
+            ? html`<div class="loading">${localize("panel.loading", l)}</div>`
+            : html`
+                <rs-analytics-chart
+                  .hass=${this.hass}
+                  .data=${this._data}
+                  .rangeStart=${this._rangeStart}
+                  .rangeEnd=${this._rangeEnd}
+                  .chartAnchor=${this._chartAnchor}
+                  .language=${l}
+                  .isOutdoor=${this.rooms[this._selectedRoom]?.is_outdoor ?? false}
+                ></rs-analytics-chart>
+                ${
+                  !this.rooms[this._selectedRoom]?.is_outdoor
+                    ? html` <rs-analytics-model
+                        .hass=${this.hass}
+                        .data=${this._data}
+                        .language=${l}
+                        .controlMode=${this.controlMode}
+                        .managed=${!this.rooms[this._selectedRoom]?.temperature_sensor}
+                      ></rs-analytics-model>`
+                    : nothing
+                }
+              `
           : html`
-              <rs-analytics-chart
-                .hass=${this.hass}
-                .data=${this._data}
-                .rangeStart=${this._rangeStart}
-                .rangeEnd=${this._rangeEnd}
-                .chartAnchor=${this._chartAnchor}
-                .language=${l}
-                .isOutdoor=${this.rooms[this._selectedRoom]?.is_outdoor ?? false}
-              ></rs-analytics-chart>
-              ${!this.rooms[this._selectedRoom]?.is_outdoor
-                ? html` <rs-analytics-model
-                    .hass=${this.hass}
-                    .data=${this._data}
-                    .language=${l}
-                  ></rs-analytics-model>`
-                : nothing}
+              <div class="no-data">
+                <ha-icon
+                  icon="mdi:chart-line"
+                  style="--mdc-icon-size: 48px; opacity: 0.4"
+                ></ha-icon>
+                <p>${localize("analytics.select_room", l)}</p>
+              </div>
             `
-        : html`
-            <div class="no-data">
-              <ha-icon icon="mdi:chart-line" style="--mdc-icon-size: 48px; opacity: 0.4"></ha-icon>
-              <p>${localize("analytics.select_room", l)}</p>
-            </div>
-          `}
+      }
     `;
   }
 

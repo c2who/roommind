@@ -16,6 +16,7 @@ from .const import (
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
     DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD,
     DEFAULT_HEAT_SOURCE_PRIMARY_DELTA,
+    DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES,
     DOMAIN,
 )
 from .utils.device_utils import (
@@ -34,15 +35,50 @@ STORAGE_KEY = DOMAIN
 
 
 def _migrate_room_temps(room: dict) -> dict:
-    """Migrate legacy single comfort/eco temps to split heat/cool fields."""
+    """Migrate legacy single comfort/eco temps to split heat/cool fields.
+
+    In a cool_only room the single value is the cooling target.
+    """
+    cool_only = room.get("climate_mode") == "cool_only"
     if "comfort_heat" not in room:
         room["comfort_heat"] = room.get("comfort_temp", DEFAULT_COMFORT_HEAT)
     if "comfort_cool" not in room:
-        room["comfort_cool"] = DEFAULT_COMFORT_COOL
+        room["comfort_cool"] = room.get("comfort_temp", DEFAULT_COMFORT_COOL) if cool_only else DEFAULT_COMFORT_COOL
     if "eco_heat" not in room:
         room["eco_heat"] = room.get("eco_temp", DEFAULT_ECO_HEAT)
     if "eco_cool" not in room:
-        room["eco_cool"] = DEFAULT_ECO_COOL
+        room["eco_cool"] = room.get("eco_temp", DEFAULT_ECO_COOL) if cool_only else DEFAULT_ECO_COOL
+    return room
+
+
+def _single_temps_to_cool_side(target: dict, config: dict, climate_mode: str) -> None:
+    """A legacy/API caller that sends only comfort_temp/eco_temp to a cool_only room means the cooling target."""
+    if climate_mode != "cool_only":
+        return
+    if "comfort_temp" in config and "comfort_cool" not in config:
+        target["comfort_cool"] = config["comfort_temp"]
+    if "eco_temp" in config and "eco_cool" not in config:
+        target["eco_cool"] = config["eco_temp"]
+
+
+def _migrate_override_fields(room: dict) -> dict:
+    """Migrate legacy single override_temp to split override_heat/override_cool."""
+    if "override_temp" not in room:
+        return room
+    legacy = room.pop("override_temp")
+    if legacy is None or room.get("override_heat") is not None or room.get("override_cool") is not None:
+        return room
+    climate_mode = room.get("climate_mode", "auto")
+    legacy = float(legacy)
+    if climate_mode == "cool_only":
+        room["override_heat"] = None
+        room["override_cool"] = legacy
+    elif climate_mode == "heat_only":
+        room["override_heat"] = legacy
+        room["override_cool"] = None
+    else:
+        room["override_heat"] = legacy
+        room["override_cool"] = max(legacy, room.get("comfort_cool", DEFAULT_COMFORT_COOL))
     return room
 
 
@@ -50,9 +86,13 @@ def _migrate_room(room: dict) -> dict:
     """Apply all read-time migrations (safety net)."""
     _migrate_room_temps(room)
     sanitize_devices(room.get("devices", []))
+    _migrate_override_fields(room)
     migrate_heat_pump_devices(room.get("devices", []))
     ensure_room_has_devices(room)
     return room
+
+
+_ORPHAN_SETTINGS_KEYS = ("heating_threshold", "cooling_threshold")
 
 
 class RoomMindStore:
@@ -79,6 +119,7 @@ class RoomMindStore:
         # One-time migrations (combined into single pass + single save)
         device_migrated = 0
         hp_migrated = 0
+        override_migrated = 0
         for room in self._data.values():
             if "devices" not in room:
                 ensure_room_has_devices(room)
@@ -90,12 +131,21 @@ class RoomMindStore:
                 room["thermostats"] = t
                 room["acs"] = a
                 hp_migrated += 1
-        if device_migrated or hp_migrated:
+            if "override_temp" in room:
+                _migrate_room_temps(room)
+                _migrate_override_fields(room)
+                override_migrated += 1
+        orphan_settings_removed = [k for k in _ORPHAN_SETTINGS_KEYS if self._settings.pop(k, None) is not None]
+        if device_migrated or hp_migrated or override_migrated or orphan_settings_removed:
             await self._async_save()
         if device_migrated:
             _LOGGER.info("Migrated %d room(s) to unified device model", device_migrated)
         if hp_migrated:
             _LOGGER.info("Migrated %d room(s) from heat_pump to ac device type", hp_migrated)
+        if override_migrated:
+            _LOGGER.info("Migrated %d room(s) to split override heat/cool", override_migrated)
+        if orphan_settings_removed:
+            _LOGGER.info("Removed orphan setting(s): %s", ", ".join(orphan_settings_removed))
 
     async def _async_save(self) -> None:
         """Persist current room data to the HA store."""
@@ -188,6 +238,7 @@ class RoomMindStore:
             existing["comfort_heat"] = config["comfort_temp"]
         if "eco_temp" in config and "eco_heat" not in config:
             existing["eco_heat"] = config["eco_temp"]
+        _single_temps_to_cool_side(existing, config, existing.get("climate_mode", "auto"))
         # Directional device sync
         self._sync_devices(existing, config)
         return existing
@@ -200,9 +251,14 @@ class RoomMindStore:
         room = {
             "area_id": area_id,
             "devices": config.get("devices", []),
+            "entity_modes": config.get("entity_modes", {}),
+            "passive_devices": config.get("passive_devices", []),
             "temperature_sensor": config.get("temperature_sensor", ""),
             "humidity_sensor": config.get("humidity_sensor", ""),
             "occupancy_sensors": config.get("occupancy_sensors", []),
+            "occupancy_eco_enabled": config.get("occupancy_eco_enabled", False),
+            "occupancy_eco_delay": config.get("occupancy_eco_delay", DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES),
+            "preheat_enabled": config.get("preheat_enabled", True),
             "climate_mode": config.get("climate_mode", "auto"),
             "schedules": config.get("schedules", []),
             "schedule_selector_entity": config.get("schedule_selector_entity", ""),
@@ -220,6 +276,7 @@ class RoomMindStore:
             "heating_system_type": config.get("heating_system_type", ""),
             "covers": config.get("covers", []),
             "covers_auto_enabled": config.get("covers_auto_enabled", False),
+            "covers_sensor_only": config.get("covers_sensor_only", False),
             "covers_deploy_threshold": config.get("covers_deploy_threshold", 1.5),
             "covers_min_position": config.get("covers_min_position", 0),
             "covers_outdoor_min_temp": config.get("covers_outdoor_min_temp", None),
@@ -245,6 +302,7 @@ class RoomMindStore:
             "climate_control_enabled": config.get("climate_control_enabled", True),
         }
         sanitize_devices(room["devices"])
+        _single_temps_to_cool_side(room, config, room["climate_mode"])
         # Directional device sync for new rooms (truthiness check, not just presence)
         if "devices" in config and config["devices"]:
             t, a = devices_to_legacy(room["devices"])
@@ -270,7 +328,6 @@ class RoomMindStore:
             room = self._merge_room(area_id, config)
         else:
             room = self._create_room(area_id, config)
-            room["covers_sensor_only"] = config.get("covers_sensor_only", False)
             self._data[area_id] = room
         await self._async_save()
         return room

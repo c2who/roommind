@@ -7,100 +7,106 @@ import type { HomeAssistant, CompressorGroup, ConflictResolution } from "../../t
 import { localize } from "../../utils/localize";
 import { getSelectValue } from "../../utils/events";
 import "../shared/rs-confirm-button";
+import { inputStyles } from "../../styles/input-styles";
 
 @customElement("rs-settings-compressor")
 export class RsSettingsCompressor extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
   @property({ type: Array }) public compressorGroups: CompressorGroup[] = [];
 
-  static styles = css`
-    :host {
-      display: block;
-    }
-    .group-card {
-      border: 1px solid var(--divider-color);
-      border-radius: 8px;
-      padding: 16px;
-      margin-bottom: 16px;
-    }
-    .member-list {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin: 8px 0;
-    }
-    .member-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 4px 8px;
-      background: var(--card-background-color);
-      border-radius: 4px;
-    }
-    .member-name {
-      font-size: 14px;
-      flex: 1;
-    }
-    .member-area {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-      margin-left: 4px;
-    }
-    .member-missing {
-      color: var(--error-color);
-    }
-    .field-row {
-      margin-top: 12px;
-    }
-    .field-hint {
-      font-size: 12px;
-      color: var(--secondary-text-color);
-      margin-top: 4px;
-    }
-    .section-label {
-      font-size: 14px;
-      font-weight: 500;
-      margin-top: 12px;
-      margin-bottom: 4px;
-    }
-    .add-button {
-      margin-top: 12px;
-    }
-    .delete-row {
-      margin-top: 16px;
-      display: flex;
-      justify-content: flex-end;
-    }
-    .no-groups {
-      color: var(--secondary-text-color);
-      font-size: 14px;
-      padding: 8px 0;
-    }
-    ha-textfield {
-      width: 100%;
-    }
-    ha-entity-picker {
-      width: 100%;
-    }
-    .number-fields {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 12px;
-    }
-    @media (max-width: 500px) {
-      .number-fields {
-        grid-template-columns: 1fr;
+  static styles = [
+    inputStyles,
+    css`
+      :host {
+        display: block;
       }
-    }
-  `;
+      .group-card {
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .member-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin: 8px 0;
+      }
+      .member-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px;
+        background: var(--card-background-color);
+        border-radius: 4px;
+      }
+      .member-name {
+        font-size: 14px;
+        flex: 1;
+      }
+      .member-area {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin-left: 4px;
+      }
+      .member-missing {
+        color: var(--error-color);
+      }
+      .field-row {
+        margin-top: 12px;
+      }
+      .field-hint {
+        font-size: 12px;
+        color: var(--secondary-text-color);
+        margin-top: 4px;
+      }
+      .section-label {
+        font-size: 14px;
+        font-weight: 500;
+        margin-top: 12px;
+        margin-bottom: 4px;
+      }
+      .add-button {
+        margin-top: 12px;
+      }
+      .delete-row {
+        margin-top: 16px;
+        display: flex;
+        justify-content: flex-end;
+      }
+      .no-groups {
+        color: var(--secondary-text-color);
+        font-size: 14px;
+        padding: 8px 0;
+      }
+      ha-textfield {
+        width: 100%;
+      }
+      ha-entity-picker {
+        width: 100%;
+      }
+      .number-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      @media (max-width: 500px) {
+        .number-fields {
+          grid-template-columns: 1fr;
+        }
+      }
+    `,
+  ];
 
   render() {
     const l = this.hass.language;
     return html`
-      ${this.compressorGroups.length === 0
-        ? html`<div class="no-groups">${localize("compressor.no_groups", l)}</div>`
-        : this.compressorGroups.map((group, idx) => this._renderGroup(group, idx))}
+      ${
+        this.compressorGroups.length === 0
+          ? html`<div class="no-groups">${localize("compressor.no_groups", l)}</div>`
+          : this.compressorGroups.map((group, idx) => this._renderGroup(group, idx))
+      }
       <ha-button class="add-button" @click=${this._addGroup}>
         <ha-icon icon="mdi:plus" slot="icon"></ha-icon>
         ${localize("compressor.add_group", l)}
@@ -122,13 +128,15 @@ export class RsSettingsCompressor extends LitElement {
         ></ha-textfield>
 
         <div class="section-label">${localize("compressor.members", l)}</div>
-        ${group.members.length > 0
-          ? html`
-              <div class="member-list">
-                ${group.members.map((eid) => this._renderMember(eid, idx))}
-              </div>
-            `
-          : nothing}
+        ${
+          group.members.length > 0
+            ? html`
+                <div class="member-list">
+                  ${group.members.map((eid) => this._renderMember(eid, idx))}
+                </div>
+              `
+            : nothing
+        }
         <ha-entity-picker
           .hass=${this.hass}
           .value=${""}
@@ -209,43 +217,47 @@ export class RsSettingsCompressor extends LitElement {
           <div class="field-hint">${localize("compressor.enforce_uniform_mode_hint", l)}</div>
         </div>
 
-        ${group.master_entity || group.enforce_uniform_mode
-          ? html`
-              <div class="field-row">
-                <ha-select
-                  .label=${localize("compressor.conflict_resolution", l)}
-                  .value=${group.conflict_resolution || "heating_priority"}
-                  .options=${[
-                    {
-                      value: "heating_priority",
-                      label: localize("compressor.conflict_heating_priority", l),
-                    },
-                    {
-                      value: "cooling_priority",
-                      label: localize("compressor.conflict_cooling_priority", l),
-                    },
-                    {
-                      value: "majority",
-                      label: localize("compressor.conflict_majority", l),
-                    },
-                    {
-                      value: "outdoor_temp",
-                      label: localize("compressor.conflict_outdoor_temp", l),
-                    },
-                  ]}
-                  @selected=${(e: Event) => {
-                    const v = getSelectValue(e);
-                    if (v) this._updateGroup(idx, "conflict_resolution", v);
-                  }}
-                  @closed=${(e: Event) => e.stopPropagation()}
-                  fixedMenuPosition
-                  style="width: 100%;"
-                >
-                </ha-select>
-                <div class="field-hint">${localize("compressor.conflict_resolution_hint", l)}</div>
-              </div>
-            `
-          : nothing}
+        ${
+          group.master_entity || group.enforce_uniform_mode
+            ? html`
+                <div class="field-row">
+                  <ha-select
+                    .label=${localize("compressor.conflict_resolution", l)}
+                    .value=${group.conflict_resolution || "heating_priority"}
+                    .options=${[
+                      {
+                        value: "heating_priority",
+                        label: localize("compressor.conflict_heating_priority", l),
+                      },
+                      {
+                        value: "cooling_priority",
+                        label: localize("compressor.conflict_cooling_priority", l),
+                      },
+                      {
+                        value: "majority",
+                        label: localize("compressor.conflict_majority", l),
+                      },
+                      {
+                        value: "outdoor_temp",
+                        label: localize("compressor.conflict_outdoor_temp", l),
+                      },
+                    ]}
+                    @selected=${(e: Event) => {
+                      const v = getSelectValue(e);
+                      if (v) this._updateGroup(idx, "conflict_resolution", v);
+                    }}
+                    @closed=${(e: Event) => e.stopPropagation()}
+                    fixedMenuPosition
+                    style="width: 100%;"
+                  >
+                  </ha-select>
+                  <div class="field-hint">
+                    ${localize("compressor.conflict_resolution_hint", l)}
+                  </div>
+                </div>
+              `
+            : nothing
+        }
 
         <div class="field-row">
           <ha-entity-picker

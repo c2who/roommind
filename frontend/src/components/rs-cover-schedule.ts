@@ -3,6 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import type { CoverScheduleEntry } from "../types";
 import { localize } from "../utils/localize";
 import { RsScheduleBase } from "./shared/rs-schedule-base";
+import { inputStyles } from "../styles/input-styles";
 
 @customElement("rs-cover-schedule")
 export class RsCoverSchedule extends RsScheduleBase {
@@ -10,6 +11,7 @@ export class RsCoverSchedule extends RsScheduleBase {
 
   static styles = [
     RsScheduleBase.sharedStyles,
+    inputStyles,
     css`
       .pos-badge {
         font-size: 0.8em;
@@ -29,18 +31,34 @@ export class RsCoverSchedule extends RsScheduleBase {
         flex-shrink: 0;
       }
       .mode-row {
-        display: flex;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 8px;
-        padding: 4px 8px 4px 28px;
-        flex-wrap: wrap;
+        padding: 4px 0 0;
+      }
+      @media (max-width: 480px) {
+        .mode-row {
+          grid-template-columns: 1fr;
+        }
       }
       .mode-option {
         display: flex;
         align-items: center;
-        gap: 4px;
-        font-size: 0.85em;
+        gap: 8px;
+        padding: 6px 12px;
+        font-size: 13px;
         cursor: pointer;
         color: var(--primary-text-color);
+        border: 1px solid var(--divider-color);
+        border-radius: 8px;
+        background: var(--card-background-color);
+        transition:
+          border-color 0.15s ease,
+          background 0.15s ease;
+      }
+      .mode-option.active {
+        border-color: rgba(3, 169, 244, 0.4);
+        background: rgba(3, 169, 244, 0.08);
       }
     `,
   ];
@@ -70,13 +88,15 @@ export class RsCoverSchedule extends RsScheduleBase {
                 @click=${() => this._openEntityInfo(entry.entity_id)}
                 >${this._getFriendlyName(entry.entity_id)}</span
               >
-              ${isGate
-                ? html`<span class="gate-badge"
-                    >${localize("covers.schedule_mode_gate_short", l)}</span
-                  >`
-                : pos !== null
-                  ? html`<span class="pos-badge">${pos}%</span>`
-                  : nothing}
+              ${
+                isGate
+                  ? html`<span class="gate-badge"
+                      >${localize("covers.schedule_mode_gate_short", l)}</span
+                    >`
+                  : pos !== null
+                    ? html`<span class="pos-badge">${pos}%</span>`
+                    : nothing
+              }
               <span class="schedule-status">${this._statusText(state, l)}</span>
             </div>
           `;
@@ -92,48 +112,72 @@ export class RsCoverSchedule extends RsScheduleBase {
 
     return html`
       <div class="section-hint">${localize("covers.schedule_section_hint", l)}</div>
-
-      ${count > 0
-        ? html`
-            <div class="schedule-list">
-              ${this.schedules.map((entry, index) => {
-                const state = this._getScheduleState(index, count);
-                return html`
-                  <div class="schedule-row ${state}">
-                    ${count >= 2
-                      ? html`<span class="schedule-number">${index + 1}</span>`
-                      : nothing}
-                    <span class="schedule-status-dot"></span>
-                    <span class="schedule-name">${this._getFriendlyName(entry.entity_id)}</span>
-                    <span class="schedule-status">${this._statusText(state, l)}</span>
-                    ${this._renderScheduleControls(
-                      index,
-                      count,
-                      (i, dir) => this._moveSchedule(i, dir),
-                      (i) => this._removeSchedule(i),
-                    )}
-                  </div>
-                  <div class="mode-row">
-                    <label class="mode-option">
-                      <ha-radio
-                        .checked=${(entry.mode ?? "force") === "force"}
-                        @change=${() => this._updateMode(index, "force")}
-                      ></ha-radio>
-                      ${localize("covers.schedule_mode_force", l)}
-                    </label>
-                    <label class="mode-option">
-                      <ha-radio
-                        .checked=${entry.mode === "gate"}
-                        @change=${() => this._updateMode(index, "gate")}
-                      ></ha-radio>
-                      ${localize("covers.schedule_mode_gate", l)}
-                    </label>
-                  </div>
-                `;
-              })}
-            </div>
-          `
-        : nothing}
+      ${
+        count > 0
+          ? html`
+              <div class="schedule-list">
+                ${this.schedules.map((entry, index) => {
+                  const state = this._getScheduleState(index, count);
+                  return html`
+                    <div class="schedule-row ${state}">
+                      ${
+                        count >= 2
+                          ? html`<span class="schedule-number">${index + 1}</span>`
+                          : nothing
+                      }
+                      <span class="schedule-status-dot"></span>
+                      <span class="schedule-name">${this._getFriendlyName(entry.entity_id)}</span>
+                      <span class="schedule-status">${this._statusText(state, l)}</span>
+                      ${this._renderScheduleControls(
+                        index,
+                        count,
+                        (i, dir) => this._moveSchedule(i, dir),
+                        (i) => this._removeSchedule(i),
+                      )}
+                    </div>
+                    <div class="mode-row">
+                      <div
+                        class="mode-option ${(entry.mode ?? "force") === "force" ? "active" : ""}"
+                        role="radio"
+                        tabindex="0"
+                        aria-checked=${(entry.mode ?? "force") === "force"}
+                        @click=${() => this._updateMode(index, "force")}
+                        @keydown=${(e: KeyboardEvent) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            this._updateMode(index, "force");
+                          }
+                        }}
+                      >
+                        <ha-radio
+                          .checked=${(entry.mode ?? "force") === "force"}
+                          tabindex="-1"
+                        ></ha-radio>
+                        ${localize("covers.schedule_mode_force", l)}
+                      </div>
+                      <div
+                        class="mode-option ${entry.mode === "gate" ? "active" : ""}"
+                        role="radio"
+                        tabindex="0"
+                        aria-checked=${entry.mode === "gate"}
+                        @click=${() => this._updateMode(index, "gate")}
+                        @keydown=${(e: KeyboardEvent) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            this._updateMode(index, "gate");
+                          }
+                        }}
+                      >
+                        <ha-radio .checked=${entry.mode === "gate"} tabindex="-1"></ha-radio>
+                        ${localize("covers.schedule_mode_gate", l)}
+                      </div>
+                    </div>
+                  `;
+                })}
+              </div>
+            `
+          : nothing
+      }
       ${this._renderAddRow(
         localize("covers.add_schedule", l),
         this._getAvailableEntities(usedIds),

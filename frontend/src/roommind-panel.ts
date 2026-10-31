@@ -45,10 +45,14 @@ export class RoomMindPanel extends LitElement {
   @state() private _vacationUntil: number | null = null;
   @state() private _hiddenRooms: string[] = [];
   @state() private _showHiddenRooms = false;
-  @state() private _controlMode: "mpc" | "bangbang" = "bangbang";
+  @state() private _controlMode: "mpc" | "bangbang" = "mpc";
   @state() private _climateControlActive = true;
   @state() private _presenceEnabled = false;
   @state() private _valveProtectionEnabled = false;
+  @state() private _coilDryEnabled = false;
+  @state() private _coilDryMinutes = 20;
+  @state() private _coilDryMode = "fan_only";
+  @state() private _coilDryFanMode = "low";
   @state() private _anyoneHome = true;
   @state() private _presencePersons: string[] = [];
   @state() private _presenceAwayAction: "eco" | "off" = "eco";
@@ -72,6 +76,14 @@ export class RoomMindPanel extends LitElement {
       color: var(--primary-text-color);
       background: var(--primary-background-color);
       min-height: 100vh;
+
+      /* Round the corners of all MDC-based inputs (ha-textfield, ha-select,
+         ha-entity-picker, ha-combo-box) to match the rest of the design.
+         The bottom corners are rounded via inputStyles in each component. */
+      --mdc-shape-small: 8px;
+      --mdc-shape-medium: 8px;
+      --md-filled-text-field-container-shape: 8px;
+      --md-outlined-text-field-container-shape: 8px;
     }
 
     .toolbar {
@@ -278,6 +290,12 @@ export class RoomMindPanel extends LitElement {
       font-size: 20px;
       font-weight: 500;
       color: var(--primary-text-color);
+      --mdc-icon-size: 22px;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
     }
 
     .stat-label {
@@ -374,50 +392,63 @@ export class RoomMindPanel extends LitElement {
 
     return html`
       <div class="toolbar">
-        ${inDetail
-          ? html`<ha-icon-button
-              .path=${BACK_PATH}
-              @click=${this._onBackFromDetail}
-            ></ha-icon-button>`
-          : html`<ha-menu-button .hass=${this.hass} .narrow=${this.narrow}></ha-menu-button>`}
+        ${
+          inDetail
+            ? html`<ha-icon-button
+                .path=${BACK_PATH}
+                @click=${this._onBackFromDetail}
+              ></ha-icon-button>`
+            : html`<ha-menu-button .hass=${this.hass} .narrow=${this.narrow}></ha-menu-button>`
+        }
         <div class="title">
-          ${inDetail
-            ? this._rooms[this._selectedAreaId!]?.display_name || detailArea?.name || ""
-            : localize("panel.title", l)}
+          ${
+            inDetail
+              ? this._rooms[this._selectedAreaId!]?.display_name || detailArea?.name || ""
+              : localize("panel.title", l)
+          }
         </div>
         ${this._renderSaveIndicator()}
-        ${inDetail && this._rooms[this._selectedAreaId!]
-          ? html`<ha-icon-button
-                .path=${CHART_PATH}
-                @click=${this._onGoToAnalytics}
-              ></ha-icon-button
-              ><ha-icon-button .path=${DELETE_PATH} @click=${this._onDeleteRoom}></ha-icon-button>`
-          : nothing}
-        ${!inDetail && this._activeTab === "analytics" && this._analyticsRoom
-          ? html`<ha-icon-button
-              .path=${THERMOMETER_PATH}
-              @click=${this._onGoToRoomFromAnalytics}
-            ></ha-icon-button>`
-          : nothing}
+        ${
+          inDetail && this._rooms[this._selectedAreaId!]
+            ? html`<ha-icon-button
+                  .path=${CHART_PATH}
+                  @click=${this._onGoToAnalytics}
+                ></ha-icon-button
+                ><ha-icon-button
+                  .path=${DELETE_PATH}
+                  @click=${this._onDeleteRoom}
+                ></ha-icon-button>`
+            : nothing
+        }
+        ${
+          !inDetail && this._activeTab === "analytics" && this._analyticsRoom
+            ? html`<ha-icon-button
+                .path=${THERMOMETER_PATH}
+                @click=${this._onGoToRoomFromAnalytics}
+              ></ha-icon-button>`
+            : nothing
+        }
       </div>
 
-      ${!inDetail
-        ? html`
-            <div class="tabs">
-              ${(Object.keys(tabLabels) as TabId[]).map(
-                (tab) => html`
-                  <button
-                    class="tab"
-                    ?active=${this._activeTab === tab}
-                    @click=${() => this._onTabClicked(tab)}
-                  >
-                    ${tabLabels[tab]}
-                  </button>
-                `,
-              )}
-            </div>
-          `
-        : nothing}
+      ${
+        !inDetail
+          ? html`
+              <div class="tabs">
+                ${(Object.keys(tabLabels) as TabId[]).map(
+                  (tab) => html`
+                    <button
+                      class="tab"
+                      ?active=${this._activeTab === tab}
+                      @click=${() => this._onTabClicked(tab)}
+                    >
+                      ${tabLabels[tab]}
+                    </button>
+                  `,
+                )}
+              </div>
+            `
+          : nothing
+      }
 
       <div class="content">${this._renderTab()}</div>
     `;
@@ -443,6 +474,10 @@ export class RoomMindPanel extends LitElement {
   }
 
   private _renderAreas() {
+    if (!this._roomsLoaded) {
+      return html`<div class="loading">${localize("panel.loading", this.hass.language)}</div>`;
+    }
+
     if (this._selectedAreaId) {
       const area = this.hass?.areas?.[this._selectedAreaId];
       if (area) {
@@ -456,16 +491,17 @@ export class RoomMindPanel extends LitElement {
             .presencePersons=${this._presencePersons}
             .climateControlActive=${this._climateControlActive}
             .valveProtectionEnabled=${this._valveProtectionEnabled}
+            .controlMode=${this._controlMode}
+            .coilDryEnabled=${this._coilDryEnabled}
+            .coilDryMinutes=${this._coilDryMinutes}
+            .coilDryMode=${this._coilDryMode}
+            .coilDryFanMode=${this._coilDryFanMode}
             @back-clicked=${this._onBackFromDetail}
             @room-updated=${this._onRoomUpdated}
           ></rs-room-detail>
         `;
       }
       this._selectedAreaId = null;
-    }
-
-    if (!this._roomsLoaded) {
-      return html`<div class="loading">${localize("panel.loading", this.hass.language)}</div>`;
     }
 
     const allAreaInfos = this._areaInfosCache;
@@ -499,101 +535,121 @@ export class RoomMindPanel extends LitElement {
     const l = this.hass.language;
 
     return html`
-      ${configuredCount > 0 || hiddenAreaInfos.length > 0
-        ? html`
-            <ha-card class="stats-bar">
-              ${configuredCount > 0
-                ? html`
-                    <div class="stat">
-                      <span class="stat-value">${configuredCount}</span>
-                      <span class="stat-label">${localize("panel.stat.rooms", l)}</span>
+      ${
+        configuredCount > 0 || hiddenAreaInfos.length > 0
+          ? html`
+              <ha-card class="stats-bar">
+                ${
+                  configuredCount > 0
+                    ? html`
+                        <div class="stat">
+                          <span class="stat-value">${configuredCount}</span>
+                          <span class="stat-label">${localize("panel.stat.rooms", l)}</span>
+                        </div>
+                        <div class="stat">
+                          <span class="stat-value" style="color: var(--warning-color, #ff9800)"
+                            >${heatingCount}</span
+                          >
+                          <span class="stat-label">${localize("panel.stat.heating", l)}</span>
+                        </div>
+                        <div class="stat">
+                          <span class="stat-value" style="color: var(--info-color, #2196f3)"
+                            >${coolingCount}</span
+                          >
+                          <span class="stat-label">${localize("panel.stat.cooling", l)}</span>
+                        </div>
+                      `
+                    : nothing
+                }
+                ${hasConditionalStats ? html`<div class="stats-separator"></div>` : nothing}
+                ${
+                  this._vacationActive
+                    ? html`
+                        <div class="stat">
+                          <span class="stat-value" style="color: var(--success-color, #4caf50)">
+                            <ha-icon icon="mdi:airplane"></ha-icon>
+                          </span>
+                          <span class="stat-label">${localize("panel.stat.vacation", l)}</span>
+                        </div>
+                      `
+                    : nothing
+                }
+                ${
+                  this._presenceEnabled && !this._anyoneHome
+                    ? html`
+                        <div class="stat">
+                          <span class="stat-value" style="color: var(--secondary-text-color)">
+                            <ha-icon icon="mdi:power"></ha-icon>
+                          </span>
+                          <span class="stat-label">${localize("panel.stat.away", l)}</span>
+                        </div>
+                      `
+                    : nothing
+                }
+                ${
+                  moldCount > 0
+                    ? html`
+                        <div class="stat">
+                          <span class="stat-value" style="color: var(--error-color, #f44336)"
+                            >${moldCount}</span
+                          >
+                          <span class="stat-label">${localize("panel.stat.mold", l)}</span>
+                        </div>
+                      `
+                    : nothing
+                }
+                <span class="stats-actions">
+                  ${
+                    hiddenAreaInfos.length > 0
+                      ? html`<ha-icon-button
+                          class="hidden-rooms-toggle"
+                          .path=${mdiEyeOff}
+                          @click=${() => {
+                            this._showHiddenRooms = !this._showHiddenRooms;
+                          }}
+                        ></ha-icon-button>`
+                      : nothing
+                  }
+                  ${
+                    this._reorderMode
+                      ? html`<ha-button class="reorder-done" @click=${this._onReorderDone}>
+                          ${localize("panel.reorder_done", l)}
+                        </ha-button>`
+                      : html`<ha-icon-button
+                          class="reorder-btn"
+                          .path=${"M9,3L5,7H8V14H10V7H13M16,17V10H14V17H11L15,21L19,17H16Z"}
+                          @click=${() => {
+                            this._reorderMode = true;
+                          }}
+                          title=${localize("panel.reorder", l)}
+                        ></ha-icon-button>`
+                  }
+                </span>
+              </ha-card>
+            `
+          : nothing
+      }
+      ${
+        this._showHiddenRooms && hiddenAreaInfos.length > 0
+          ? html`
+              <ha-card class="hidden-rooms-panel">
+                <div class="hidden-rooms-header">
+                  <span>${localize("panel.hidden_rooms", l)} (${hiddenAreaInfos.length})</span>
+                </div>
+                ${hiddenAreaInfos.map(
+                  (info) => html`
+                    <div class="hidden-room-row">
+                      <span class="hidden-room-name">${info.area.name}</span>
+                      <ha-button @click=${() => this._unhideRoom(info.area.area_id)}>
+                        ${localize("panel.unhide", l)}
+                      </ha-button>
                     </div>
-                    <div class="stat">
-                      <span class="stat-value" style="color: var(--warning-color, #ff9800)"
-                        >${heatingCount}</span
-                      >
-                      <span class="stat-label">${localize("panel.stat.heating", l)}</span>
-                    </div>
-                    <div class="stat">
-                      <span class="stat-value" style="color: var(--info-color, #2196f3)"
-                        >${coolingCount}</span
-                      >
-                      <span class="stat-label">${localize("panel.stat.cooling", l)}</span>
-                    </div>
-                  `
-                : nothing}
-              ${hasConditionalStats ? html`<div class="stats-separator"></div>` : nothing}
-              ${this._vacationActive
-                ? html`
-                    <div class="stat">
-                      <span class="stat-value" style="color: var(--success-color, #4caf50)">✈</span>
-                      <span class="stat-label">${localize("panel.stat.vacation", l)}</span>
-                    </div>
-                  `
-                : nothing}
-              ${this._presenceEnabled && !this._anyoneHome
-                ? html`
-                    <div class="stat">
-                      <span class="stat-value" style="color: var(--secondary-text-color)">⏻</span>
-                      <span class="stat-label">${localize("panel.stat.away", l)}</span>
-                    </div>
-                  `
-                : nothing}
-              ${moldCount > 0
-                ? html`
-                    <div class="stat">
-                      <span class="stat-value" style="color: var(--error-color, #f44336)"
-                        >${moldCount}</span
-                      >
-                      <span class="stat-label">${localize("panel.stat.mold", l)}</span>
-                    </div>
-                  `
-                : nothing}
-              <span class="stats-actions">
-                ${hiddenAreaInfos.length > 0
-                  ? html`<ha-icon-button
-                      class="hidden-rooms-toggle"
-                      .path=${mdiEyeOff}
-                      @click=${() => {
-                        this._showHiddenRooms = !this._showHiddenRooms;
-                      }}
-                    ></ha-icon-button>`
-                  : nothing}
-                ${this._reorderMode
-                  ? html`<ha-button class="reorder-done" @click=${this._onReorderDone}>
-                      ${localize("panel.reorder_done", l)}
-                    </ha-button>`
-                  : html`<ha-icon-button
-                      class="reorder-btn"
-                      .path=${"M9,3L5,7H8V14H10V7H13M16,17V10H14V17H11L15,21L19,17H16Z"}
-                      @click=${() => {
-                        this._reorderMode = true;
-                      }}
-                      title=${localize("panel.reorder", l)}
-                    ></ha-icon-button>`}
-              </span>
-            </ha-card>
-          `
-        : nothing}
-      ${this._showHiddenRooms && hiddenAreaInfos.length > 0
-        ? html`
-            <ha-card class="hidden-rooms-panel">
-              <div class="hidden-rooms-header">
-                <span>${localize("panel.hidden_rooms", l)} (${hiddenAreaInfos.length})</span>
-              </div>
-              ${hiddenAreaInfos.map(
-                (info) => html`
-                  <div class="hidden-room-row">
-                    <span class="hidden-room-name">${info.area.name}</span>
-                    <ha-button @click=${() => this._unhideRoom(info.area.area_id)}>
-                      ${localize("panel.unhide", l)}
-                    </ha-button>
-                  </div>
-                `,
-              )}
-            </ha-card>
-          `
-        : nothing}
+                  `,
+                )}
+              </ha-card>
+            `
+          : nothing
+      }
       ${this._getFloorGroups(areaInfos).map(
         (group) => html`
           ${group.name ? html`<h4 class="floor-heading">${group.name}</h4>` : nothing}
@@ -738,6 +794,10 @@ export class RoomMindPanel extends LitElement {
         presence_away_action: "eco" | "off";
         schedule_off_action: "eco" | "off";
         valve_protection_enabled: boolean;
+        coil_dry_enabled: boolean;
+        coil_dry_minutes: number;
+        coil_dry_mode: string;
+        coil_dry_fan_mode: string;
       }>({
         type: "roommind/rooms/list",
       });
@@ -748,10 +808,14 @@ export class RoomMindPanel extends LitElement {
       this._hiddenRooms = result.hidden_rooms ?? [];
       this._roomOrder = result.room_order ?? [];
       this._groupByFloor = result.group_by_floor ?? false;
-      this._controlMode = result.control_mode ?? "bangbang";
+      this._controlMode = result.control_mode ?? "mpc";
       this._climateControlActive = result.climate_control_active ?? true;
       this._presenceEnabled = result.presence_enabled ?? false;
       this._valveProtectionEnabled = result.valve_protection_enabled ?? false;
+      this._coilDryEnabled = result.coil_dry_enabled ?? false;
+      this._coilDryMinutes = result.coil_dry_minutes ?? 20;
+      this._coilDryMode = result.coil_dry_mode ?? "fan_only";
+      this._coilDryFanMode = result.coil_dry_fan_mode ?? "low";
       this._anyoneHome = result.anyone_home ?? true;
       this._presencePersons = result.presence_persons ?? [];
       this._presenceAwayAction = result.presence_away_action ?? "eco";

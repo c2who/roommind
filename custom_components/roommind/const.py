@@ -7,7 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import Context
 
 DOMAIN = "roommind"
-VERSION = "1.7.1-beta.8"
+VERSION = "1.8.0"
 
 # Platforms
 PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.BINARY_SENSOR, Platform.CLIMATE]
@@ -23,12 +23,21 @@ OVERRIDE_BOOST = "boost"
 OVERRIDE_ECO = "eco"
 OVERRIDE_CUSTOM = "custom"
 OVERRIDE_TYPES = [OVERRIDE_BOOST, OVERRIDE_ECO, OVERRIDE_CUSTOM]
+# Grace period after the override entity is switched on before the seeded
+# override is evaluated; the caller's real targets normally arrive within it (#447).
+OVERRIDE_TURN_ON_REFRESH_DELAY_S = 3.0
 
 # Room modes
 MODE_IDLE = "idle"
 MODE_HEATING = "heating"
 MODE_COOLING = "cooling"
 MODE_DISABLED = "disabled"
+
+# Global control strategy (settings["control_mode"]). Missing value = MPC, which
+# is what every install ran before the setting was read by the controller.
+CONTROL_MODE_MPC = "mpc"
+CONTROL_MODE_BANGBANG = "bangbang"
+DEFAULT_CONTROL_MODE = CONTROL_MODE_MPC
 
 # Schedule states
 SCHEDULE_STATE_ON = "on"
@@ -43,6 +52,10 @@ DEFAULT_COMFORT_COOL = 24.0
 DEFAULT_ECO_HEAT = 17.0
 DEFAULT_ECO_COOL = 27.0
 
+# Minutes all occupancy sensors must report "off" before an empty room drops to eco (#180)
+DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES = 15
+# Shorter delays flip the target on every motion-sensor edge and flood battery TRVs with setpoints
+MIN_OCCUPANCY_ECO_DELAY_MINUTES = 5
 
 # Context identifier for RoomMind-initiated service calls.
 # Automations can check: trigger.context.parent_id == "roommind"
@@ -61,6 +74,13 @@ class TargetTemps(NamedTuple):
     cool: float | None = None  # None = don't cool / force off
 
 
+# Plausibility bounds for resolved room target temperatures (°C).
+# Schedule blocks are free-form YAML, so a typo (110 instead of 11) would
+# otherwise be heated against for hours (#395). Same range as the override
+# climate entity in climate.py, which imports these.
+MIN_TARGET_TEMP = 5.0
+MAX_TARGET_TEMP = 35.0
+
 # Smart control defaults
 BANGBANG_HEAT_HYSTERESIS = 0.2  # °C below target → start heating (bang-bang fallback)
 BANGBANG_COOL_HYSTERESIS = 0.2  # °C above target → start cooling (bang-bang fallback)
@@ -72,6 +92,30 @@ AC_COOLING_BOOST_TARGET = 16  # Fallback AC cooling boost (used when entity min_
 MIN_POWER_FRACTION = 0.15  # Minimum non-zero power fraction (prevents TRV dead zone)
 MIN_IDLE_UPDATES = 60  # ~3 h of idle data at 3-min EKF intervals
 MIN_ACTIVE_UPDATES = 20  # ~1 h of heating or cooling data
+DEFAULT_COMFORT_WEIGHT = 70  # Default comfort_weight slider value
+APPROACH_RATE_MIN = 0.2  # Gentlest gap fraction closed per block, at comfort_weight=0 (full efficiency)
+AC_BOOST_DELTA_MIN = 3.0  # Tightest AC setpoint cap (°C above/below target) at comfort_weight=0
+AC_BOOST_DELTA_MAX = 50.0  # Comfort-end AC cap (°C); finite value above any real device range so the cap never binds (inf would break the linear slider interpolation)
+PROPORTIONAL_DEADBAND_C = 0.5  # Minimum proportional setpoint change (°C) to resend, in the gentle regime
+PROPORTIONAL_DEADBAND_NEAR_TARGET_C = 0.2  # Finer proportional deadband (°C) within 1°C of target
+PROPORTIONAL_SETPOINT_DWELL_SECONDS = 300  # Minimum time a proportional setpoint stays on the device before a recomputed one replaces it (one MPC block, #317)
+BOOST_CAP_FALLBACK_STEP = 0.5  # Distance kept below a device's max_temp for proportional heating setpoints when it reports no target_temp_step (#396)
+# Direct valve control (#413): TRVs whose valve opening RoomMind sets through number entities
+VALVE_DWELL_SECONDS = 600  # Minimum time a valve position stays before a small correction moves the motor again
+VALVE_DEADBAND_PCT = 5  # Smaller position changes are not sent
+VALVE_OVERSHOOT_STOP_K = 0.5  # A modulating valve closes this far above the target whatever the model says
+VALVE_PROPORTIONAL_BAND_K = 1.0  # A modulating valve opens 100 % further per this many K below the target
+# AC sensor offset (device reading - room sensor while the compressor runs), see HeadOffsetTracker
+HEAD_OFFSET_SETTLE_S = 240  # Running time before readings count: the offset builds up with the airflow after a start
+HEAD_OFFSET_ALPHA = 0.05  # EMA weight per reading (one per 30 s cycle: ~10 min of running to follow a change)
+HEAD_OFFSET_MIN_SAMPLES = 10  # Readings before the offset is applied to setpoints
+HEAD_OFFSET_MAX_K = 4.0  # Larger differences are a misplaced or broken sensor, not a bias to correct
+HEAD_OFFSET_GRID_K = 0.5  # Applied offsets are multiples of this; below a quarter of a degree nothing changes
+HEAD_OFFSET_HYSTERESIS_K = 0.375  # The applied offset moves only once the learned one is this far from it
+# Comfort-weighted cost (°C² equivalent) of starting a run, for slow heating systems (UFH) only.
+# Fast systems get a start hysteresis in the controller; UFH keeps the optimizer's decisions
+# and toggled heat/idle every 30 s cycle at the target without it (#429).
+SLOW_SYSTEM_START_PENALTY = 1.0
 
 # Update interval in seconds
 UPDATE_INTERVAL = 30
@@ -87,6 +131,11 @@ HISTORY_ROTATE_CYCLES = 360  # ~3 hours
 
 # EKF update: accumulate observations before updating (better signal-to-noise)
 EKF_UPDATE_MIN_DT = 3.0  # minutes — matches HISTORY_WRITE_CYCLES
+
+# Outdoor sensor watchdog: notify when no valid outdoor temperature for this
+# many coordinator cycles (60 × 30 s = 30 min).
+OUTDOOR_UNAVAILABLE_NOTIFY_CYCLES = 60
+OUTDOOR_UNAVAILABLE_NOTIFICATION_ID = "roommind_outdoor_unavailable"
 
 # Prediction clamping: max °C change in one prediction step (prevents unrealistic jumps)
 MAX_PREDICTION_DELTA = 3.0
@@ -108,6 +157,7 @@ DEFAULT_MOLD_COOLDOWN_MINUTES = 60  # minutes between repeated notifications per
 MOLD_PREVENTION_DELTAS = {"light": 1.0, "medium": 2.0, "strong": 3.0}
 MOLD_HYSTERESIS = 5.0  # surface RH must drop this much below warning to clear
 MIN_MOLD_GROWTH_TEMP = 5.0  # °C — below this surface temp, mold risk negligible
+DEFAULT_MOLD_F_RSI = 0.80  # DIN 4108-2 temperature factor; realistic for standard existing buildings
 
 # Heating system profiles — residual heat modeling per system type
 # tau_minutes: exponential decay time constant of residual heat after heating stops
@@ -130,6 +180,12 @@ HEATING_SYSTEM_PROFILES: dict[str, dict[str, float]] = {
 }
 RESIDUAL_HEAT_CUTOFF = 0.02  # below this q_residual is treated as zero
 
+# AC rebound: while an AC cools, the air drops below the building mass; after it
+# stops the air relaxes back within minutes. Charge relaxes towards the cooling
+# power fraction while cooling and decays with this time constant otherwise.
+AC_REBOUND_TAU_MINUTES = 10.0
+AC_REBOUND_CUTOFF = 0.01  # below this the rebound charge is treated as zero
+
 # Blind/cover control
 COVER_SOLAR_MIN: float = 0.15
 COVER_HYSTERESIS: float = 1.0
@@ -141,12 +197,19 @@ COVER_USER_OVERRIDE_MINUTES: int = 60
 COVER_TRANSITION_SETTLE_S: int = 90  # seconds after commanding before override detection activates
 COVER_DEFAULT_BETA_S: float = 3.0  # °C/h per unit q_solar (default for rooms without learned data)
 COVER_LINEAR_LOOKAHEAD_H: float = 1.0  # linear fallback: 1h (no heat-loss correction → keep short)
+COVER_COOLING_LOOKAHEAD_H: float = 3.0  # rooms that cool: solar input the learned model counts (unit removes it all)
+COVER_COOLING_LINEAR_H: float = 2.0  # same with the default gain (~2x a learned one) while the model is not confident
+COVER_DIRECT_SUN_ANGLE_DEG: float = 60.0  # sun within this angle of the facade normal counts fully
 COVER_PREDICTION_DT_MINUTES: float = 5.0  # time step for RC trajectory simulation
 COVER_MAX_PREDICTION_STD: float = 0.5  # max idle+solar prediction_std to activate RC tier
 COVER_CONFIDENCE_REFERENCE_SOLAR: float = 0.5  # reference q_solar for confidence check
 COVER_MIN_IDLE_FOR_LEARNED: int = 30  # Min idle observations before trusting EKF's beta_s
 COVER_POS_DEADBAND: int = 20  # min position change (%) to trigger motor movement
+COVER_REOPEN_STEP: int = 40  # min partial reopening (%) within a shading episode
+COVER_REOPEN_HOLD_SECONDS: int = 3600  # min time since the last move before a partial reopening
 COVER_DAILY_LOOKAHEAD_H: float = 8.0  # hours ahead to search for daily solar peak (Tier 2)
+COVER_SMOOTHING_MINUTES: float = 30.0  # EMA time constant for room temp and shading excess (AC cycles)
+COVER_SMOOTHING_RISE_MINUTES: float = 10.0  # faster EMA while the shading excess climbs
 
 # Heat source orchestration — smart routing for rooms with multiple heating device types
 DEFAULT_HEAT_SOURCE_PRIMARY_DELTA = 1.5  # °C gap to engage primary (boiler/radiator)
@@ -159,6 +222,19 @@ HEAT_SOURCE_SECONDARY_POWER_SCALE = 0.7  # throttle secondary when both active (
 # Compressor group defaults
 DEFAULT_COMPRESSOR_MIN_RUN_MINUTES = 15
 DEFAULT_COMPRESSOR_MIN_OFF_MINUTES = 5
+# Devices without usable state (IR blasters) get an unchanged command once more after this long.
+# Long enough that it is not audible as a beep pattern (#416), short enough to heal a lost frame,
+# a change on the remote or a restarted device within one comfortable stretch.
+COMMAND_CACHE_REASSERT_SECONDS = 1800
+# A resolved target that moved by more than this since the last active command is a deliberate change (°C)
+COMPRESSOR_HOLD_RETARGET_TOLERANCE = 0.05
+# Compressor hold: a heating unit keeps its boost until the room is this far above the heating target
+# (and at least at the cooling target), the cooling side mirrored. With single-point targets (heat == cool)
+# the margin keeps "target reached" from ending the hold; 0.5 K is a typical sensor/setpoint resolution.
+HOLD_OVERSHOOT_MARGIN = 0.5
+COMPRESSOR_STATE_SETTLE_SECONDS = (
+    120  # An "off" reading this soon after our own start is state lag, not a manual switch-off
+)
 
 # Heating demand aggregation
 HEATING_DEMAND_OFF_DELAY = 60  # seconds — short anti-flicker holdoff when forecast is clear
@@ -183,23 +259,35 @@ VACATION_SENTINEL_UNTIL = 32503680000.0
 
 def is_override_active(room: dict) -> bool:
     """Return True when a manual override is currently active."""
-    override_temp = room.get("override_temp")
-    if override_temp is None:
+    if room.get("override_heat") is None and room.get("override_cool") is None:
         return False
     override_until = room.get("override_until")
     return override_until is None or time.time() < override_until
 
 
-def build_override_live(room: dict) -> dict:
-    """Build override fields for live data from a room config dict."""
+def is_override_suppressed(room: dict, settings: dict, presence_away: bool) -> bool:
+    """Return True when an active override should be ignored due to presence."""
+    if not presence_away:
+        return False
+    if room.get("ignore_presence", False):
+        return False
+    return bool(settings.get("presence_clears_override", False))
+
+
+def build_override_live(room: dict, suppressed: bool = False) -> dict:
+    """Build override fields for live data from a room config dict.
+
+    When *suppressed* is True the override is held in the store but currently
+    has no effect (e.g. presence-away with presence_clears_override enabled).
+    Live data still reports the underlying intent so the UI can render a
+    "paused" indicator.
+    """
     active = is_override_active(room)
-    override_temp = room.get("override_temp")
-    override_until = room.get("override_until")
     return {
         "override_active": active,
         "override_type": room.get("override_type") if active else None,
-        "override_temp": override_temp if active else None,
         "override_heat": room.get("override_heat") if active else None,
         "override_cool": room.get("override_cool") if active else None,
-        "override_until": override_until if active else None,
+        "override_until": room.get("override_until") if active else None,
+        "override_suppressed": active and suppressed,
     }

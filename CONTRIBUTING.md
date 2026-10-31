@@ -42,6 +42,13 @@ The production build outputs to `custom_components/roommind/frontend/roommind-pa
 .venv/bin/pytest tests/test_coordinator.py::test_heating_mode -v
 ```
 
+Before opening a pull request, run everything CI checks (lint, mypy, tests with coverage, frontend checks and build, timezone sweep):
+
+```bash
+dev/check          # ~1 min
+dev/check --quick  # without the timezone sweep
+```
+
 Tests are organized by module:
 ```
 tests/
@@ -79,7 +86,7 @@ Coverage must stay ≥ 95% (enforced in CI). Check locally:
 
 ### i18n
 
-All user-facing strings go through `localize()`. Add new keys to both `frontend/src/locales/en.json` and `de.json`.
+All user-facing strings go through `localize()`. Add new keys to `frontend/src/locales/en.json`, `de.json` and `fr.json`.
 
 ## Commit Messages
 
