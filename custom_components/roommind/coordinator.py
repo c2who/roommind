@@ -1520,17 +1520,10 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 ekf_pf = 0.0
                 q_residual_training = 0.0
 
-        passive_applied = False
-        if ekf_mode == MODE_IDLE:
-            passive_mode, passive_pf = self._observe_passive_devices(room)
-            if passive_mode is not None:
-                ekf_mode, ekf_pf = passive_mode, passive_pf
-                passive_applied = True
-
         # Delivered power as the training label (not the commanded one): a TRV's own
         # P band or an AC's control loop runs at (nearly) full output from pf ~0.1 on,
         # so commanded-pf labels inflated beta_h 3-30x in the simulation.
-        if climate_active and has_external_sensor and not passive_applied and ekf_mode in (MODE_HEATING, MODE_COOLING):
+        if climate_active and has_external_sensor and ekf_mode in (MODE_HEATING, MODE_COOLING):
             ekf_pf = self._delivered_training_power(room, ekf_mode, ekf_pf, heat_source_plan)
 
         # Zero-power normalization: heat source orchestration may yield
@@ -2096,75 +2089,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         pf = 1.0 if dominated in ("heating", "cooling") else 0.0
         return (dominated, pf)
 
-    def _observe_passive_devices(self, room: dict) -> tuple[str | None, float]:
-        """Observe passive devices to detect external heating/cooling for EKF training.
 
-        Passive devices are external entities (climate, binary_sensor, input_boolean)
-        whose thermal effect on this room should be accounted for during EKF training,
-        but which RoomMind does not control.
-
-        Each passive device entry has:
-          - entity_id: HA entity to observe
-          - mode: "auto" (climate only, read hvac_action), "cooling", or "heating"
-          - power_fraction: relative contribution weight (default 1.0)
-
-        When multiple passive devices are active simultaneously, their power_fractions
-        are summed so the EKF receives a composite signal. If both heating and cooling
-        sources are active, the dominant (larger pf) mode wins.
-
-        Returns (mode, composite_power_fraction):
-          - (MODE_COOLING, pf) / (MODE_HEATING, pf) if any passive device is active
-          - (None, 0.0) if no passive device is active
-        """
-        passive_devices = room.get("passive_devices", [])
-        if not passive_devices:
-            return None, 0.0
-
-        heating_pf = 0.0
-        cooling_pf = 0.0
-
-        for pd in passive_devices:
-            entity_id = pd.get("entity_id", "")
-            if not entity_id:
-                continue
-            config_mode = pd.get("mode", "auto")
-            pf = float(pd.get("power_fraction", 1.0))
-
-            state = self.hass.states.get(entity_id)
-            if state is None or state.state in ("unavailable", "unknown"):
-                continue
-
-            if entity_id.startswith("climate."):
-                hvac_action = state.attributes.get("hvac_action", "")
-                if config_mode == "auto":
-                    if hvac_action == "cooling":
-                        cooling_pf += pf
-                    elif hvac_action in ("heating", "preheating"):
-                        heating_pf += pf
-                elif config_mode == "cooling":
-                    if hvac_action == "cooling":
-                        cooling_pf += pf
-                elif config_mode == "heating":
-                    if hvac_action in ("heating", "preheating"):
-                        heating_pf += pf
-            else:
-                # binary_sensor, input_boolean, etc.: on = active
-                if state.state == "on":
-                    if config_mode == "cooling":
-                        cooling_pf += pf
-                    elif config_mode == "heating":
-                        heating_pf += pf
-
-        if cooling_pf > 0 and heating_pf > 0:
-            # Both active — use the dominant contribution
-            if cooling_pf >= heating_pf:
-                return MODE_COOLING, cooling_pf
-            return MODE_HEATING, heating_pf
-        if cooling_pf > 0:
-            return MODE_COOLING, cooling_pf
-        if heating_pf > 0:
-            return MODE_HEATING, heating_pf
-        return None, 0.0
     def _delivered_training_power(
         self, room: dict, mode: str, commanded_pf: float, heat_source_plan: Any | None
     ) -> float:

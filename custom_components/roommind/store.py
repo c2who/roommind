@@ -252,7 +252,6 @@ class RoomMindStore:
             "area_id": area_id,
             "devices": config.get("devices", []),
             "entity_modes": config.get("entity_modes", {}),
-            "passive_devices": config.get("passive_devices", []),
             "temperature_sensor": config.get("temperature_sensor", ""),
             "humidity_sensor": config.get("humidity_sensor", ""),
             "occupancy_sensors": config.get("occupancy_sensors", []),

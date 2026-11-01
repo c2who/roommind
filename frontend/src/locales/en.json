@@ -603,17 +603,5 @@
   "devices.entity_mode_cool_only": "Cooling only",
   "covers.sensor_only": "Sensor only mode",
   "covers.sensor_only_hint": "Don't control covers directly. A binary sensor shows when shading is recommended and what position to use.",
-  "covers.sensor_only_active": "Sensor only",
-  "passive_devices.section_title": "Passive Observations",
-  "passive_devices.section_hint": "External devices that affect this room's temperature but are not controlled by RoomMind. Used to improve model training accuracy.",
-  "passive_devices.entity": "Entity",
-  "passive_devices.mode": "Mode",
-  "passive_devices.mode_auto": "Auto (read from entity)",
-  "passive_devices.mode_cooling": "Cooling",
-  "passive_devices.mode_heating": "Heating",
-  "passive_devices.power_fraction": "Influence",
-  "passive_devices.power_fraction_hint": "Relative effect on this room (1.0 = full effect, 0.2 = 20%). When unsure, use 1.0 and let the model learn.",
-  "passive_devices.add": "Add passive device",
-  "passive_devices.remove": "Remove",
-  "passive_devices.none_configured": "No passive devices configured."
+  "covers.sensor_only_active": "Sensor only"
 }

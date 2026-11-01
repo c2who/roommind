@@ -18,12 +18,6 @@ export interface ScheduleEntry {
   entity_id: string;
 }
 
-export interface PassiveDevice {
-  entity_id: string;
-  mode: "auto" | "cooling" | "heating";
-  power_fraction: number;
-}
-
 export interface CoverScheduleEntry {
   entity_id: string;
   mode?: "force" | "gate";
@@ -150,7 +144,6 @@ export interface RoomConfig {
   display_name?: string;
   heating_system_type?: string;
   entity_modes?: Record<string, "auto" | "heat_only" | "cool_only">;
-  passive_devices?: PassiveDevice[];
   covers?: string[];
   covers_auto_enabled?: boolean;
   covers_deploy_threshold?: number;
