@@ -25,15 +25,22 @@ class TestCoverageGaps:
 
         valid = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_position_blind")
         valid.entity_id = "sensor.roommind_living_room_shading_position_blind"
+        valid_binary = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_blind")
+        valid_binary.entity_id = "binary_sensor.roommind_living_room_shading_blind"
         stale = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_position_old")
         stale.entity_id = "sensor.roommind_living_room_shading_position_old"
+        stale_binary = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_old")
+        stale_binary.entity_id = "binary_sensor.roommind_living_room_shading_old"
         registry = MagicMock()
-        registry.entities.values.return_value = [valid, stale]
+        registry.entities.values.return_value = [valid, valid_binary, stale, stale_binary]
 
         with patch("homeassistant.helpers.entity_registry.async_get", return_value=registry):
             coordinator.cleanup_orphaned_entities()
 
-        registry.async_remove.assert_called_once_with(stale.entity_id)
+        assert {call.args[0] for call in registry.async_remove.call_args_list} == {
+            stale.entity_id,
+            stale_binary.entity_id,
+        }
 
     def test_cleanup_orphaned_entities_removes_orphaned(self, hass, mock_config_entry):
         """cleanup_orphaned_entities removes entities for deleted rooms."""

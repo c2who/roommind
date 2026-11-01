@@ -149,9 +149,10 @@ def _match_room_entity(parts: str, rooms: dict) -> tuple[str, str] | None:
             if parts == f"{area_id}{suffix}":
                 return area_id, suffix
         for cover_eid in room.get("covers", []):
-            suffix = f"_shading_position_{cover_eid.removeprefix('cover.')}"
-            if parts == f"{area_id}{suffix}":
-                return area_id, suffix
+            cover_id = cover_eid.removeprefix("cover.")
+            for suffix in (f"_shading_position_{cover_id}", f"_shading_{cover_id}"):
+                if parts == f"{area_id}{suffix}":
+                    return area_id, suffix
     return None
 
 
@@ -2555,8 +2556,9 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # remove a longer room's entities (`bedroom_2_l_*`). (#340)
         owned_uids = {f"{DOMAIN}_{area_id}{suffix}" for suffix in ROOM_ENTITY_SUFFIXES}
         owned_uids.update(
-            f"{DOMAIN}_{area_id}_shading_position_{eid.removeprefix('cover.')}"
+            f"{DOMAIN}_{area_id}_{kind}_{eid.removeprefix('cover.')}"
             for eid in (cover_eids or [])
+            for kind in ("shading_position", "shading")
         )
         entries_to_remove = [
             entity_entry.entity_id
