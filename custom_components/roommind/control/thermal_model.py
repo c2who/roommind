@@ -297,54 +297,12 @@ class ThermalEKF:
     # Higher values keep the filter adaptive; lower values freeze parameters.
     # Note: beta_h/beta_c/beta_s noise is mode-gated in _predict_step —
     # only applied when the parameter is observable (Jacobian F[0][i] ≠ 0).
-    _Q_T: float = 0.01  # absolute — unmodeled disturbances (~0.1 degC/step)
-
-    # --- Relative (proportional) process noise ---
-    #
-    # Why relative instead of fixed absolute noise?
-    #   With fixed Q values, the Kalman gain for a parameter is independent of
-    #   that parameter's current magnitude.  This causes two problems:
-    #     1. Small parameters (e.g. alpha≈0.02 for a well-insulated room) get
-    #        the same absolute noise as large ones, making the filter jittery
-    #        and slow to converge on small values.
-    #     2. Large parameters (e.g. beta_h≈10 for a powerful heater) get
-    #        relatively tiny noise, effectively freezing the filter and
-    #        preventing it from tracking real drift.
-    #
-    # How it works:
-    #   For each learned parameter x, the process noise variance is:
-    #       Q_x = clamp((rel * x)^2,  floor,  cap)
-    #   - The squared term converts a relative standard-deviation fraction into
-    #     variance (EKF covariance units).
-    #   - The floor prevents Q from collapsing to zero when x is near zero
-    #     (e.g. alpha at its lower bound), which would freeze the parameter.
-    #   - The cap prevents runaway noise for very large parameter values, which
-    #     would destabilize the filter.
-    #
-    # Calibration: relative fractions were chosen so that at the default
-    # parameter values (alpha=0.15, beta_h=3.0, beta_c=4.0, beta_s=0.5) the
-    # resulting Q values match the previous fixed absolute noise, ensuring
-    # identical behavior for typical rooms while improving extreme cases.
-    _Q_ALPHA_REL: float = 0.149  # 14.9% per step → (0.149*0.15)^2 ≈ 0.0005
-    _Q_BETA_H_REL: float = 0.024  # 2.4% per step → (0.024*3.0)^2 ≈ 0.005
-    _Q_BETA_C_REL: float = 0.018  # 1.8% per step → (0.018*4.0)^2 ≈ 0.005
-    _Q_BETA_S_REL: float = 0.09  # 9% per step → (0.09*0.5)^2 ≈ 0.002
-    _Q_BETA_O_REL: float = 0.149  # 14.9% per step → (0.149*0.3)^2 ≈ 0.002
-
-    # Floors: keep the filter learning even when the parameter is near zero.
-    # Only needed for alpha, beta_s, and beta_o which can legitimately be very small;
-    # beta_h/beta_c have natural lower bounds from HVAC physics.
-    _Q_ALPHA_FLOOR: float = 1e-6
-    _Q_BETA_S_FLOOR: float = 1e-4
-    _Q_BETA_O_FLOOR: float = 1e-4
-
-    # Caps: bound the noise for very large parameter values to prevent
-    # covariance growth that would make the filter overshoot on every update.
-    _Q_ALPHA_CAP: float = 0.01
-    _Q_BETA_H_CAP: float = 0.05
-    _Q_BETA_C_CAP: float = 0.05
-    _Q_BETA_S_CAP: float = 0.01
-    _Q_BETA_O_CAP: float = 0.01
+    _Q_T: float = 0.01  # unmodeled disturbances (~0.1 degC/step)
+    _Q_ALPHA: float = 0.0005  # building property drift (slow: seasonal, insulation)
+    _Q_BETA_H: float = 0.005  # HVAC power drift (5x previous)
+    _Q_BETA_C: float = 0.005  # HVAC power drift (5x previous)
+    _Q_BETA_S: float = 0.002  # solar gain drift
+    _Q_BETA_O: float = 0.002  # occupancy gain drift
     _Q_BETA_F: float = 0.005  # same drift as beta_c
 
     # Measurement noise
@@ -852,26 +810,21 @@ class ThermalEKF:
         # Covariance prediction: P = F @ P @ F^T + Q_noise
         N = self._N
         P = self._P
-        # Mode-gated relative process noise: only add drift to parameters that
-        # are currently observable (Jacobian F[0][i] ≠ 0).  Unobservable params
+        # Mode-gated process noise: only add drift to parameters that are
+        # currently observable (Jacobian F[0][i] ≠ 0).  Unobservable params
         # keep their variance frozen — inflating it without any measurement
         # to reduce it again just degrades confidence and destabilises the
         # correlated parameters (alpha ↔ beta_h coupling → time-constant
         # oscillation).
-        # Per-parameter: Q_x = clamp((rel * x)^2, floor, cap)
+        alpha_ratio = max(alpha, self._ALPHA_MIN) / self._DEFAULT_ALPHA
+        q_alpha = self._Q_ALPHA * min(1.0, alpha_ratio * alpha_ratio)
         Q = [
             self._Q_T,
-            min(max((self._Q_ALPHA_REL * alpha) ** 2, self._Q_ALPHA_FLOOR), self._Q_ALPHA_CAP),
-            min((self._Q_BETA_H_REL * beta_h) ** 2, self._Q_BETA_H_CAP)
-            if (mode == "heating" or (mode == "idle" and q_residual > 0))
-            else 0.0,
-            min((self._Q_BETA_C_REL * beta_c) ** 2, self._Q_BETA_C_CAP) if mode == "cooling" else 0.0,
-            min(max((self._Q_BETA_S_REL * beta_s) ** 2, self._Q_BETA_S_FLOOR), self._Q_BETA_S_CAP)
-            if solar_learnable
-            else 0.0,
-            min(max((self._Q_BETA_O_REL * beta_o) ** 2, self._Q_BETA_O_FLOOR), self._Q_BETA_O_CAP)
-            if q_occupancy > 0
-            else 0.0,
+            q_alpha,
+            self._Q_BETA_H if (mode == "heating" or (mode == "idle" and q_residual > 0)) else 0.0,
+            self._Q_BETA_C if mode == "cooling" else 0.0,
+            self._Q_BETA_S if solar_learnable else 0.0,
+            self._Q_BETA_O if q_occupancy > 0 else 0.0,
             self._Q_BETA_F if fast != 0.0 else 0.0,
         ]
 

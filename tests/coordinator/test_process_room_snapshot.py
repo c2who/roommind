@@ -166,6 +166,19 @@ class TestProcessRoomSnapshot:
         assert result["mode"] == "heating"
         assert result["heating_power"] > 0
 
+    @pytest.mark.asyncio
+    async def test_residual_heat_tracks_final_mode_once(self, hass, mock_config_entry):
+        """Track the final compressor-constrained mode only once per cycle."""
+        room = {**SAMPLE_ROOM, "heating_system_type": "underfloor"}
+        coordinator, store = _setup_coordinator(hass, mock_config_entry, {"living_room_abc12345": room})
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0"))
+        coordinator._residual_tracker.update = MagicMock(wraps=coordinator._residual_tracker.update)
+
+        result = await coordinator._async_process_room(room, store.get_settings(), [])
+
+        coordinator._residual_tracker.update.assert_called_once()
+        assert coordinator._residual_tracker.update.call_args.args[1] == result["commanded_mode"]
+
     def test_build_room_state_uses_recommended_cover_position(self, hass, mock_config_entry):
         """Published shading sensors should use the stored recommendation, not measured drift."""
         room = {

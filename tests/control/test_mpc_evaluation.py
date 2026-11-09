@@ -48,6 +48,7 @@ async def test_confidence_transition_threshold():
     mode, pf = await ctrl.async_evaluate(current_temp=17.0, target_temp=21.0)
     assert mode == "heating"  # bang-bang also heats when cold
     assert pf == 1.0  # bang-bang: full power
+    assert ctrl.last_guard_reason.startswith("bang-bang fallback")
 
     # Just below threshold — MPC path
     model_mgr.get_prediction_std = MagicMock(return_value=0.49)
@@ -62,6 +63,7 @@ async def test_confidence_transition_threshold():
     mode2, pf2 = await ctrl2.async_evaluate(current_temp=17.0, target_temp=21.0)
     assert mode2 == "heating"  # MPC also heats when cold
     assert 0.0 < pf2 <= 1.0
+    assert ctrl2.last_guard_reason.startswith("MPC decided")
 
 
 # ---------------------------------------------------------------------------
@@ -638,6 +640,7 @@ def test_safety_guard_suppresses_when_prediction_stays_warm(monkeypatch):
     mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_IDLE
     assert pf == 0.0
+    assert ctrl.last_guard_reason.startswith("MPC adjusted heating to idle")
 
 
 def test_safety_guard_adaptive_horizon_underfloor(monkeypatch):
@@ -955,133 +958,6 @@ def test_build_solar_series_short_cloud_extended():
 
 
 # ---------------------------------------------------------------------------
-# _should_early_exit_min_run — strengthened guardrails
-# ---------------------------------------------------------------------------
-
-
-def _make_mpc_ready_ctrl(
-    hass,
-    room,
-    mode_on_since: float,
-    heating_system_type: str = "underfloor",
-    previous_mode: str = MODE_HEATING,
-) -> MPCController:
-    """Create an MPCController with a model-ready RoomModelManager."""
-    from unittest.mock import MagicMock
-
-    mgr = RoomModelManager()
-    # Mock model readiness: low pred_std + enough data
-    mgr.get_prediction_std = MagicMock(return_value=0.1)
-    mgr.get_mode_counts = MagicMock(return_value=(100, 30, 30))
-    # Mock model.predict to return a high value (simulating solar overshoot)
-    model = RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0)
-    model.predict = MagicMock(return_value=23.0)  # well above typical target
-    mgr.get_model = MagicMock(return_value=model)
-
-    return MPCController(
-        hass,
-        room,
-        model_manager=mgr,
-        outdoor_temp=5.0,
-        settings={},
-        has_external_sensor=True,
-        previous_mode=previous_mode,
-        heating_system_type=heating_system_type,
-        mode_on_since=mode_on_since,
-    )
-
-
-def test_early_exit_blocked_below_50pct_elapsed():
-    """Early exit must be blocked when < 50% of min-run has elapsed."""
-    hass = build_hass()
-    room = make_room()
-    # Underfloor: 60 min min-run, 5 min elapsed = 8.3% < 50%
-    ctrl = _make_mpc_ready_ctrl(hass, room, mode_on_since=time.time() - 300)
-    result = ctrl._should_early_exit_min_run(MODE_HEATING, 22.0, 21.0)
-    assert result is False
-
-
-def test_early_exit_blocked_model_not_ready():
-    """Early exit must be blocked when model doesn't have enough data."""
-    from unittest.mock import MagicMock
-
-    hass = build_hass()
-    room = make_room()
-    mgr = RoomModelManager()
-    # Model NOT ready: high pred_std
-    mgr.get_prediction_std = MagicMock(return_value=0.8)
-    mgr.get_mode_counts = MagicMock(return_value=(10, 5, 0))
-    model = RCModel(C=1.0, U=0.15, Q_heat=3.0, Q_cool=4.0)
-    model.predict = MagicMock(return_value=23.0)
-    mgr.get_model = MagicMock(return_value=model)
-
-    # 35 min elapsed (> 50% of 60 min) but model not ready
-    ctrl = MPCController(
-        hass,
-        room,
-        model_manager=mgr,
-        outdoor_temp=5.0,
-        settings={},
-        has_external_sensor=True,
-        previous_mode=MODE_HEATING,
-        heating_system_type="underfloor",
-        mode_on_since=time.time() - 2100,
-    )
-    result = ctrl._should_early_exit_min_run(MODE_HEATING, 22.0, 21.0)
-    assert result is False
-
-
-def test_early_exit_allowed_above_50pct_model_predicts_comfort():
-    """Early exit allowed when >= 50% elapsed AND model predicts overshoot."""
-    hass = build_hass()
-    room = make_room()
-    # Underfloor: 60 min min-run, 35 min elapsed = 58% > 50%
-    ctrl = _make_mpc_ready_ctrl(hass, room, mode_on_since=time.time() - 2100)
-    # predicted=23.0 vs target=21.0 → margin = 0.15 + 0.01 * 25min = 0.40
-    # 23.0 >= 21.0 + 0.40 → should exit
-    result = ctrl._should_early_exit_min_run(MODE_HEATING, 22.0, 21.0)
-    assert result is True
-
-
-def test_early_exit_scaled_margin_blocks_marginal_overshoot():
-    """Scaled margin must block exit when overshoot is small and remaining time is large."""
-    from unittest.mock import MagicMock
-
-    hass = build_hass()
-    room = make_room()
-    # 31 min elapsed (just past 50% of 60 min), remaining = 29 min
-    # margin = 0.15 + 0.01 * 29 = 0.44
-    ctrl = _make_mpc_ready_ctrl(hass, room, mode_on_since=time.time() - 1860)
-    # Override predict to return a value just above target but below margin
-    mgr = ctrl._model_manager
-    model = mgr.get_model("living_room")
-    model.predict = MagicMock(return_value=21.3)  # 21.3 < 21.0 + 0.44
-
-    result = ctrl._should_early_exit_min_run(MODE_HEATING, 20.5, 21.0)
-    assert result is False
-
-
-def test_early_exit_cooling_mode():
-    """Early exit works for cooling mode too."""
-    hass = build_hass()
-    room = make_room()
-    # 35 min elapsed, remaining = 25 min, margin = 0.15 + 0.01 * 25 = 0.40
-    ctrl = _make_mpc_ready_ctrl(
-        hass,
-        room,
-        mode_on_since=time.time() - 2100,
-        previous_mode=MODE_COOLING,
-    )
-    # Override predict: predicted=21.0, target=24.0 → 21.0 <= 24.0 - 0.40 → should exit
-    mgr = ctrl._model_manager
-    model = mgr.get_model("living_room")
-    model.predict = MagicMock(return_value=21.0)
-
-    result = ctrl._should_early_exit_min_run(MODE_COOLING, 22.0, 24.0)
-    assert result is True
-
-
-# ---------------------------------------------------------------------------
 # Bang-bang 50% elapsed floor
 # ---------------------------------------------------------------------------
 
@@ -1160,6 +1036,7 @@ def test_bangbang_holds_cooling_below_50pct():
     temp = cool_target - BANGBANG_COOL_HYSTERESIS - 0.5
     mode = ctrl._evaluate_bangbang(temp, TargetTemps(heat=19.0, cool=cool_target))
     assert mode == MODE_COOLING
+
 
 # Issue #131: UFH proactive pre-heating — end-to-end via _evaluate_mpc
 # ---------------------------------------------------------------------------

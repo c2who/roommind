@@ -471,9 +471,12 @@ class RoomMindCoordinator(DataUpdateCoordinator):
 
         # Aggregate heating demand across all rooms (forecast-aware state machine)
         any_heating_now = any(rs.get("mode") == MODE_HEATING for rs in room_states.values())
-        forecast_has_heating = any(
-            any(step.get("action") == MODE_HEATING for step in rs.get("forecast", [])) for rs in room_states.values()
-        )
+        rooms_heating_forecast = [
+            area_id
+            for area_id in room_states
+            if any(step.get("action") == MODE_HEATING for step in self._prediction_forecasts.get(area_id, []))
+        ]
+        forecast_has_heating = bool(rooms_heating_forecast)
 
         now = time.monotonic()
         if any_heating_now:
@@ -501,11 +504,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             heating_demand = False
 
         rooms_heating_now = [aid for aid, rs in room_states.items() if rs.get("mode") == MODE_HEATING]
-        rooms_heating_forecast = [
-            aid
-            for aid, rs in room_states.items()
-            if any(step.get("action") == MODE_HEATING for step in rs.get("forecast", []))
-        ]
         self._head_offsets.prune(set(build_rooms_devices_map(rooms)))
         # Persist learned AC sensor offsets (piggyback on thermal save cycle)
         if self._head_offsets.dirty and self._thermal_save_count == 0:
@@ -990,7 +988,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             elif prev_mode != MODE_IDLE and mode != MODE_IDLE and mode != prev_mode:
                 mode = prev_mode
 
-        # Store MPC prediction forecast for analytics.
+        # Store MPC plan actions for aggregate heating demand.
         # Placed after all guards (force_off, window_open) so the forecast
         # reflects the final decision, not just the raw optimizer plan.
         if controller.last_plan and len(controller.last_plan.temperatures) > 1:
@@ -1031,18 +1029,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 "resuming control (devices stay off until the sensor reports)",
                 area_id,
                 MAX_SENSOR_STALENESS,
-            )
-
-        # --- Residual heat transition tracking ---
-        # Only track when climate control is active — RoomMind-initiated heating
-        # transitions don't exist when control is disabled.
-        if climate_active and system_type:
-            self._residual_tracker.update(
-                area_id,
-                mode,
-                power_fraction,
-                self._previous_modes.get(area_id, MODE_IDLE),
-                q_residual=q_residual,
             )
 
         # Read device temperature limits for dynamic boost targets
@@ -1694,17 +1680,20 @@ class RoomMindCoordinator(DataUpdateCoordinator):
                 actions.append(f"targets → {ht}/{ct} ({target_reason})")
             summary = ", ".join(actions) if actions else "state changed"
 
-            # Extract reason from guard
-            reason = ""
-            if controller:
+            # Coordinator gates take precedence over the controller's decision.
+            if not room.get("climate_control_enabled", True):
+                reason = "room control disabled"
+            elif not settings.get("climate_control_active", True):
+                reason = "global control disabled"
+            elif window_open:
+                reason = "window pause"
+            elif force_off:
+                reason = "target off"
+            elif controller:
                 gr = controller.last_guard_reason or ""
                 reason = self._format_guard_reason(gr, display_mode, prev_mode)
-                # Add idle drift only when idle and not already in guard reason
-                if display_mode == MODE_IDLE and "predicted" not in gr:
-                    idle_drift = controller.last_idle_drift
-                    if idle_drift:
-                        drift_temp, drift_minutes = idle_drift
-                        reason += (", " if reason else "") + f"drift → {drift_temp:.2f} in {drift_minutes:.0f}min"
+            else:
+                reason = ""
 
             # Debug suffix
             temp_s = f"{current_temp_raw:.2f}" if current_temp_raw is not None else "n/a"
@@ -1812,9 +1801,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         )
         for eid in cover_eids:
             effective_target = (
-                max(cover_min_positions.get(eid, 0), room_target_position)
-                if room_target_position is not None
-                else None
+                max(cover_min_positions.get(eid, 0), room_target_position) if room_target_position is not None else None
             )
             cover_debug[eid] = {
                 "current_position": cover_pos_result.positions_by_cover.get(eid),
@@ -2090,7 +2077,6 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         pf = 1.0 if dominated in ("heating", "cooling") else 0.0
         return (dominated, pf)
 
-
     def _delivered_training_power(
         self, room: dict, mode: str, commanded_pf: float, heat_source_plan: Any | None
     ) -> float:
@@ -2328,11 +2314,14 @@ class RoomMindCoordinator(DataUpdateCoordinator):
         # 3. Schedule / comfort / eco
         targets = self._resolve_schedule_targets(room, settings, schedule_blocks, schedule_entity_id)
         if room_vacant:
-            return cap_to_eco(
+            capped = cap_to_eco(
                 targets,
                 room.get("eco_heat", room.get("eco_temp", DEFAULT_ECO_HEAT)),
                 room.get("eco_cool", DEFAULT_ECO_COOL),
             )
+            if capped != targets:
+                self._last_resolve_reason[area_id] = "occupancy_eco"
+            return capped
         return targets
 
     def _resolve_schedule_targets(
@@ -2374,14 +2363,17 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             # jumping to comfort_heat. Without cached blocks we have no signal,
             # so comfort_heat remains the last-resort fallback.
             if schedule_blocks is None:
+                self._last_resolve_reason[area_id] = "comfort"
                 return TargetTemps(heat=comfort_heat, cool=comfort_cool)
             if find_active_block(schedule_blocks, time.time()) is None:
+                self._last_resolve_reason[area_id] = "schedule_off"
                 if settings.get("schedule_off_action", "eco") == "off":
                     return TargetTemps(heat=None, cool=None)
                 return TargetTemps(heat=eco_heat, cool=eco_cool)
             # Block is active right now: fall through to block resolution below.
 
         if state_unavailable or state.state == SCHEDULE_STATE_ON:
+            self._last_resolve_reason[area_id] = "schedule"
             if schedule_blocks is not None:
                 # Read all temperature fields from block data.
                 # HA does not expose custom data keys (heat_temperature, cool_temperature)
@@ -2422,6 +2414,7 @@ class RoomMindCoordinator(DataUpdateCoordinator):
             single = _read(block_temp, "temperature")
             if single is not None:
                 return TargetTemps(heat=single, cool=single)  # single-point
+            self._last_resolve_reason[area_id] = "comfort"
             return TargetTemps(heat=comfort_heat, cool=comfort_cool)
 
         # Schedule is "off" -> eco or off

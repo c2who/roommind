@@ -96,10 +96,12 @@ async def test_heating_demand_from_forecast_alone_is_false(hass, mock_config_ent
 
     # Patch _async_process_room to return idle with a heating forecast
     async def fake_process_room(room_cfg, settings, outdoor_forecast):
+        coordinator._prediction_forecasts["living_room_abc12345"] = [
+            {"ts": time.time() + 300, "temp": 20.5, "action": MODE_HEATING}
+        ]
         return {
             "area_id": "living_room_abc12345",
             "mode": MODE_IDLE,
-            "forecast": [{"ts": time.time() + 300, "temp": 20.5, "action": MODE_HEATING}],
         }
 
     with patch.object(coordinator, "_async_process_room", side_effect=fake_process_room):
@@ -133,10 +135,12 @@ async def test_heating_demand_kept_by_forecast_after_heating(hass, mock_config_e
 
     # Second cycle: room idle but forecast has heating → demand stays on
     async def fake_process_room(room_cfg, settings, outdoor_forecast):
+        coordinator._prediction_forecasts["living_room_abc12345"] = [
+            {"ts": time.time() + 300, "temp": 20.5, "action": MODE_HEATING}
+        ]
         return {
             "area_id": "living_room_abc12345",
             "mode": MODE_IDLE,
-            "forecast": [{"ts": time.time() + 300, "temp": 20.5, "action": MODE_HEATING}],
         }
 
     with patch.object(coordinator, "_async_process_room", side_effect=fake_process_room):
@@ -168,10 +172,12 @@ async def test_heating_demand_stops_when_forecast_clear(hass, mock_config_entry)
 
     # Second cycle: idle, no forecast heating → holdoff starts
     async def fake_process_room(room_cfg, settings, outdoor_forecast):
+        coordinator._prediction_forecasts["living_room_abc12345"] = [
+            {"ts": time.time() + 300, "temp": 22.0, "action": MODE_IDLE}
+        ]
         return {
             "area_id": "living_room_abc12345",
             "mode": MODE_IDLE,
-            "forecast": [{"ts": time.time() + 300, "temp": 22.0, "action": MODE_IDLE}],
         }
 
     with patch.object(coordinator, "_async_process_room", side_effect=fake_process_room):

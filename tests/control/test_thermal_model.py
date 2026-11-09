@@ -1475,7 +1475,7 @@ def test_ekf_process_noise_with_residual_heat():
 
 
 def test_ekf_q_alpha_scaled_for_small_alpha():
-    """Process noise for alpha uses relative scaling: (Q_ALPHA_REL * alpha)^2 with floor."""
+    """Process noise for alpha scales down proportionally for small alpha (underfloor)."""
     ekf = ThermalEKF(T_init=20.0)
     ekf._x[1] = 0.007
     ekf._initialized = True
@@ -1485,30 +1485,27 @@ def test_ekf_q_alpha_scaled_for_small_alpha():
     ekf._predict_step(10.0, "idle", 0.05)
 
     p11_growth = ekf._P[1][1] - p11_before
-    raw = (ThermalEKF._Q_ALPHA_REL * 0.007) ** 2
-    expected_q = max(raw, ThermalEKF._Q_ALPHA_FLOOR)
-    assert p11_growth == pytest.approx(expected_q, abs=1e-8)
+    expected_q = ThermalEKF._Q_ALPHA * (0.007 / ThermalEKF._DEFAULT_ALPHA) ** 2
+    assert p11_growth < ThermalEKF._Q_ALPHA * 0.1
+    assert p11_growth == pytest.approx(expected_q, abs=1e-6)
 
 
-def test_ekf_q_alpha_relative_at_default():
-    """Process noise for alpha scales with value at default alpha."""
+def test_ekf_q_alpha_unchanged_at_default_alpha():
+    """Process noise for alpha is exactly Q_ALPHA at the default alpha value."""
     ekf = ThermalEKF(T_init=20.0)
     ekf._initialized = True
     ekf._P = [[0.001 if i == j else 0.0 for j in range(7)] for i in range(7)]
     p11_before = ekf._P[1][1]
-    alpha = ekf._x[1]
-
     ekf._predict_step(10.0, "idle", 0.05)
 
     p11_growth = ekf._P[1][1] - p11_before
-    expected_q = min(max((ThermalEKF._Q_ALPHA_REL * alpha) ** 2, ThermalEKF._Q_ALPHA_FLOOR), ThermalEKF._Q_ALPHA_CAP)
-    assert p11_growth == pytest.approx(expected_q, abs=1e-8)
+    assert p11_growth == pytest.approx(ThermalEKF._Q_ALPHA, abs=1e-7)
 
 
 def test_ekf_q_alpha_capped_for_large_alpha():
-    """Process noise for alpha is capped at Q_ALPHA_CAP for large alpha values."""
+    """Process noise for alpha is capped at Q_ALPHA for large alpha values."""
     ekf = ThermalEKF(T_init=20.0)
-    ekf._x[1] = 1.0
+    ekf._x[1] = 0.5
     ekf._initialized = True
     ekf._P = [[0.001 if i == j else 0.0 for j in range(7)] for i in range(7)]
     p11_before = ekf._P[1][1]
@@ -1516,7 +1513,7 @@ def test_ekf_q_alpha_capped_for_large_alpha():
     ekf._predict_step(10.0, "idle", 0.05)
 
     p11_growth = ekf._P[1][1] - p11_before
-    assert p11_growth == pytest.approx(ThermalEKF._Q_ALPHA_CAP, abs=1e-7)
+    assert p11_growth == pytest.approx(ThermalEKF._Q_ALPHA, abs=1e-7)
 
 
 def test_manager_get_prediction_std_unknown_room():
@@ -1530,48 +1527,6 @@ def test_manager_get_k_window_unknown_room():
     """get_k_window for unknown room returns default."""
     mgr = RoomModelManager()
     assert mgr.get_k_window("nonexistent") == ThermalEKF._K_WINDOW_DEFAULT
-
-
-def test_ekf_relative_noise_heavy_building_converges():
-    """EKF with relative process noise converges for heavy-masonry rooms.
-
-    A room with alpha=0.01 (time constant ~100h) and weak heater beta_h=0.5
-    previously failed to converge because absolute process noise dwarfed the
-    small parameter values. With relative noise, the EKF should converge toward
-    the true alpha value.
-    """
-    true_alpha = 0.01  # heavy masonry: U/C very small
-    true_beta_h = 0.5  # weak heater
-    # Build a ground-truth RCModel with C=1 normalization
-    true_model = RCModel(C=1.0, U=true_alpha, Q_heat=true_beta_h, Q_cool=1.0)
-
-    ekf = ThermalEKF()
-    T = 20.0
-    T_out = 5.0
-
-    # Initialize
-    ekf.update(T_measured=T, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
-
-    # Feed idle data (alpha learning)
-    for _ in range(120):
-        T_new = true_model.predict(T, T_out, 0.0, dt_minutes=5.0)
-        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="idle", dt_minutes=5.0)
-        T = T_new
-
-    # Feed heating data (beta_h learning)
-    for _ in range(60):
-        T_new = true_model.predict(T, T_out, true_model.Q_heat, dt_minutes=5.0)
-        ekf.update(T_measured=T_new, T_outdoor=T_out, mode="heating", dt_minutes=5.0)
-        T = T_new
-
-    # Alpha should have converged toward true value, not random-walked away
-    learned_alpha = ekf._x[1]
-    # With relative noise, alpha should be within 5x of true value
-    assert learned_alpha < 5 * true_alpha, f"alpha={learned_alpha:.4f} diverged from true={true_alpha}"
-    assert learned_alpha > true_alpha / 10, f"alpha={learned_alpha:.6f} collapsed below true={true_alpha}"
-
-    # Confidence should be meaningfully above zero
-    assert ekf.confidence > 0.3, f"confidence={ekf.confidence:.2f} too low"
 
 
 def test_manager_repr():

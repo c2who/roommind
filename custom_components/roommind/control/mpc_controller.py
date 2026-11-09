@@ -985,9 +985,7 @@ def get_can_heat_cool(
     entity_modes = room_config.get("entity_modes", {})
     trvs_can_heat = any(entity_modes.get(eid) != "cool_only" for eid in get_trv_eids(room_config.get("devices", [])))
     acs_can_cool = any(entity_modes.get(eid) != "heat_only" for eid in get_ac_eids(room_config.get("devices", [])))
-    can_heat = climate_mode != CLIMATE_MODE_COOL_ONLY and (
-        trvs_can_heat or acs_can_heat
-    )
+    can_heat = climate_mode != CLIMATE_MODE_COOL_ONLY and (trvs_can_heat or acs_can_heat)
     can_cool = climate_mode != CLIMATE_MODE_HEAT_ONLY and acs_can_cool
 
     if outdoor_temp is not None and not override_active:
@@ -1396,7 +1394,6 @@ class MPCController:
         self._area_id = room_config.get("area_id", "unknown")
         self._target_resolver = target_resolver
         self.last_plan: MPCPlan | None = None
-        self.last_idle_drift: tuple[float, float] | None = None  # (temp, minutes)
         self.last_guard_reason: str = ""
         self._peak_temps_unoccupied: list[float] | None = None
         self.q_solar = q_solar
@@ -1471,14 +1468,15 @@ class MPCController:
 
         self._lead_heat = self._lead_cool = None
         self._setback_release = frozenset()
+        self.last_guard_reason = ""
         if not self.has_external_sensor:
             mode = self._evaluate_managed_mode(targets)
             self.last_guard_reason = f"managed mode, device self-regulates → {mode}"
-            self.last_idle_drift = None
             return mode, 1.0  # managed mode: device self-regulates
 
         if not self._mpc_enabled:
             mode = self._evaluate_bangbang(current_temp, targets)
+            self.last_guard_reason = f"simple control → {mode}"
             return mode, 1.0 if mode != MODE_IDLE else 0.0
 
         # Use the model's prediction uncertainty to decide MPC vs bang-bang.
@@ -1504,7 +1502,6 @@ class MPCController:
         self.last_guard_reason = (
             f"bang-bang fallback (pred_std={pred_std:.3f}, MPC needs <{MPC_MAX_PREDICTION_STD}) → {mode}"
         )
-        self.last_idle_drift = None
         return mode, 1.0 if mode != MODE_IDLE else 0.0
 
     def _has_enough_data(self, can_heat: bool, can_cool: bool) -> bool:
@@ -1531,99 +1528,6 @@ class MPCController:
         system = self._run_system if mode == MODE_HEATING else ""
         min_run_seconds = get_min_run_blocks(system, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
         return (time.time() - self._mode_on_since) < min_run_seconds
-
-    def _below_min_run_floor(self, mode: str) -> bool:
-        """Return True if less than 50% of the minimum run time has elapsed.
-
-        Used to enforce an unconditional hold period before hysteresis or
-        model-based early exit is allowed.
-        """
-        if self.previous_mode != mode or self._mode_on_since is None:
-            return False
-        min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
-        return (time.time() - self._mode_on_since) < min_run_seconds * 0.5
-
-    def _should_early_exit_min_run(
-        self,
-        mode: str,
-        current_temp: float,
-        target: float,
-    ) -> bool:
-        """Return True if the thermal model predicts the room will stay comfortable without HVAC.
-
-        Uses RCModel.predict() with Q_active=0 over the remaining min-run time.
-        Only called when _within_min_run() is True, to allow early exit when
-        external heat sources (solar, residual thermal mass) are already driving
-        the room past target.
-
-        Guards:
-        - Model must be MPC-ready (enough data + low uncertainty).
-        - At least 50% of min-run must have elapsed before early exit is considered.
-        - Margin scales with remaining time to prevent premature exits on transient spikes.
-        """
-        if self._mode_on_since is None:
-            return False
-
-        # Don't trust model predictions during learning phase
-        can_heat, can_cool = self._get_can_heat_cool()
-        model = self._model_manager.get_model(self._area_id)
-        T_out = self.outdoor_temp if self.outdoor_temp is not None else DEFAULT_OUTDOOR_TEMP_FALLBACK
-        Q_check = model.Q_heat if can_heat else (-model.Q_cool if can_cool else 0.0)
-        pred_std = self._model_manager.get_prediction_std(
-            self._area_id,
-            Q_check,
-            current_temp,
-            T_out,
-            PLAN_DT_MINUTES,
-            q_solar=self.q_solar * self._shading_factor,
-            q_residual=self.q_residual,
-            q_occupancy=self.q_occupancy,
-        )
-        if pred_std >= MPC_MAX_PREDICTION_STD or not self._has_enough_data(can_heat, can_cool):
-            return False
-
-        # Compute remaining min-run time in minutes
-        min_run_seconds = get_min_run_blocks(self._heating_system_type, PLAN_DT_MINUTES) * PLAN_DT_MINUTES * 60
-        elapsed = time.time() - self._mode_on_since
-        remaining_minutes = max(0.0, (min_run_seconds - elapsed) / 60.0)
-        if remaining_minutes <= 0:
-            return True  # min run already elapsed
-
-        # Must have elapsed at least 50% of min-run before early exit is considered
-        if elapsed < min_run_seconds * 0.5:
-            return False
-
-        # Predict idle drift over remaining time
-        # Margin scales with remaining time: harder to clear early, easy near the end
-        margin = 0.15 + 0.01 * remaining_minutes
-        predicted = model.predict(
-            current_temp,
-            T_out,
-            Q_active=0.0,
-            dt_minutes=remaining_minutes,
-            q_solar=self.q_solar * self._shading_factor,
-            q_residual=self.q_residual,
-            q_occupancy=self.q_occupancy,
-        )
-
-        if mode == MODE_HEATING:
-            should_exit = predicted >= target + margin
-        elif mode == MODE_COOLING:
-            should_exit = predicted <= target - margin
-        else:
-            should_exit = False
-
-        if should_exit:
-            _LOGGER.debug(
-                "[%s] Early exit min-run: predicted=%.2f target=%.2f margin=%.2f remaining=%.0fmin mode=%s",
-                self._area_id,
-                predicted,
-                target,
-                margin,
-                remaining_minutes,
-                mode,
-            )
-        return should_exit
 
     def _direct_unit_running(self, mode: str, current_temp: float, targets: TargetTemps) -> bool:
         """Whether a run of *mode* is still a direct AC's own compressor run, which it ends itself.
@@ -1736,6 +1640,7 @@ class MPCController:
     ) -> tuple[str, float]:
         """MPC evaluation — use optimizer to determine action and power fraction."""
         if current_temp is None or (targets.heat is None and targets.cool is None):
+            self.last_guard_reason = "no temperature or active target → idle"
             return MODE_IDLE, 0.0
 
         model = self._model_manager.get_model(self._area_id)
@@ -1901,6 +1806,11 @@ class MPCController:
             if lead_system == run_system:
                 break
             run_system = lead_system
+        planned_mode = plan.get_current_action()
+        if action[0] != planned_mode:
+            self.last_guard_reason = f"MPC adjusted {planned_mode} to {action[0]} after safety or hysteresis checks"
+        else:
+            self.last_guard_reason = f"MPC decided {action[0]}"
         if action[0] == MODE_IDLE and self._setback_hold_over() and len(plan.actions) >= SETBACK_RELEASE_BLOCKS:
             ahead = plan.actions[:SETBACK_RELEASE_BLOCKS]
             self._setback_release = frozenset(
@@ -2115,12 +2025,8 @@ class MPCController:
             dt_minutes=PLAN_DT_MINUTES,
             cloud_series=cloud_per_block,
         )
-        # Apply current shading factor so MPC sees the same effective solar
-        # the EKF learned from.  The shading factor is a *measured* value
-        # (current cover positions), not a prediction — using it here keeps
-        # the optimizer consistent with the learned beta_s.
-        if self._shading_factor < 1.0:
-            series = [s * self._shading_factor for s in series]
+        # MPC uses unshaded solar to avoid oscillation feedback loop:
+        # covers deployed → low solar prediction → retract → high solar → deploy
         return series
 
     @property
