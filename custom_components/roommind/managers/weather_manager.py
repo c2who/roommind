@@ -66,13 +66,15 @@ class WeatherManager:
         # Fallback: read deprecated state attribute (older HA versions)
         state = self.hass.states.get(weather_entity)
         if state is None:
-            return self._outdoor_forecast
+            self._outdoor_forecast = []
+            return []
         forecast = state.attributes.get("forecast")
         if isinstance(forecast, list):
             result = self._convert_forecast_temps(forecast)
             self._outdoor_forecast = result
             return result
-        return self._outdoor_forecast
+        self._outdoor_forecast = []
+        return []
 
     def _convert_forecast_temps(self, forecasts: list[dict]) -> list[dict]:
         """Convert forecast temperatures from HA units to Celsius."""

@@ -65,7 +65,14 @@ def _scenario_json(scn: Scenario) -> dict[str, Any]:
     return data
 
 
-def _prepare(inst: Instance, scn: Scenario, port: int, recorder: bool, rm_src: Path | None = None) -> None:
+def _prepare(
+    inst: Instance,
+    scn: Scenario,
+    port: int,
+    recorder: bool,
+    rm_src: Path | None = None,
+    ha_version: str = DEFAULT_HA_VERSION,
+) -> None:
     inst.create_dirs()
     inst.scenario_path.write_text(json.dumps(_scenario_json(scn), indent=2, default=str))
     cidrs = ["127.0.0.1/32", "::1/128"]
@@ -80,6 +87,7 @@ def _prepare(inst: Instance, scn: Scenario, port: int, recorder: bool, rm_src: P
         simhome_src=simhome_src(),
         trusted_cidrs=cidrs,
         recorder=recorder,
+        ha_version=ha_version,
     )
     _apply_seed(inst, scn)
 
@@ -179,7 +187,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     inst = Instance.run(scn.name)
     port = inst_mod.allocate_port(inst.name, batch=True)
     rm_src = roommind_src(override=args.roommind_src)
-    _prepare(inst, scn, port, args.recorder, rm_src)
+    _prepare(inst, scn, port, args.recorder, rm_src, args.ha)
     src = source_info(rm_src)
     inst.write_meta(
         name=inst.name,
@@ -282,6 +290,14 @@ def _shrink_run(inst: Instance) -> None:
         path.unlink()
 
 
+def _suite_run_args(args: argparse.Namespace) -> list[str]:
+    """Options every `sim run` of a suite gets."""
+    extra = ["--roommind-src", args.roommind_src] if args.roommind_src else []
+    if args.ha != DEFAULT_HA_VERSION:
+        extra += ["--ha", args.ha]
+    return extra
+
+
 def cmd_suite(args: argparse.Namespace) -> int:
     from concurrent.futures import ThreadPoolExecutor
 
@@ -307,7 +323,7 @@ def cmd_suite(args: argparse.Namespace) -> int:
         print("no scenarios match")
         return 2
     sim = SIM_ROOT / "bin" / "sim"
-    extra = ["--roommind-src", args.roommind_src] if args.roommind_src else []
+    extra = _suite_run_args(args)
 
     def one(name: str) -> tuple[str, int, str, float]:
         t0 = time.time()
@@ -422,7 +438,7 @@ def cmd_up(args: argparse.Namespace) -> int:
     if rm_src == REPO_ROOT / "custom_components" / "roommind":
         _check_frontend()
     port = inst_mod.allocate_port(args.name)
-    _prepare(inst, scn, port, args.recorder, rm_src)
+    _prepare(inst, scn, port, args.recorder, rm_src, args.ha)
     inst.write_meta(
         name=args.name, kind="live", port=port, ha_version=args.ha, source=source_info(rm_src), scenario=scn.name
     )
@@ -780,7 +796,10 @@ def _parser() -> argparse.ArgumentParser:
     shot.add_argument("--wait", type=float, default=4.0, help="seconds to let the panel settle")
     shot.add_argument("--full", action="store_true", help="full page")
     shot.add_argument(
-        "--do", action="append", default=[], help="click:<text> | css:<selector> | wait:<ms> | scroll:<px>, repeatable"
+        "--do",
+        action="append",
+        default=[],
+        help="click:<text> | css:<selector> | hover:<selector>[@x,y] | wait:<ms> | scroll:<px>, repeatable",
     )
     shot.add_argument("--out")
     shot.set_defaults(func=cmd_shot)
@@ -790,6 +809,7 @@ def _parser() -> argparse.ArgumentParser:
     suite.add_argument("--skip-tag", action="append", default=[])
     suite.add_argument("-j", "--jobs", type=int, default=3)
     suite.add_argument("--roommind-src")
+    suite.add_argument("--ha", default=DEFAULT_HA_VERSION)
     suite.set_defaults(func=cmd_suite)
 
     prune = sub.add_parser("prune", help="delete old runs and screenshots")

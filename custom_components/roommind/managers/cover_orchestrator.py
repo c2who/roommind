@@ -8,6 +8,9 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.core import CoreState
+from homeassistant.helpers import entity_registry as er
+
 from ..const import (
     CLIMATE_MODE_HEAT_ONLY,
     COVER_CONFIDENCE_REFERENCE_SOLAR,
@@ -24,6 +27,8 @@ from ..const import (
     COVER_SMOOTHING_RISE_MINUTES,
     COVER_SOLAR_MIN,
     DEFAULT_COMFORT_COOL,
+    DEFAULT_COVERS_OUTDOOR_MIN_TEMP,
+    MAX_SENSOR_STALENESS,
     MODE_COOLING,
     TargetTemps,
 )
@@ -52,7 +57,6 @@ class CoverPositionResult:
 
     shading_factor: float
     positions: list[int]
-    positions_by_cover: dict[str, int | None]
 
 
 @dataclass
@@ -62,6 +66,11 @@ class CoverResult:
     forced_reason: str
     active_cover_schedule_index: int
     decision: CoverDecision
+
+
+def _unreadable(state: Any) -> bool:
+    """True while an entity has no state yet or reports unavailable/unknown (e.g. right after a start)."""
+    return state is None or state.state in ("unavailable", "unknown")
 
 
 class CoverOrchestrator:
@@ -80,6 +89,8 @@ class CoverOrchestrator:
         # (value, timestamp) per room; see _smooth()
         self._smoothed_temp: dict[str, tuple[float, float]] = {}
         self._smoothed_excess: dict[str, tuple[float, float]] = {}
+        self._running_since: float | None = None  # first cycle that saw HA fully running
+        self._sensor_only_areas: set[str] = set()
 
     def set_model_manager(self, model_manager: RoomModelManager) -> None:
         """Update the model manager reference (used after full thermal reset)."""
@@ -89,90 +100,31 @@ class CoverOrchestrator:
         """Update cloud forecast for solar trajectory prediction."""
         self._cloud_series = cloud_series
 
-    @staticmethod
-    def _format_reason(reason: str) -> str:
-        """Convert internal cover reason codes into short readable text."""
-        reason_map = {
-            "disabled": "auto control disabled",
-            "user_override_active": "user override active",
-            "manual_override_active": "manual override active",
-            "gate_inactive": "schedule gate inactive",
-            "gate_retract": "schedule gate inactive",
-            "no_prediction": "no prediction available",
-            "low_solar": "solar gain too low",
-            "low_solar_retract": "solar gain dropped",
-            "low_solar_but_peak_predicted": "holding for predicted heat gain",
-            "hysteresis_hold": "within hysteresis band",
-            "min_hold_time": "waiting for min hold time",
-            "deadband": "position change too small",
-            "retract": "retracting",
-            "schedule_active": "schedule active",
-            "night_close": "night close active",
-        }
-        if reason.startswith("forced_at_target(") and reason.endswith(")"):
-            return f"{CoverOrchestrator._format_reason(reason[17:-1])}, already at target"
-        if reason.startswith("forced(") and reason.endswith(")"):
-            return f"forced by {CoverOrchestrator._format_reason(reason[7:-1])}"
-        if reason.startswith("deploy("):
-            return reason[7:-1].replace("°C", "C").replace("→", " -> ")
-        return reason_map.get(reason, reason.replace("_", " "))
-
-    @staticmethod
-    def _effective_positions(
-        cover_eids: list[str],
-        target_position: int,
-        cover_min_positions: dict[str, int],
-    ) -> list[int]:
-        """Return effective per-cover targets after min-position clamping."""
-        return [max(cover_min_positions.get(eid, 0), target_position) for eid in cover_eids]
-
     def read_positions(self, area_id: str, room: dict[str, Any]) -> CoverPositionResult:
         """Read current cover positions from HA state and update cover manager."""
+        sensor_only = bool(room.get("covers_sensor_only", False))
+        if sensor_only != (area_id in self._sensor_only_areas):
+            self._cover_manager.remove_room(area_id)
+            if sensor_only:
+                self._sensor_only_areas.add(area_id)
+            else:
+                self._sensor_only_areas.discard(area_id)
         cover_eids: list[str] = room.get("covers", [])
         cover_positions: list[int] = []
-        positions_by_cover: dict[str, int | None] = {eid: None for eid in cover_eids}
         for eid in cover_eids:
-            cstate = self.hass.states.get(eid)
-            if cstate is None:
-                continue
-            pos = cstate.attributes.get("current_position")
+            pos = self._reading(eid)
             if pos is not None:
-                int_pos = int(pos)
-                cover_positions.append(int_pos)
-                positions_by_cover[eid] = int_pos
-            elif cstate.state == "closed":
-                cover_positions.append(0)
-                positions_by_cover[eid] = 0
-            elif cstate.state == "open":
-                cover_positions.append(100)
-                positions_by_cover[eid] = 100
+                cover_positions.append(pos)
 
-        if cover_positions:
+        if cover_positions and not sensor_only:
             self._cover_manager.update_position(
                 area_id,
                 int(sum(cover_positions) / len(cover_positions)),
                 override_minutes=room.get("covers_override_minutes", 60),
-                sensor_only=room.get("covers_sensor_only", False),
             )
 
         shading_factor = compute_shading_factor(cover_positions)
-        if cover_eids:
-            if cover_positions:
-                avg_position = int(sum(cover_positions) / len(cover_positions))
-                _LOGGER.debug(
-                    "Cover state [%s]: %d covers, avg position %d%%, shading factor %.2f",
-                    area_id,
-                    len(cover_positions),
-                    avg_position,
-                    shading_factor,
-                )
-            else:
-                _LOGGER.debug("Cover state [%s]: no readable cover positions", area_id)
-        return CoverPositionResult(
-            shading_factor=shading_factor,
-            positions=cover_positions,
-            positions_by_cover=positions_by_cover,
-        )
+        return CoverPositionResult(shading_factor=shading_factor, positions=cover_positions)
 
     async def async_process(
         self,
@@ -185,9 +137,13 @@ class CoverOrchestrator:
         q_solar: float,
         predicted_peak_temp: float | None,
         has_override: bool,
-        sensor_only: bool = False,
+        window_open: bool = False,
     ) -> CoverResult:
-        """Process cover control for a room: MPC check, schedule, prediction, evaluate, apply."""
+        """Process cover control for a room: MPC check, schedule, prediction, evaluate, apply.
+
+        *window_open* is the raw window state (no open/close delay, pending counts
+        as open). With ``covers_window_hold`` it keeps the covers from going down.
+        """
         # Early exit: when auto control is disabled, do nothing.
         # Schedule, night close and MPC are all suppressed — covers stay wherever they are.
         if not room.get("covers_auto_enabled", False):
@@ -224,9 +180,14 @@ class CoverOrchestrator:
         _forced_reason = ""
         _active_cover_sched_idx = -1
         _solar_gated = True  # True = solar protection allowed (default); False = gate schedule is off
+        _forced_unknown = False  # a force schedule (or its selector) has no readable state yet
 
         cover_schedules = room.get("cover_schedules", [])
         if cover_schedules:
+            _selector = room.get("cover_schedule_selector_entity", "")
+            _any_force = any(e.get("mode", "force") != "gate" for e in cover_schedules)
+            if _selector and _any_force and self._may_still_load(_selector):
+                _forced_unknown = True
             _active_cover_sched_idx = resolve_schedule_index(
                 self.hass,
                 room,
@@ -251,6 +212,8 @@ class CoverOrchestrator:
                             )
                         else:
                             _solar_gated = _sched_st.state == "on"
+                    elif _unreadable(_sched_st):
+                        _forced_unknown = _forced_unknown or self._may_still_load(eid)
                     elif _sched_st is not None and _sched_st.state == "on":
                         # Force mode (default): read position attribute and force covers.
                         _block_pos = _sched_st.attributes.get("position")
@@ -264,15 +227,6 @@ class CoverOrchestrator:
                         except (ValueError, TypeError):
                             _forced_position = 0
                         _forced_reason = "schedule_active"
-        if _forced_position is not None:
-            _LOGGER.debug(
-                "Cover schedule [%s]: forced by %s to %d%%",
-                area_id,
-                self._format_reason(_forced_reason),
-                _forced_position,
-            )
-        elif not _solar_gated:
-            _LOGGER.debug("Cover schedule [%s]: schedule gate inactive", area_id)
 
         if _forced_position is None and room.get("covers_night_close", False):
             _offset = room.get("covers_night_close_offset_minutes", 0)
@@ -286,13 +240,6 @@ class CoverOrchestrator:
             if _elev <= _night_elev_threshold:
                 _forced_position = room.get("covers_night_position", 0)
                 _forced_reason = "night_close"
-                _LOGGER.debug(
-                    "Cover night close [%s]: sun elevation %.1f deg <= %.1f deg, forcing %d%%",
-                    area_id,
-                    _elev,
-                    _night_elev_threshold,
-                    _forced_position,
-                )
 
         # Block D: Tiered prediction
         # Build per-cover orientation list for solar series scaling
@@ -375,19 +322,18 @@ class CoverOrchestrator:
         if _oriented_q_solar < COVER_SOLAR_MIN and _surface_azimuths:
             _cover_predicted_peak = cover_target
 
+        # None (store default up to 1.8.2) means the default the room page shows.
         _outdoor_min = room.get("covers_outdoor_min_temp")
-        if _outdoor_min is not None and outdoor_temp is not None and outdoor_temp < _outdoor_min:
-            _cover_predicted_peak = cover_target
-
-        if _oriented_q_solar < COVER_SOLAR_MIN and _surface_azimuths:
-            _cover_predicted_peak = cover_target
-
-        _outdoor_min = room.get("covers_outdoor_min_temp")
-        if _outdoor_min is not None and outdoor_temp is not None and outdoor_temp < _outdoor_min:
+        if _outdoor_min is None:
+            _outdoor_min = DEFAULT_COVERS_OUTDOOR_MIN_TEMP
+        if outdoor_temp is not None and outdoor_temp < _outdoor_min:
             _cover_predicted_peak = cover_target
 
         # Block E: Evaluate + apply
         cover_eids = room.get("covers", [])
+        _cover_min_positions: dict[str, int] = room.get("cover_min_positions", {})
+        window_hold = window_open and room.get("covers_window_hold", False)
+        before = self._cover_manager.snapshot(area_id) if window_hold else None
         cover_decision = self._cover_manager.evaluate(
             area_id,
             covers_auto_enabled=room.get("covers_auto_enabled", False),
@@ -401,80 +347,123 @@ class CoverOrchestrator:
             q_solar=q_solar,
             has_active_override=has_override,
             forced_position=_forced_position,
+            forced_expected=(
+                self._expected_position(cover_eids, _forced_position, _cover_min_positions)
+                if _forced_position is not None and not room.get("covers_sensor_only", False)
+                else None
+            ),
             forced_reason=_forced_reason,
-            sensor_only=sensor_only,
+            forced_unknown=_forced_unknown,
             current_temp=current_temp,
             solar_gated=_solar_gated,
         )
-        reason_text = self._format_reason(cover_decision.reason)
-        _cover_min_positions: dict[str, int] = room.get("cover_min_positions", {})
-        effective_positions = self._effective_positions(
-            cover_eids,
-            cover_decision.target_position,
-            _cover_min_positions,
-        )
-        effective_avg = int(sum(effective_positions) / len(effective_positions)) if effective_positions else None
-        clamped = bool(effective_positions) and any(
-            pos != cover_decision.target_position for pos in effective_positions
-        )
-        if cover_decision.changed:
-            extra = ""
-            if _cover_predicted_peak is not None:
-                extra = f" (peak {float(_cover_predicted_peak):.1f}C, target {cover_target:.1f}C)"
-            if clamped and effective_avg is not None:
-                extra += f" (effective avg {effective_avg}%, min-position clamp)"
-            _LOGGER.debug(
-                "Cover action [%s]: %s -> %d%%%s",
-                area_id,
-                reason_text,
-                effective_avg if effective_avg is not None else cover_decision.target_position,
-                extra,
-            )
-        else:
-            extra = ""
-            if cover_decision.reason in {"low_solar", "low_solar_but_peak_predicted"}:
-                extra = f" (solar {q_solar:.2f})"
-            elif cover_decision.reason == "no_prediction":
-                extra = f" (solar {q_solar:.2f})"
-            _LOGGER.debug("Cover hold [%s]: %s%s", area_id, reason_text, extra)
+        if (
+            before is not None
+            and cover_decision.changed
+            and self._lowers_any(cover_eids, cover_decision.target_position, _cover_min_positions)
+        ):
+            cover_decision = self._cover_manager.hold(area_id, before, "window_hold")
+            _forced_position = None
 
-        _cover_min_positions: dict[str, int] = room.get("cover_min_positions", {})
-        if cover_decision.changed:
-            if not sensor_only:
-                _LOGGER.debug(
-                    "Cover control [%s]: %s → position %d%%",
-                    area_id,
-                    cover_decision.reason,
-                    cover_decision.target_position,
-                )
-                await CoverManager.async_apply(
-                    self.hass,
-                    cover_eids,
-                    cover_decision.target_position,
-                    cover_min_positions=_cover_min_positions or None,
-                )
-                expected_positions: list[int] = []
-                for eid in cover_eids:
-                    cstate = self.hass.states.get(eid)
-                    if cstate is None:
-                        continue
-                    supported = cstate.attributes.get("supported_features", 0) or 0
-                    if supported & _SUPPORT_SET_POSITION:
-                        expected_positions.append(max(_cover_min_positions.get(eid, 0), cover_decision.target_position))
-                    elif cover_decision.target_position < 100:
-                        expected_positions.append(0)
-                    else:
-                        expected_positions.append(100)
-                if expected_positions:
-                    self._cover_manager.set_commanded_position(
-                        area_id, int(sum(expected_positions) / len(expected_positions))
-                    )
+        if cover_decision.changed and not room.get("covers_sensor_only", False):
+            _LOGGER.debug(
+                "Cover control [%s]: %s → position %d%%",
+                area_id,
+                cover_decision.reason,
+                cover_decision.target_position,
+            )
+            await CoverManager.async_apply(
+                self.hass,
+                cover_eids,
+                cover_decision.target_position,
+                cover_min_positions=_cover_min_positions or None,
+            )
+            expected = self._expected_position(cover_eids, cover_decision.target_position, _cover_min_positions)
+            if expected is not None:
+                self._cover_manager.set_commanded_position(area_id, expected)
 
         return CoverResult(
             forced_reason=_forced_reason if _forced_position is not None else "",
             active_cover_schedule_index=_active_cover_sched_idx,
             decision=cover_decision,
         )
+
+    def _may_still_load(self, entity_id: str) -> bool:
+        """True while an unreadable force source may still get its state (start), False once it is gone.
+
+        A deleted helper or selector (no state, no registry entry while HA runs) and one still
+        unreadable MAX_SENSOR_STALENESS after HA started running would otherwise keep a hand-closed
+        cover counting as found inside a forced phase for good (#499).
+        """
+        state = self.hass.states.get(entity_id)
+        if not _unreadable(state):
+            return False
+        if self.hass.state is not CoreState.running:
+            return True
+        now = time.monotonic()  # a wall clock jump (NTP on a Pi without RTC) must not end the window
+        if self._running_since is None:
+            self._running_since = now
+        if now - self._running_since > MAX_SENSOR_STALENESS:
+            return False
+        return state is not None or er.async_get(self.hass).async_get(entity_id) is not None
+
+    def _reading(self, eid: str) -> int | None:
+        """Position a cover reports, None while it reports none (unavailable, moving binary cover)."""
+        cstate = self.hass.states.get(eid)
+        if cstate is None:
+            return None
+        pos = cstate.attributes.get("current_position")
+        if pos is not None:
+            return int(pos)
+        return {"closed": 0, "open": 100}.get(cstate.state)
+
+    def _expected_position(
+        self, cover_eids: list[str], target_position: int, min_positions: dict[str, int]
+    ) -> int | None:
+        """Room average the covers report once *target_position* is applied (per-cover minimum, binary covers).
+
+        Counts the same covers as read_positions(), else the two averages never meet.
+        """
+        expected: list[int] = []
+        for eid in cover_eids:
+            cstate = self.hass.states.get(eid)
+            if cstate is None or self._reading(eid) is None:
+                continue
+            supported = cstate.attributes.get("supported_features", 0) or 0
+            if supported & _SUPPORT_SET_POSITION:
+                expected.append(max(min_positions.get(eid, 0), target_position))
+            elif target_position < 100:
+                expected.append(0)
+            else:
+                expected.append(100)
+        return int(sum(expected) / len(expected)) if expected else None
+
+    def _lowers_any(self, cover_eids: list[str], target_position: int, min_positions: dict[str, int]) -> bool:
+        """Return True if sending *target_position* would move any cover down.
+
+        Checked per cover against its own reading: the room average can rise
+        while one cover still goes down. A cover without a known position counts
+        as going down unless it is sent fully open.
+        """
+        for eid in cover_eids:
+            cstate = self.hass.states.get(eid)
+            if cstate is None:
+                continue
+            supported = cstate.attributes.get("supported_features", 0) or 0
+            if supported & _SUPPORT_SET_POSITION:
+                goal = max(min_positions.get(eid, 0), target_position)
+            elif target_position < 100:
+                goal = 0
+            else:
+                continue
+            if goal >= 100:
+                continue
+            pos = cstate.attributes.get("current_position")
+            if pos is None:
+                pos = {"closed": 0, "open": 100}.get(cstate.state)
+            if pos is None or goal < int(pos):
+                return True
+        return False
 
     def _estimate_solar_peak_temp(
         self,
@@ -697,10 +686,6 @@ class CoverOrchestrator:
         """Delegate to CoverManager.get_current_position."""
         return self._cover_manager.get_current_position(area_id)
 
-    def get_recommended_position(self, area_id: str) -> int:
-        """Delegate to CoverManager.get_recommended_position."""
-        return self._cover_manager.get_recommended_position(area_id)
-
     def is_user_override_active(self, area_id: str) -> bool:
         """Delegate to CoverManager.is_user_override_active."""
         return self._cover_manager.is_user_override_active(area_id)
@@ -714,6 +699,7 @@ class CoverOrchestrator:
         self._cover_manager.clear_user_override(area_id)
 
     def remove_room(self, area_id: str) -> None:
+        self._sensor_only_areas.discard(area_id)
         """Drop per-room smoothing state and delegate to CoverManager.remove_room."""
         self._smoothed_temp.pop(area_id, None)
         self._smoothed_excess.pop(area_id, None)

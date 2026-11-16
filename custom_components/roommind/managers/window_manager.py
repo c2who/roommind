@@ -11,6 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _UNAVAILABLE_STATES = (None, "unavailable", "unknown")
 
+
 class WindowManager:
     """Manages window open/close delay logic per room."""
 
@@ -129,51 +130,15 @@ class WindowManager:
                     if now - self._open_since[area_id] >= open_delay:
                         self._paused[area_id] = True
         else:
-            open_duration = now - self._open_since[area_id] if area_id in self._open_since else 0
-            was_in_open_delay = area_id in self._open_since and not was_paused
             self._open_since.pop(area_id, None)
-
-            already_in_close_delay = area_id in self._closed_since
-            brief_threshold = open_delay * 0.1
-            needs_close_delay = (
-                was_paused
-                or already_in_close_delay
-                or (was_in_open_delay and open_duration >= brief_threshold and close_delay > 0)
-            )
-
-            if was_in_open_delay and not needs_close_delay:
-                _LOGGER.debug(
-                    "[%s] Window closed after brief open (%ds < %ds threshold) -> no close delay",
-                    area_id,
-                    int(open_duration),
-                    int(brief_threshold),
-                )
-
-            if needs_close_delay:
+            if was_paused:
                 if area_id not in self._closed_since:
                     self._closed_since[area_id] = now
-                    if not was_paused:
-                        _LOGGER.info(
-                            "[%s] Window closed after %ds open (>%ds threshold) -> close delay %ds started",
-                            area_id,
-                            int(open_duration),
-                            int(brief_threshold),
-                            close_delay,
-                        )
                 if now - self._closed_since[area_id] >= close_delay:
                     self._paused[area_id] = False
                     self._closed_since.pop(area_id, None)
-                    _LOGGER.info("[%s] Window close delay %ds elapsed -> climate resumed", area_id, close_delay)
 
         return self._paused.get(area_id, False)
-
-    def in_close_delay(self, area_id: str) -> bool:
-        """Return True if window closed after non-brief opening and close_delay is running."""
-        return area_id in self._closed_since and not self._paused.get(area_id, False)
-
-    def in_open_delay(self, area_id: str) -> bool:
-        """Return True if window is physically open but open_delay has not elapsed."""
-        return area_id in self._open_since and not self._paused.get(area_id, False)
 
     def remove_room(self, area_id: str) -> None:
         """Clean up state for a removed room."""

@@ -295,8 +295,8 @@ def test_ekf_prediction_std_mode_aware():
     std_idle = ekf.prediction_std(0.0, 20.0, 10.0, 5.0)
     std_heating = ekf.prediction_std(model.Q_heat, 20.0, 10.0, 5.0)
 
-    # Heating std should be larger than idle std (beta_h never excited by idle data)
-    assert std_heating > std_idle * 1.2, f"heating std={std_heating} not much larger than idle std={std_idle}"
+    # Heating std should be notably larger than idle std
+    assert std_heating > std_idle * 1.5, f"heating std={std_heating} not much larger than idle std={std_idle}"
 
 
 def test_ekf_psd_preserved():
@@ -1352,10 +1352,11 @@ def test_ekf_confidence_converges_high():
             T = T + 0.15  # steady heating
             ekf.update(T, 10.0, "heating", 3.0, power_fraction=1.0)
 
-    # With mode-gated relative Q, confidence converges steadily.
+    # With mode-gated Q, confidence advances past the ~65% plateau that
+    # would occur with unconditional process noise on unobservable params.
     # Synthetic data in a short test won't reach 90%+ (that requires days
-    # of real-world data), but 50%+ in 350 steps shows healthy convergence.
-    assert ekf.confidence > 0.50
+    # of real-world data), but 65%+ in 350 steps shows healthy convergence.
+    assert ekf.confidence > 0.65
 
 
 def test_ekf_confidence_mixed_room_sparse_cooling():
@@ -1496,6 +1497,7 @@ def test_ekf_q_alpha_unchanged_at_default_alpha():
     ekf._initialized = True
     ekf._P = [[0.001 if i == j else 0.0 for j in range(7)] for i in range(7)]
     p11_before = ekf._P[1][1]
+
     ekf._predict_step(10.0, "idle", 0.05)
 
     p11_growth = ekf._P[1][1] - p11_before
@@ -2203,3 +2205,23 @@ def test_ekf_update_step_without_predict_uses_full_gain():
     before = ekf._x[4]
     ekf._update_step(ekf._x[0] + 1.0)
     assert ekf._x[4] > before
+
+
+def test_last_update_time_is_kept_and_survives_a_save(monkeypatch):
+    """The analytics model card shows when the model last learned; older stores have no stamp."""
+    import custom_components.roommind.control.thermal_model as tm
+
+    ekf = ThermalEKF()
+    assert ekf._last_update_at is None
+    monkeypatch.setattr(tm.time, "time", lambda: 1_700_000_000.0)
+    ekf.update(T_measured=20.0, T_outdoor=5.0, mode="idle", dt_minutes=3.0)
+    ekf.update(T_measured=19.98, T_outdoor=5.0, mode="idle", dt_minutes=3.0)
+    assert ekf._last_update_at == 1_700_000_000.0
+    ekf.sync_temperature(19.5)  # a resync after a gap learns nothing
+    assert ekf._last_update_at == 1_700_000_000.0
+
+    data = ekf.to_dict()
+    assert ThermalEKF.from_dict(data)._last_update_at == 1_700_000_000.0
+    del data["last_update_at"]
+    assert ThermalEKF.from_dict(data)._last_update_at is None
+    assert ThermalEKF.from_dict({**data, "last_update_at": "bad"})._last_update_at is None

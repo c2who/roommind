@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import MagicMock
 
 import pytest
 
 from custom_components.roommind.const import DOMAIN
 from custom_components.roommind.sensor import (
-    RoomMindCoverShadingPositionSensor,
     RoomMindModeSensor,
     RoomMindTargetTemperatureSensor,
-    _create_cover_sensors,
     _create_room_entities,
     async_setup_entry,
 )
@@ -155,76 +152,8 @@ def test_sensor_entity_id():
     assert mode_sensor.entity_id == f"sensor.{DOMAIN}_room_a_mode"
 
 
-# --- Shading Position Sensor ---
-
-
-def test_shading_position_sensor_value():
-    """Shading position sensor returns value from room data."""
-    coordinator = _make_coordinator({"living_room": {"cover_shading_position": 30}})
-    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
-    assert sensor.native_value == 30
-    assert sensor.native_unit_of_measurement == "%"
-    assert sensor.entity_id == f"sensor.{DOMAIN}_living_room_shading_position_living_blinds"
-
-
-def test_shading_position_sensor_none():
-    """Shading position sensor returns None when key is missing."""
-    coordinator = _make_coordinator({"living_room": {}})
-    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
-    assert sensor.native_value is None
-
-
-def test_shading_position_sensor_uses_per_cover_debug():
-    """Shading position sensor prefers per-cover debug target when available."""
-    coordinator = _make_coordinator(
-        {
-            "living_room": {
-                "cover_shading_position": 30,
-                "cover_debug": {"cover.living_blinds": {"recommended_position": 45}},
-            }
-        }
-    )
-    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
-    assert sensor.native_value == 45
-
-
-def test_shading_position_sensor_does_not_log_on_read(caplog):
-    """Shading position sensor reads stay quiet to avoid HA state-access log spam."""
-    coordinator = _make_coordinator(
-        {
-            "living_room": {
-                "cover_shading_position": 30,
-                "cover_debug": {"cover.living_blinds": {"recommended_position": 45}},
-            }
-        }
-    )
-    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
-
-    with caplog.at_level(logging.DEBUG):
-        assert sensor.native_value == 45
-
-    assert caplog.text == ""
-
-
-def test_shading_position_sensor_no_data():
-    """Shading position sensor returns None when coordinator data is None."""
+def test_deprecated_sensors_are_disabled_for_new_rooms():
+    """New registry entries of the deprecated sensors start disabled (#238)."""
     coordinator = _make_coordinator()
-    coordinator.data = None
-    sensor = RoomMindCoverShadingPositionSensor(coordinator, "living_room", "cover.living_blinds")
-    assert sensor.native_value is None
-
-
-def test_shading_position_sensor_unique_id():
-    """Shading position sensor has correct unique_id format."""
-    coordinator = _make_coordinator()
-    sensor = RoomMindCoverShadingPositionSensor(coordinator, "room_a", "cover.blind_east")
-    assert sensor.unique_id == f"{DOMAIN}_room_a_shading_position_blind_east"
-
-
-def test_create_cover_sensors():
-    """_create_cover_sensors returns one shading position sensor per cover."""
-    coordinator = _make_coordinator()
-    covers = ["cover.blind_a", "cover.blind_b"]
-    sensors = _create_cover_sensors(coordinator, "living_room", covers)
-    assert len(sensors) == 2
-    assert all(isinstance(s, RoomMindCoverShadingPositionSensor) for s in sensors)
+    assert RoomMindTargetTemperatureSensor(coordinator, "room_a").entity_registry_enabled_default is False
+    assert RoomMindModeSensor(coordinator, "room_a").entity_registry_enabled_default is False

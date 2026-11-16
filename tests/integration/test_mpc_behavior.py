@@ -184,9 +184,7 @@ class TestMPCPreheating:
         with patch("time.time", return_value=frozen_ts):
             data = await coordinator._async_update_data()
 
-        room = data["rooms"]["living_room"]
-        assert room["target_temp"] == pytest.approx(17.0)
-        assert room["mode"] in ("idle", "heating")
+        assert data["rooms"]["living_room"]["mode"] == "idle"
 
     @pytest.mark.asyncio
     async def test_no_preheating_without_upcoming_blocks(self, coordinator, real_store, frozen_ts):

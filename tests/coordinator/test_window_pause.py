@@ -356,7 +356,7 @@ class TestRoomMindCoordinator:
 
     @pytest.mark.asyncio
     async def test_window_open_delay_not_reached(self, hass, mock_config_entry):
-        """During open_delay, new heating starts are blocked (prev_mode=idle)."""
+        """Test that window open does NOT pause until open_delay is reached."""
         room_with_delay = {
             **SAMPLE_ROOM,
             "window_sensors": ["binary_sensor.living_room_window"],
@@ -378,8 +378,7 @@ class TestRoomMindCoordinator:
         data = await coordinator._async_update_data()
 
         room_state = data["rooms"]["living_room_abc12345"]
-        # New starts are blocked during open_delay when prev_mode was idle
-        assert room_state["mode"] == "idle"
+        assert room_state["mode"] == "heating"
         assert room_state["window_open"] is False
 
     @pytest.mark.asyncio
@@ -501,8 +500,8 @@ class TestRoomMindCoordinator:
             data = await coordinator._async_update_data()
 
         room_state = data["rooms"]["living_room_abc12345"]
-        # New starts are blocked during open_delay (prev_mode was idle)
-        assert room_state["mode"] == "idle"
+        # Still heating (delay not reached)
+        assert room_state["mode"] == "heating"
         assert room_state["window_open"] is False
 
         # EKF accumulator must be cleared (not carried over into next cycle)
@@ -648,16 +647,16 @@ class TestRoomMindCoordinator:
         # Mark room as already known (simulates prior cycle with window closed)
         coordinator._window_manager._seen.add("living_room_abc12345")
 
-        # Window opens — new start blocked during open_delay (prev_mode=idle)
+        # Window opens
         window_state = MagicMock()
         window_state.state = "on"
         mock_states["binary_sensor.living_room_window"] = window_state
         data = await coordinator._async_update_data()
         room_state = data["rooms"]["living_room_abc12345"]
-        assert room_state["mode"] == "idle"
+        assert room_state["mode"] == "heating"
         assert "living_room_abc12345" in coordinator._window_manager._open_since
 
-        # Window closes before delay reached — resumes normal operation
+        # Window closes before delay reached
         window_state.state = "off"
         data = await coordinator._async_update_data()
         room_state = data["rooms"]["living_room_abc12345"]
@@ -691,3 +690,45 @@ class TestRoomMindCoordinator:
         assert area_id not in coordinator._window_manager._closed_since
         assert area_id not in coordinator._window_manager._paused
         assert area_id not in coordinator._window_manager._seen
+
+
+class TestCoverWindowHold:
+    """The cover hold (#268) sees the raw window state, not the delayed climate pause."""
+
+    async def _cover_window_flag(self, hass, mock_config_entry, window_state, *, seen=True):
+        room = {
+            **SAMPLE_ROOM,
+            "window_sensors": ["binary_sensor.living_room_window"],
+            "window_open_delay": 120,
+            "covers": ["cover.living_room"],
+        }
+        store = _make_store_mock({"living_room_abc12345": room})
+        hass.data = {"roommind": {"store": store}}
+        base = make_mock_states_get(window_sensors={"binary_sensor.living_room_window": window_state})
+        hass.states.get = MagicMock(side_effect=base)
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        if seen:
+            coordinator._window_manager._seen.add("living_room_abc12345")
+        with patch.object(
+            coordinator._cover_orchestrator, "async_process", wraps=coordinator._cover_orchestrator.async_process
+        ) as process:
+            data = await coordinator._async_update_data()
+        return data["rooms"]["living_room_abc12345"], process.call_args.kwargs["window_open"]
+
+    @pytest.mark.asyncio
+    async def test_open_window_reaches_covers_before_the_open_delay(self, hass, mock_config_entry):
+        room_state, flag = await self._cover_window_flag(hass, mock_config_entry, "on")
+        assert room_state["window_open"] is False  # climate pause still waits for the delay
+        assert flag is True
+
+    @pytest.mark.asyncio
+    async def test_closed_window_releases_covers(self, hass, mock_config_entry):
+        _, flag = await self._cover_window_flag(hass, mock_config_entry, "off")
+        assert flag is False
+
+    @pytest.mark.asyncio
+    async def test_pending_window_counts_as_open_for_covers(self, hass, mock_config_entry):
+        _, flag = await self._cover_window_flag(hass, mock_config_entry, "unavailable", seen=False)
+        assert flag is True

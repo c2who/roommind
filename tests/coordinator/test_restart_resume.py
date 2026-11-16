@@ -121,8 +121,7 @@ async def test_seed_only_until_the_first_controlled_cycle(hass, mock_config_entr
         side_effect=lambda eid: _state("heat", "heating") if eid == TRV else make_mock_states_get(temp="20.9")(eid)
     )
     data = await coordinator._async_update_data()
-    assert coordinator._previous_modes[AREA] == MODE_IDLE
-    assert data["rooms"][AREA]["mode"] == MODE_HEATING  # display follows the observed device action
+    assert data["rooms"][AREA]["mode"] == MODE_IDLE
 
 
 @pytest.mark.asyncio

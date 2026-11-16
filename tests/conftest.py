@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import os
 from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
@@ -157,14 +156,6 @@ def make_mock_states_get(
         return None
 
     return _mock
-
-
-@pytest.fixture(autouse=True)
-def _set_utc_timezone():
-    """Set HA default timezone to UTC so schedule resolution is deterministic."""
-    dt_util.set_default_time_zone(datetime.UTC)
-    yield
-    dt_util.set_default_time_zone(datetime.UTC)
 
 
 @pytest.fixture(autouse=True)

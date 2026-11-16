@@ -17,7 +17,9 @@ When a schedule block raises the target (for example eco 17 °C until 06:00, the
 - Below the default, the longest pre-heat lead shrinks with the slider; at full `Efficiency` RoomMind only heats shortly before the block, as before v1.7.9. The room then reaches the comfort temperature some time after the block has started, which uses a little less energy. The line under the slider shows the current limit in hours.
 - Each room has its own switch `Pre-heat before schedule blocks` in the schedule section. Turned off, that room only heats shortly before a block, whatever the slider says, for example a bedroom that should not heat up during the night. The same applies to the end of a vacation or an override. The switch is shown for rooms with their own temperature sensor in `Intelligent (MPC)` mode; underfloor heating keeps its own pre-heating unless an orchestrated AC heats the room.
 - Underfloor heating uses its own pre-heating that accounts for the heat stored in the screed.
-- `Simple` control mode does not pre-heat.
+- Radiator rooms learn how much heat their radiators release after a run stops, and how slowly (from the room sensor in the hour after each undisturbed run). A run whose stored heat carries the room to the target stops early, also during pre-heating. Where a short run is enough, the pre-heat is a short run started as late as it still reaches the block, so less of the stored heat arrives after the block. Diagnostics show the learned values as `residual_scale` and `residual_decay_minutes`.
+- Rooms with an AC that cools pre-cool the same way: when a cooler schedule block (for example comfort 24 °C after eco 27 °C) cannot be reached by starting shortly before it, cooling starts early enough that the room is near the target when the block begins. It counts on the AC pulling the air down quickly at the start of a run, as the learned model does. The slider limit and the room switch apply to pre-cooling too; the switch is then called `Pre-cool before schedule blocks` (cool only) or `Pre-heat and pre-cool before schedule blocks`.
+- `Simple` control mode does not pre-heat or pre-cool.
 
 This setting does **not** change your schedule targets, overrides, comfort temperature, or eco temperature. It only changes how aggressively MPC tries to reach and hold those targets.
 
@@ -44,19 +46,26 @@ An external room temperature sensor is the key split:
 
 This matters for the options below.
 
+## Changes Made on the Device
+
+RoomMind writes its setpoint to every device it controls and sets it again when the device reports something else, so a turn of the TRV dial is undone with RoomMind's next command (usually within 30 seconds; a TRV that RoomMind switched off keeps the value until its next run). With `Take over changes made on the device` (schedule settings of the room, off by default) such a change becomes the room target instead, until the next change of the active schedule, like a temperature set on the room climate entity. Without a schedule it holds until you end the override; if the schedule helper cannot be read at that moment, for 4 hours. A running override, also one with a duration, is replaced and then holds until the next schedule change as well.
+
+- The value set on the device is the new target, also in `Full Control`, where the device showed RoomMind's boost or idle setpoint before (e.g. 29.5 °C while heating, or 5 °C while idle). A direct setpoint offset is taken off again. Afterwards the device shows RoomMind's setpoint for the new target, not the value turned in.
+- ACs count too: a TRV and an AC in heating mode change the heating side, an AC in cooling or dry mode the cooling side, a range change on a `heat_cool` device both sides.
+- Only devices that report their setpoint to Home Assistant can be followed. IR devices without state feedback cannot.
+- Thermostats always change the heating side. An AC with a single setpoint in `heat_cool`/`auto` changes the side it reports heating or cooling for; when it reports neither, or is off or in fan mode, it counts only in heat-only or cool-only rooms (for the side the room uses). A change on a side the room does not use (e.g. a thermostat in a cool-only room) is ignored.
+- RoomMind cannot see who changed a setpoint. A value it sent itself and the device has not shown yet counts as RoomMind's, as does a setpoint the device reports while RoomMind switches its mode (until the device shows that mode and up to a minute after, at most 5 minutes after the command). A mode picked on the device itself does not count as such a switch. Everything else counts as a change on the device, also a device's own weekly program, its frost or window protection setting a setpoint, or an automation writing to the device. Leave the option off for such devices.
+- Like every override, the taken-over target outranks vacation, presence and an empty room, and lifts the outdoor temperature limits while it lasts.
+- After a device was unavailable, or after a room was not controlled for a while (e.g. its area was deleted), the first setpoint it reports is not taken over.
+- While climate control is off for the room or globally, nothing is taken over: RoomMind sends no commands then, the device keeps whatever is set on it.
+
 ## Setpoint Mode: Proportional vs Direct
 
 `Setpoint mode` is relevant for thermostat/TRV devices in `Full Control` rooms.
 
 ### Proportional
 
-RoomMind calculates the required heating power, then sends a boosted device setpoint to achieve roughly that output.
-
-Example:
-
-- room target is `21°C`
-- more heat is needed
-- RoomMind may send `26-28°C` to the TRV to force the valve open harder
+RoomMind decides from your room sensor when the room needs heat. While heating, the TRV gets a raised setpoint, in most cases close to its maximum (around `30°C`); a TRV opens its valve fully anyway once its setpoint is a little above its own reading. Once the room sensor shows the target, RoomMind switches the TRV off (or to whatever `When idle` says). So the radiator runs at full power in runs rather than at a steady partial output, and the TRV setpoint does not tell how much heat the room needs. If something else reads the TRV setpoint, for example an automation that sets the flow temperature, use `Direct` for that TRV, or read the valve opening or the `hvac_action` of the room climate entity instead. For a steady partial opening, see [Direct Valve Control](#direct-valve-control-trvs).
 
 Best for:
 

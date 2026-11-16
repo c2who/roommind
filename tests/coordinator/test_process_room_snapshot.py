@@ -10,10 +10,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from custom_components.roommind.const import TargetTemps
-from custom_components.roommind.managers.cover_manager import CoverDecision
-from custom_components.roommind.managers.cover_orchestrator import CoverResult
-
 from .conftest import (
     MANAGED_ROOM,
     SAMPLE_ROOM,
@@ -49,7 +45,6 @@ NORMAL_ROOM_KEYS = {
     "heating_power",
     "device_setpoint",
     "window_open",
-    "raw_window_open",
     "override_active",
     "override_type",
     "override_heat",
@@ -59,6 +54,8 @@ NORMAL_ROOM_KEYS = {
     "active_schedule_index",
     "confidence",
     "mpc_active",
+    "preheat",
+    "setback",
     "presence_away",
     "occupancy_vacant",
     "force_off",
@@ -67,20 +64,23 @@ NORMAL_ROOM_KEYS = {
     "mold_surface_temp",
     "mold_prevention_active",
     "mold_prevention_delta",
+    "target_reason",
+    "mold_boost",
+    "price_shift_heat",
+    "price_shift_cool",
+    "price_level",
     "shading_factor",
     "q_occupancy",
+    "q_residual",
     "n_observations",
     "blind_position",
+    "cover_shading_position",
     "cover_auto_paused",
     "cover_override_until",
     "cover_forced_reason",
     "cover_reason",
     "active_cover_schedule_index",
-    "climate_control_enabled",
     "active_heat_sources",
-    "cover_shading_active",
-    "cover_shading_position",
-    "cover_debug",
     "compressor_protection_active",
     "compressor_protection_reason",
     "compressor_protection_until",
@@ -88,6 +88,11 @@ NORMAL_ROOM_KEYS = {
     "coil_dry_phase",
     "coil_dry_until",
     "coil_dry_entities",
+    "co2",
+    "voc",
+    "air_quality_bad",
+    "air_quality_reason",
+    "ventilation_active",
 }
 
 OUTDOOR_ROOM_KEYS = {
@@ -127,14 +132,21 @@ OUTDOOR_ROOM_KEYS = {
     "cover_forced_reason",
     "active_cover_schedule_index",
     "q_occupancy",
+    "q_residual",
     "active_heat_sources",
     "compressor_protection_active",
     "compressor_protection_reason",
     "compressor_protection_until",
+    "setback",
     "coil_dry_active",
     "coil_dry_phase",
     "coil_dry_until",
     "coil_dry_entities",
+    "co2",
+    "voc",
+    "air_quality_bad",
+    "air_quality_reason",
+    "ventilation_active",
 }
 
 
@@ -165,77 +177,14 @@ class TestProcessRoomSnapshot:
         assert result["heat_target"] == pytest.approx(21.0)
         assert result["mode"] == "heating"
         assert result["heating_power"] > 0
-
-    @pytest.mark.asyncio
-    async def test_residual_heat_tracks_final_mode_once(self, hass, mock_config_entry):
-        """Track the final compressor-constrained mode only once per cycle."""
-        room = {**SAMPLE_ROOM, "heating_system_type": "underfloor"}
-        coordinator, store = _setup_coordinator(hass, mock_config_entry, {"living_room_abc12345": room})
-        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0"))
-        coordinator._residual_tracker.update = MagicMock(wraps=coordinator._residual_tracker.update)
-
-        result = await coordinator._async_process_room(room, store.get_settings(), [])
-
-        coordinator._residual_tracker.update.assert_called_once()
-        assert coordinator._residual_tracker.update.call_args.args[1] == result["commanded_mode"]
-
-    def test_build_room_state_uses_recommended_cover_position(self, hass, mock_config_entry):
-        """Published shading sensors should use the stored recommendation, not measured drift."""
-        room = {
-            **SAMPLE_ROOM,
-            "covers": ["cover.dining_blind"],
-            "covers_auto_enabled": True,
-            "covers_sensor_only": True,
-        }
-        coordinator, _ = _setup_coordinator(hass, mock_config_entry, {"living_room_abc12345": room})
-        coordinator._cover_orchestrator.get_recommended_position = MagicMock(return_value=100)
-
-        result = coordinator._build_room_state_dict(
-            area_id="living_room_abc12345",
-            room=room,
-            current_temp=22.0,
-            current_temp_raw=22.0,
-            current_humidity=50.0,
-            target_temp=21.0,
-            targets=TargetTemps(heat=21.0, cool=24.0),
-            display_mode="idle",
-            display_pf=0.0,
-            heat_source_plan=None,
-            device_max_temp=None,
-            ac_device_max_temp=None,
-            device_min_temp=None,
-            has_external_sensor=True,
-            window_open=False,
-            presence_away=False,
-            force_off=False,
-            mode="idle",
-            power_fraction=0.0,
-            mold_risk_level=None,
-            mold_surface_rh=None,
-            mold_prevention_active_room=False,
-            mold_prevention_temp_delta=0.0,
-            shading_factor=0.28,
-            q_occupancy=0.0,
-            cover_eids=["cover.dining_blind"],
-            cover_pos_result=MagicMock(positions_by_cover={"cover.dining_blind": 15}),
-            cover_result=CoverResult(
-                forced_reason="",
-                active_cover_schedule_index=-1,
-                decision=CoverDecision(target_position=15, changed=False, reason="min_hold_time"),
-            ),
-            mpc_active=False,
-            raw_open=False,
-            covers_sensor_only=True,
-        )
-
-        assert result["cover_shading_active"] is False
-        assert result["cover_shading_position"] == 100
-        assert result["cover_debug"]["cover.dining_blind"]["current_position"] == 15
-        assert result["cover_debug"]["cover.dining_blind"]["recommended_position"] == 100
         assert result["window_open"] is False
         assert result["override_active"] is False
         assert result["presence_away"] is False
         assert result["force_off"] is False
+        assert result["mold_risk_level"] == "ok"
+        assert result["mold_prevention_active"] is False
+        assert result["mold_prevention_delta"] == 0
+        assert result["q_occupancy"] == 0.0
 
     @pytest.mark.asyncio
     async def test_idle_at_target(self, hass, mock_config_entry):
@@ -404,7 +353,7 @@ class TestProcessRoomSnapshot:
 
     @pytest.mark.asyncio
     async def test_climate_control_disabled(self, hass, mock_config_entry):
-        """climate_control_enabled=False: mode=disabled, heating_power=0."""
+        """climate_control_enabled=False: mode=idle, heating_power=0."""
         room = {**SAMPLE_ROOM, "climate_control_enabled": False}
         coordinator, store = _setup_coordinator(
             hass,
@@ -418,7 +367,7 @@ class TestProcessRoomSnapshot:
         settings = store.get_settings()
         result = await coordinator._async_process_room(room, settings, [])
 
-        assert result["mode"] == "disabled"
+        assert result["mode"] == "idle"
         assert result["heating_power"] == 0
         # All normal keys should still be present
         assert set(result.keys()) == NORMAL_ROOM_KEYS

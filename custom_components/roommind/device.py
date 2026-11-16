@@ -1,16 +1,14 @@
-"""Device helpers for RoomMind."""
+"""Home Assistant device information for RoomMind entities."""
 
 from __future__ import annotations
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 
 from .const import DOMAIN, VERSION
 
 
 def roommind_device_info(area_id: str, area_name: str) -> DeviceInfo:
-    """Return DeviceInfo for a per-room RoomMind device."""
+    """Group a room's entities under its own Home Assistant device."""
     return DeviceInfo(
         identifiers={(DOMAIN, area_id)},
         name=f"RoomMind {area_name}",
@@ -22,7 +20,7 @@ def roommind_device_info(area_id: str, area_name: str) -> DeviceInfo:
 
 
 def roommind_hub_device_info() -> DeviceInfo:
-    """Return DeviceInfo for the global RoomMind hub device."""
+    """Group global controls under a service device."""
     return DeviceInfo(
         identifiers={(DOMAIN, "hub")},
         name="RoomMind",
@@ -31,13 +29,3 @@ def roommind_hub_device_info() -> DeviceInfo:
         sw_version=VERSION,
         entry_type=DeviceEntryType.SERVICE,
     )
-
-
-def get_area_name(hass: HomeAssistant, area_id: str) -> str:
-    """Get human-readable area name from area registry."""
-    try:
-        area_reg = ar.async_get(hass)
-        area = area_reg.async_get_area(area_id)
-        return area.name if area else area_id
-    except Exception:  # noqa: BLE001
-        return area_id

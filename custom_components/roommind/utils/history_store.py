@@ -5,10 +5,13 @@ from __future__ import annotations
 import csv
 import logging
 import os
-import tempfile
 import time
 
+from ..const import MODE_COOLING, MODE_HEATING
+
 _LOGGER = logging.getLogger(__name__)
+
+MODEL_INPUT_FIELDS = ("model_power", "model_solar", "model_residual", "model_occupancy")
 
 DETAIL_FIELDS = [
     "timestamp",
@@ -24,7 +27,28 @@ DETAIL_FIELDS = [
     "cover_reason",
     "device_setpoint",
     "occupancy",
+    "humidity",
+    "heat_target",
+    "cool_target",
+    "target_reason",
+    "mold_boost",
+    "price",
+    "price_level",
+    "price_shift",
+    # Runs starting at this row, summed per history bucket: the bucket keeps only its first
+    # mode, its transitions lose the short runs
+    "heat_starts",
+    "cool_starts",
+    # Extremes of a history bucket: a short run peaks inside it, the bucket mean hides the peak
+    "room_temp_max",
+    "room_temp_min",
+    # Room air CO2 in ppm (#267)
+    "co2",
+    # What the model learned from (analytics backtest): signed delivered power share
+    # (+ heating, - cooling), sun behind the covers, residual heat share, occupancy
+    *MODEL_INPUT_FIELDS,
 ]
+START_FIELDS = {MODE_HEATING: "heat_starts", MODE_COOLING: "cool_starts"}
 DETAIL_MAX_AGE = 48 * 3600  # 48 hours
 HISTORY_MAX_AGE = 90 * 24 * 3600  # 90 days
 
@@ -34,6 +58,7 @@ class HistoryStore:
 
     def __init__(self, base_dir: str) -> None:
         self._base_dir = base_dir
+        self._last_mode: dict[str, str] = {}
 
     def _ensure_dir(self) -> None:
         os.makedirs(self._base_dir, exist_ok=True)
@@ -69,6 +94,12 @@ class HistoryStore:
         ts = timestamp or time.time()
         path = self._detail_path(area_id)
         self._migrate_header(path)
+        mode = data.get("mode", "")
+        if area_id not in self._last_mode:
+            last = self.read_detail(area_id)[-1:]
+            self._last_mode[area_id] = last[0].get("mode", "") if last else mode
+        previous = self._last_mode[area_id]
+        self._last_mode[area_id] = mode
 
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
@@ -89,6 +120,17 @@ class HistoryStore:
                     "cover_reason": data.get("cover_reason", ""),
                     "device_setpoint": data.get("device_setpoint", ""),
                     "occupancy": data.get("occupancy", ""),
+                    "humidity": data.get("humidity", ""),
+                    "heat_target": data.get("heat_target", ""),
+                    "cool_target": data.get("cool_target", ""),
+                    "target_reason": data.get("target_reason", ""),
+                    "mold_boost": data.get("mold_boost", ""),
+                    "price": data.get("price", ""),
+                    "price_level": data.get("price_level", ""),
+                    "price_shift": data.get("price_shift", ""),
+                    "co2": data.get("co2", ""),
+                    **{field: data.get(field, "") for field in MODEL_INPUT_FIELDS},
+                    **{key: int(mode == run and previous != run) for run, key in START_FIELDS.items()},
                 }
             )
 
@@ -148,57 +190,20 @@ class HistoryStore:
     def rotate(self, area_id: str) -> None:
         """Downsample old detail rows to history, trim both files."""
         now = time.time()
-        path = self._detail_path(area_id)
-
-        # Snapshot file size before reading for diagnostics
-        file_size_before = os.path.getsize(path) if os.path.isfile(path) else 0
-
         # Read detail, split into keep (< 48h) and archive (>= 48h)
         detail_rows = self.read_detail(area_id)
         cutoff = now - DETAIL_MAX_AGE
         keep = []
         archive = []
-        skipped_rows: list[dict] = []
         for r in detail_rows:
             try:
                 ts = float(r["timestamp"])
             except (ValueError, TypeError, KeyError):
-                skipped_rows.append(r)
                 continue
             if ts >= cutoff:
                 keep.append(r)
             else:
                 archive.append(r)
-
-        # Diagnostic logging to trace data loss
-        def _ts_range(rows: list[dict]) -> str:
-            if not rows:
-                return ""
-            first = float(rows[0]["timestamp"])
-            last = float(rows[-1]["timestamp"])
-            return f"{time.strftime('%Y-%m-%d %H:%M', time.gmtime(first))} → {time.strftime('%Y-%m-%d %H:%M', time.gmtime(last))}"
-
-        parts = [
-            f"file_size={file_size_before}",
-            f"total_rows={len(detail_rows)}",
-            f"keep={len(keep)}",
-            f"archive={len(archive)}",
-            f"skipped={len(skipped_rows)}",
-            f"cutoff={time.strftime('%Y-%m-%d %H:%M', time.gmtime(cutoff))}",
-        ]
-        if keep:
-            parts.append(f"keep_range=[{_ts_range(keep)}]")
-        if archive:
-            parts.append(f"archive_range=[{_ts_range(archive)}]")
-        _LOGGER.warning("History rotate '%s': %s", area_id, ", ".join(parts))
-        if skipped_rows:
-            samples = skipped_rows[:3]
-            _LOGGER.warning(
-                "History rotate '%s': skipped rows (first %d): %s",
-                area_id,
-                len(samples),
-                samples,
-            )
 
         # Downsample archive to 5-min buckets and append to history
         if archive:
@@ -206,7 +211,7 @@ class HistoryStore:
             self._append_history(area_id, downsampled)
 
         # Rewrite detail with only recent rows
-        self._rewrite_csv(path, keep)
+        self._rewrite_csv(self._detail_path(area_id), keep)
 
         # Trim history older than 90 days
         history_rows = self.read_history(area_id)
@@ -217,6 +222,7 @@ class HistoryStore:
 
     def remove_room(self, area_id: str) -> None:
         """Delete all history files for a room."""
+        self._last_mode.pop(area_id, None)
         for path in (self._detail_path(area_id), self._history_path(area_id)):
             if os.path.isfile(path):
                 os.remove(path)
@@ -226,10 +232,14 @@ class HistoryStore:
         if not rows:
             return []
         buckets: dict[int, list[dict]] = {}
-        for row in rows:
+        starts: dict[int, dict[str, int]] = {}
+        for i, row in enumerate(rows):
             ts = float(row["timestamp"])
             bucket_key = int(ts // bucket_seconds)
             buckets.setdefault(bucket_key, []).append(row)
+            counts = starts.setdefault(bucket_key, dict.fromkeys(START_FIELDS.values(), 0))
+            for run, key in START_FIELDS.items():
+                counts[key] += self._row_starts(row, rows[i - 1] if i else None, run, key)
 
         result = []
         for bucket_key in sorted(buckets):
@@ -239,6 +249,8 @@ class HistoryStore:
                 "mode": bucket[0]["mode"],
                 "window_open": bucket[0].get("window_open", ""),
                 "device_setpoint": bucket[0].get("device_setpoint", ""),
+                "target_reason": bucket[0].get("target_reason", ""),
+                "price_level": bucket[0].get("price_level", ""),
             }
             for field in (
                 "room_temp",
@@ -248,18 +260,40 @@ class HistoryStore:
                 "heating_power",
                 "solar_irradiance",
                 "blind_position",
+                "humidity",
+                "heat_target",
+                "cool_target",
+                "mold_boost",
+                "price",
+                "price_shift",
+                "co2",
+                *MODEL_INPUT_FIELDS,
             ):
-                vals = []
-                for r in bucket:
-                    v = r.get(field, "")
-                    if v != "":
-                        try:
-                            vals.append(float(v))
-                        except (ValueError, TypeError):
-                            pass
+                vals = [v for r in bucket if (v := self._float(r.get(field, ""))) is not None]
                 avg_row[field] = round(sum(vals) / len(vals), 2) if vals else ""
+            temps = [t for r in bucket if (t := self._float(r.get("room_temp", ""))) is not None]
+            avg_row["room_temp_max"] = max(temps) if temps else ""
+            avg_row["room_temp_min"] = min(temps) if temps else ""
+            avg_row.update(starts[bucket_key])
             result.append(avg_row)
         return result
+
+    @staticmethod
+    def _float(value: str) -> float | None:
+        if value == "":
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _row_starts(row: dict, previous: dict | None, run: str, key: str) -> int:
+        """Runs of ``run`` starting at ``row``; rows from before the column compare to the row before."""
+        try:
+            return int(row.get(key, ""))
+        except (ValueError, TypeError):
+            return int(row.get("mode") == run and previous is not None and previous.get("mode") != run)
 
     @staticmethod
     def _safe_ts(row: dict) -> float:
@@ -272,23 +306,17 @@ class HistoryStore:
     def _append_history(self, area_id: str, rows: list[dict]) -> None:
         self._ensure_dir()
         path = self._history_path(area_id)
+        self._migrate_header(path)
+        file_exists = os.path.isfile(path)
         with open(path, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
-            if f.tell() == 0:
+            if not file_exists:
                 writer.writeheader()
             writer.writerows(rows)
 
     def _rewrite_csv(self, path: str, rows: list[dict]) -> None:
         self._ensure_dir()
-        dir_name = os.path.dirname(path)
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS)
-                writer.writeheader()
-                writer.writerows(rows)
-            os.replace(tmp_path, path)
-        except BaseException:
-            if os.path.isfile(tmp_path):
-                os.remove(tmp_path)
-            raise
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=DETAIL_FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)

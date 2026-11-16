@@ -60,9 +60,10 @@ def _closed_loop(
     # Residual heat bookkeeping as the prediction does it (the coordinator's tracker
     # differs in detail: last real power fraction instead of 1.0)
     q_residual = 0.0
-    heating_blocks = 0
+    # A running radiator or floor releases stored heat after it stops.
+    was_heating = bool(heating_system_type) and previous_mode == MODE_HEATING and on_since is not None
+    heating_blocks = round(elapsed_minutes / 5.0) if was_heating and elapsed_minutes is not None else 0
     since_stop = 0.0
-    was_heating = False
     for _ in range(STEPS):
         ctrl = MPCController(
             hass,
@@ -75,9 +76,13 @@ def _closed_loop(
             has_external_sensor=True,
             heating_system_type=heating_system_type,
             q_residual=q_residual,
+            # The run in progress, as the coordinator's ResidualHeatTracker reports it
+            heat_run=((clock["now"] - on_since) / 60.0, 1.0) if prev == MODE_HEATING and on_since is not None else None,
         )
         monkeypatch.setattr(ctrl, "_build_solar_series", lambda n: [0.0] * n)
         mode, pf = ctrl._evaluate_mpc(T, targets)
+        if mode == MODE_IDLE and prev == MODE_HEATING and heating_system_type:
+            q_residual = compute_residual_heat(0.0, heating_system_type, 1.0, heating_blocks * 5.0)
         Q = pf * model.Q_heat if mode == MODE_HEATING else -(pf * model.Q_cool) if mode == MODE_COOLING else 0.0
         T = max(5.0, min(40.0, model.predict(T, outdoor, Q, 5.0, q_residual=q_residual if Q == 0.0 else 0.0)))
         temps.append(round(T, 2))

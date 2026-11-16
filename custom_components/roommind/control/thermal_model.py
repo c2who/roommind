@@ -28,8 +28,16 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 
-from ..const import MIN_ACTIVE_UPDATES, MIN_IDLE_UPDATES
+from ..const import (
+    RESIDUAL_SCALE_EMA_ALPHA,
+    RESIDUAL_SCALE_MAX,
+    RESIDUAL_SCALE_MIN,
+    RESIDUAL_SCALE_PRIOR_WEIGHT,
+    RESIDUAL_TAU_MAX,
+    RESIDUAL_TAU_MIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -235,6 +243,16 @@ class RCModel:
 # ---------------------------------------------------------------------------
 
 
+CONFIDENCE_HISTORY_DAYS = 60  # daily confidence snapshots kept per room
+
+
+def _load_history_entry(e: list) -> list:
+    """One stored day; entries from before the forecast error carry four fields."""
+    error = e[4] if len(e) >= 6 and isinstance(e[4], (int, float)) else None
+    steps = int(e[5]) if error is not None and isinstance(e[5], (int, float)) else 0
+    return [e[0], float(e[1]), int(e[2]), bool(e[3]), None if error is None else float(error), steps]
+
+
 class ThermalEKF:
     """Extended Kalman Filter for 1R1C thermal model.
 
@@ -341,6 +359,7 @@ class ThermalEKF:
         diag = self._p_init_diag()
         self._P: list[list[float]] = [[diag[i] if i == j else 0.0 for j in range(self._N)] for i in range(self._N)]
         self._n_updates: int = 0
+        self._last_update_at: float | None = None  # Unix time of the last learning step
         self._n_heating: int = 0
         self._n_cooling: int = 0
         self._n_idle: int = 0
@@ -349,6 +368,19 @@ class ThermalEKF:
         self._initialized: bool = False
         self._k_window: float = self._K_WINDOW_DEFAULT
         self._k_window_n: int = 0
+        # Learned multiplier on the heating system's residual heat profile (ResidualHeatLearner)
+        self._residual_scale: float = 1.0
+        self._residual_scale_n: int = 0
+        # Learned afterglow decay time in minutes, None until the first sample (profile's)
+        self._residual_tau: float | None = None
+        self._residual_tau_n: int = 0
+        # One entry per local day for the analytics chart:
+        # [iso_date, confidence, n_updates, mpc_active, mean_abs_error_k | None, error_steps]
+        self._confidence_history: list[list] = []
+        # |innovation| of the day's regular updates (outliers left out), folded into the entry
+        self._err_day: str | None = None
+        self._err_sum: float = 0.0
+        self._err_n: int = 0
         # Which states the last predict step could observe (F[0][i] != 0).
         self._excited: list[bool] = [True] * self._N
 
@@ -388,17 +420,17 @@ class ThermalEKF:
             return 0.0
 
         # --- Data factor (0..1) ---
-        # Mirrors MPC data gates from const.py.  Each update covers ~3 min
-        # (EKF_UPDATE_MIN_DT), so thresholds correspond to ~3 h idle + ~1 h
-        # active real time.
-        idle_frac = min(self._n_idle / float(MIN_IDLE_UPDATES), 1.0)
+        # Mirrors MPC data gates: MIN_IDLE_UPDATES=60, MIN_ACTIVE_UPDATES=20.
+        # Each update covers ~3 min (EKF_UPDATE_MIN_DT), so thresholds
+        # correspond to ~3 h idle + ~1 h active real time.
+        idle_frac = min(self._n_idle / 60.0, 1.0)
 
         # Active data: average across modes that this room can use
         active_fracs: list[float] = []
         if self._n_heating >= 2:
-            active_fracs.append(min(self._n_heating / float(MIN_ACTIVE_UPDATES), 1.0))
+            active_fracs.append(min(self._n_heating / 20.0, 1.0))
         if self._n_cooling >= 2:
-            active_fracs.append(min(self._n_cooling / float(MIN_ACTIVE_UPDATES), 1.0))
+            active_fracs.append(min(self._n_cooling / 20.0, 1.0))
         if active_fracs:
             active_frac = sum(active_fracs) / len(active_fracs)
         else:
@@ -467,10 +499,7 @@ class ThermalEKF:
 
         dt_h = dt_minutes / 60.0
         alpha = self._x[1]
-        beta_h, beta_s, beta_o = self._x[2], self._x[4], self._x[5]
-        u_hvac = self._mode_to_u(mode)
-        u_residual = beta_h * q_residual if mode == "idle" and q_residual > 0 else 0.0
-        u = u_hvac + beta_s * q_solar + beta_o * q_occupancy + u_residual
+        u = self._mode_to_u(mode)
         F = self._compute_jacobian(
             T_room,
             alpha,
@@ -495,6 +524,55 @@ class ThermalEKF:
     def k_window(self) -> float:
         """Learned window heat-exchange multiplier."""
         return self._k_window
+
+    @property
+    def residual_scale_n(self) -> int:
+        """Afterglow samples the scale has learned from (0 = the profile's guess)."""
+        return self._residual_scale_n
+
+    @property
+    def residual_scale(self) -> float:
+        """Learned multiplier on the heating system's residual heat profile."""
+        return self._residual_scale
+
+    def update_residual_scale(self, sample: float) -> None:
+        """Fold one observed residual scale (``ResidualHeatLearner``) into the learned one.
+
+        The profile counts as ``RESIDUAL_SCALE_PRIOR_WEIGHT`` earlier samples, so the first
+        samples move the scale by their share of the evidence (a running mean with the
+        profile), then by ``RESIDUAL_SCALE_EMA_ALPHA``. A single run disturbed by something
+        the model does not know (a shower, an oven) moves it little.
+        """
+        if not math.isfinite(sample):
+            return
+        sample = max(RESIDUAL_SCALE_MIN, min(RESIDUAL_SCALE_MAX, sample))
+        alpha = max(RESIDUAL_SCALE_EMA_ALPHA, 1.0 / (RESIDUAL_SCALE_PRIOR_WEIGHT + self._residual_scale_n + 1))
+        self._residual_scale += alpha * (sample - self._residual_scale)
+        self._residual_scale_n += 1
+
+    @property
+    def residual_tau(self) -> float | None:
+        """Learned afterglow decay time in minutes, None while the profile's applies."""
+        return self._residual_tau
+
+    def update_residual_tau(self, sample: float, profile_tau: float) -> None:
+        """Fold one fitted decay time (``ResidualHeatLearner``) into the learned one.
+
+        Weighed like the scale, in log space (decay times are ratios), with the
+        profile's ``profile_tau`` as the prior. The scale is rescaled so the total heat
+        the afterglow releases (scale x tau) stays what was learned: the scale's samples
+        measured that total, the decay time only says how it spreads over time.
+        """
+        if not (math.isfinite(sample) and sample > 0 and profile_tau > 0):
+            return
+        sample = max(RESIDUAL_TAU_MIN, min(RESIDUAL_TAU_MAX, sample))
+        old = self._residual_tau if self._residual_tau is not None else profile_tau
+        alpha = max(RESIDUAL_SCALE_EMA_ALPHA, 1.0 / (RESIDUAL_SCALE_PRIOR_WEIGHT + self._residual_tau_n + 1))
+        new = math.exp(math.log(old) + alpha * (math.log(sample) - math.log(old)))
+        new = max(RESIDUAL_TAU_MIN, min(RESIDUAL_TAU_MAX, new))
+        self._residual_scale = max(RESIDUAL_SCALE_MIN, min(RESIDUAL_SCALE_MAX, self._residual_scale * old / new))
+        self._residual_tau = new
+        self._residual_tau_n += 1
 
     def update_window_open(
         self,
@@ -631,6 +709,7 @@ class ThermalEKF:
         # Update bookkeeping
         self._last_mode = mode
         self._n_updates += 1
+        self._last_update_at = time.time()
         if predict_mode == "heating":
             self._n_heating += 1
         elif predict_mode == "cooling":
@@ -858,9 +937,11 @@ class ThermalEKF:
 
         # Outlier detection via normalized innovation
         R_eff = self._R
+        outlier = False
         if S > 0:
             norm_innov = abs(innovation) / math.sqrt(S)
             if norm_innov > self._ANOMALY_SIGMA:
+                outlier = True
                 _LOGGER.debug(
                     "EKF: outlier detected (innovation=%.2f, %.1f sigma), softening update",
                     innovation,
@@ -868,6 +949,9 @@ class ThermalEKF:
                 )
                 R_eff = self._R * self._ANOMALY_R_INFLATE
                 S = P[0][0] + R_eff
+        if not outlier:
+            self._err_sum += abs(innovation)
+            self._err_n += 1
 
         if S < 1e-12:
             return  # Numerical safety
@@ -916,6 +1000,33 @@ class ThermalEKF:
             if P[i][i] < 1e-10:
                 P[i][i] = 1e-10
 
+    @property
+    def confidence_history(self) -> list[list]:
+        """Daily confidence snapshots, oldest first."""
+        return [list(entry) for entry in self._confidence_history]
+
+    def _day_error(self) -> tuple[float | None, int]:
+        if self._err_n == 0:
+            return None, 0
+        return round(self._err_sum / self._err_n, 4), self._err_n
+
+    def note_confidence_day(self, day: str, mpc_active: bool) -> None:
+        """Record today's confidence and forecast error; a later call on the same day replaces the entry."""
+        history = self._confidence_history
+        if self._err_day is not None and self._err_day != day:
+            # Steps since the last note belong to the day that just ended
+            if history and history[-1][0] == self._err_day:
+                history[-1][4:6] = self._day_error()
+            self._err_sum = 0.0
+            self._err_n = 0
+        self._err_day = day
+        entry = [day, round(self.confidence, 3), self._n_updates, bool(mpc_active), *self._day_error()]
+        if history and history[-1][0] == day:
+            history[-1] = entry
+        elif not history or history[-1][0] < day:
+            history.append(entry)
+            del history[: max(0, len(history) - CONFIDENCE_HISTORY_DAYS)]
+
     # -- serialization -------------------------------------------------------
 
     def to_dict(self) -> dict:
@@ -928,6 +1039,7 @@ class ThermalEKF:
             "P": [list(row[:6]) for row in self._P[:6]],
             "beta_f": {"x": self._x[6], "P": list(self._P[6])},
             "n_updates": self._n_updates,
+            "last_update_at": self._last_update_at,
             "n_heating": self._n_heating,
             "n_cooling": self._n_cooling,
             "n_idle": self._n_idle,
@@ -936,23 +1048,30 @@ class ThermalEKF:
             "initialized": self._initialized,
             "k_window": self._k_window,
             "k_window_n": self._k_window_n,
+            "residual_scale": self._residual_scale,
+            "residual_scale_n": self._residual_scale_n,
+            "residual_tau": self._residual_tau,
+            "residual_tau_n": self._residual_tau_n,
+            "confidence_history": self.confidence_history,
+            "forecast_error": {"day": self._err_day, "sum": self._err_sum, "n": self._err_n},
         }
 
-    def boost_covariance(self, factor: float = 2.5, floor_frac: float = 0.3) -> None:
-        """Multiply covariance P by *factor*, floored at *floor_frac* of P_initial.
+    def boost_covariance(self, factor: float = 2.5) -> None:
+        """Widen the parameter variances by *factor* to re-learn faster after a change in the room.
 
-        Used to accelerate re-learning after room physics change (e.g. new
-        radiator, insulation, furniture).  The floor prevents repeated clicks
-        from destroying the matrix.
+        P becomes S P S with S = diag(1, s_1..s_n): every correlation stays as learned and the
+        temperature variance is left alone. A variance never grows past its initial value, so
+        repeated calls stop there. (A floor at a share of the initial variance with plain
+        off-diagonals made alpha ~400x as uncertain as learned while its correlations collapsed;
+        a sensor-noise reading then moved alpha by its whole value.)
         """
-        p_init_diag = self._p_init_diag()
-        for i in range(self._N):
-            for j in range(self._N):
-                boosted = self._P[i][j] * factor
-                if i == j:
-                    floor = p_init_diag[i] * floor_frac
-                    boosted = max(boosted, floor)
-                self._P[i][j] = boosted
+        p_init = self._p_init_diag()
+        scale = [1.0]
+        for i in range(1, self._N):
+            var = self._P[i][i]
+            target = min(var * factor, p_init[i])
+            scale.append(math.sqrt(target / var) if var > 0 and target > var else 1.0)
+        self._P = [[self._P[i][j] * scale[i] * scale[j] for j in range(self._N)] for i in range(self._N)]
         self._enforce_psd()
 
     @classmethod
@@ -986,6 +1105,8 @@ class ThermalEKF:
                 ekf._P[j][6] = float(value)
 
         ekf._n_updates = data.get("n_updates", 0)
+        last_update_at = data.get("last_update_at")
+        ekf._last_update_at = float(last_update_at) if isinstance(last_update_at, (int, float)) else None
         ekf._n_heating = data.get("n_heating", 0)
         ekf._n_cooling = data.get("n_cooling", 0)
         ekf._n_idle = data.get("n_idle", 0)
@@ -995,6 +1116,27 @@ class ThermalEKF:
         ekf._initialized = data.get("initialized", ekf._n_updates > 0)
         ekf._k_window = data.get("k_window", cls._K_WINDOW_DEFAULT)
         ekf._k_window_n = data.get("k_window_n", 0)
+        ekf._residual_scale = data.get("residual_scale", 1.0)
+        ekf._residual_scale_n = data.get("residual_scale_n", 0)
+        ekf._residual_tau = data.get("residual_tau")
+        ekf._residual_tau_n = data.get("residual_tau_n", 0)
+        history = data.get("confidence_history")
+        if isinstance(history, list):
+            ekf._confidence_history = [
+                _load_history_entry(e)
+                for e in history
+                if isinstance(e, list) and len(e) >= 4 and isinstance(e[0], str) and isinstance(e[1], (int, float))
+            ][-CONFIDENCE_HISTORY_DAYS:]
+        err = data.get("forecast_error")
+        if (
+            isinstance(err, dict)
+            and isinstance(err.get("day"), str)
+            and isinstance(err.get("sum"), (int, float))
+            and isinstance(err.get("n"), int)
+        ):
+            ekf._err_day = err["day"]
+            ekf._err_sum = float(err["sum"])
+            ekf._err_n = err["n"]
         # Recovery migrations for models with alpha pegged at the upper bound.
         # Such models cannot escape on their own: 4-sigma anomaly detection
         # soft-rejects the large innovations and cross-covariance pulls alpha
@@ -1202,14 +1344,34 @@ class RoomModelManager:
             return ThermalEKF._K_WINDOW_DEFAULT
         return self._estimators[area_id].k_window
 
-    def boost_learning(self, area_id: str) -> int:
+    def get_residual_scale(self, area_id: str) -> float:
+        """Return the learned residual heat scale for *area_id* (1.0 = profile)."""
+        if area_id not in self._estimators:
+            return 1.0
+        return self._estimators[area_id].residual_scale
+
+    def update_residual_scale(self, area_id: str, sample: float) -> None:
+        """Fold one observed residual scale into *area_id*'s learned one."""
+        self.get_estimator(area_id).update_residual_scale(sample)
+
+    def get_residual_tau(self, area_id: str) -> float | None:
+        """Learned afterglow decay time of *area_id* in minutes, None while the profile's applies."""
+        est = self._estimators.get(area_id)
+        return est.residual_tau if est is not None else None
+
+    def update_residual_tau(self, area_id: str, sample: float, profile_tau: float) -> None:
+        """Fold one fitted afterglow decay time into *area_id*'s learned one."""
+        self.get_estimator(area_id).update_residual_tau(sample, profile_tau)
+
+    def boost_learning(self, area_id: str) -> int | None:
         """Boost covariance for *area_id* to accelerate re-learning.
 
-        Returns the current ``n_updates`` (used as cooldown anchor).
+        Returns the current ``n_updates`` (the anchor the frontend counts the fade from),
+        None when the room has no model yet.
         """
         est = self._estimators.get(area_id)
         if est is None:
-            return 0
+            return None
         est.boost_covariance()
         return est._n_updates
 

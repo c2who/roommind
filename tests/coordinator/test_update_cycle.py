@@ -140,10 +140,12 @@ class TestRoomMindCoordinator:
         coordinator = _create_coordinator(hass, mock_config_entry)
         data = await coordinator._async_update_data()
 
-        assert data["rooms"] == {}
-        assert data["heating_demand"] is False
-        assert data["rooms_heating_now"] == []
-        assert data["rooms_heating_forecast"] == []
+        assert data == {
+            "rooms": {},
+            "heating_demand": False,
+            "rooms_heating_now": [],
+            "rooms_heating_forecast": [],
+        }
 
     @pytest.mark.asyncio
     async def test_update_climate_service_failure_does_not_crash(self, hass, mock_config_entry):
@@ -185,7 +187,7 @@ class TestRoomMindCoordinator:
         room = {"area_id": "bedroom_abc12345"}
         await coordinator.async_room_added(room)
 
-        # async_add_entities should be called with 2 entities
+        # async_add_entities should be called with 3 entities
         mock_add_entities.assert_called_once()
         entities = mock_add_entities.call_args[0][0]
         assert len(entities) == 2
@@ -375,13 +377,13 @@ class TestCoverageGaps:
 
     @pytest.mark.asyncio
     async def test_get_area_name_returns_area_id_when_area_none(self, hass, mock_config_entry):
-        """get_area_name returns area_id when area is not found."""
-        from custom_components.roommind.device import get_area_name
+        """_get_area_name returns area_id when area is not found."""
+        from custom_components.roommind.coordinator import _get_area_name
 
         mock_reg = MagicMock()
         mock_reg.async_get_area.return_value = None
-        with patch("custom_components.roommind.device.ar.async_get", return_value=mock_reg):
-            result = get_area_name(hass, "nonexistent_area")
+        with patch("custom_components.roommind.coordinator.ar.async_get", return_value=mock_reg):
+            result = _get_area_name(hass, "nonexistent_area")
         assert result == "nonexistent_area"
 
     @pytest.mark.asyncio
@@ -690,6 +692,46 @@ class TestCoverageGaps:
         data = await coordinator._async_update_data()
 
         assert data["rooms"]["mpc_room"]["mpc_active"] is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("climate_mode", "counts", "outdoor", "settings", "expected"),
+        [
+            # Cool-only room in winter that never cooled: the outdoor limit closes both sides
+            ("cool_only", (900, 0, 0), "5.0", {}, False),
+            ("cool_only", (900, 0, 30), "5.0", {}, True),
+            # Hybrid room between the default limits needs cooling data too ...
+            ("auto", (100, 30, 0), "18.0", {}, False),
+            # ... unless the user's cooling limit closes cooling, like in the controller
+            ("auto", (100, 30, 0), "18.0", {"outdoor_cooling_min": 20}, True),
+        ],
+    )
+    async def test_mpc_active_needs_samples_of_the_rooms_own_sides(
+        self, hass, mock_config_entry, climate_mode, counts, outdoor, settings, expected
+    ):
+        room = {
+            **SAMPLE_ROOM,
+            "area_id": "office",
+            "climate_mode": climate_mode,
+            "thermostats": [] if climate_mode == "cool_only" else ["climate.living_room"],
+            "acs": ["climate.office_ac"],
+            "devices": ([] if climate_mode == "cool_only" else SAMPLE_ROOM["devices"])
+            + [{"entity_id": "climate.office_ac", "type": "ac", "role": "auto", "heating_system_type": ""}],
+        }
+        store = _make_store_mock({"office": room})
+        store.get_settings.return_value = {"outdoor_temp_sensor": "sensor.outdoor_temp", **settings}
+        hass.data = {"roommind": {"store": store}}
+        hass.states.get = MagicMock(side_effect=make_mock_states_get(temp="18.0", outdoor_temp=outdoor))
+        hass.services.async_call = AsyncMock()
+
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        mgr = coordinator._model_manager
+        mgr.get_prediction_std = MagicMock(return_value=0.1)
+        mgr.get_mode_counts = MagicMock(return_value=counts)
+
+        data = await coordinator._async_update_data()
+
+        assert data["rooms"]["office"]["mpc_active"] is expected
 
     @pytest.mark.asyncio
     async def test_history_write_computes_prediction(self, hass, mock_config_entry):

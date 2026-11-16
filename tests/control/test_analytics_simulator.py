@@ -15,6 +15,8 @@ from custom_components.roommind.control.analytics_simulator import (
     compute_observed_idle_rate,
     simulate_prediction,
 )
+from custom_components.roommind.control.mpc_optimizer import MPCPlan
+from custom_components.roommind.control.residual_heat import compute_residual_heat
 from custom_components.roommind.control.thermal_model import RCModel, ThermalEKF
 
 # ---------------------------------------------------------------------------
@@ -1053,7 +1055,7 @@ def test_rebound_charge_warms_the_idle_prediction(mpc_active):
 
 @pytest.mark.parametrize(
     ("run_system", "expected_type", "expected_min_run"),
-    [(None, "underfloor", 12), ("", "", 2)],
+    [(None, "underfloor", 6), ("", "", 2)],
 )
 def test_prediction_uses_the_run_system_of_the_heating_source(monkeypatch, run_system, expected_type, expected_min_run):
     """AC heating alone in an orchestrated UFH room: the prediction plans with AC run rules, like the controller."""
@@ -1088,3 +1090,37 @@ def test_prediction_uses_the_run_system_of_the_heating_source(monkeypatch, run_s
     )
     assert seen["type"] == expected_type
     assert seen["min_run"] == expected_min_run
+
+
+def test_running_underfloor_forecast_coasts_with_stored_heat(monkeypatch):
+    """The forecast uses the same stop decision and first idle step as the controller."""
+    model = RCModel(C=1.0, U=0.0075, Q_heat=0.355, Q_cool=4.0, Q_solar=0.0)
+    plan = MPCPlan(
+        actions=["heating"] * 48,
+        temperatures=[22.2] * 49,
+        power_fractions=[1.0] * 48,
+        lookahead_blocks=36,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.analytics_simulator.MPCOptimizer.optimize", lambda *a, **kw: plan
+    )
+    room = {
+        "temperature_sensor": "sensor.room",
+        "climate_mode": "heat_only",
+        "heating_system_type": "underfloor",
+        "devices": [{"entity_id": "climate.relay", "type": "trv", "role": "auto"}],
+    }
+    temperatures = _simulate_mpc(
+        model,
+        [{"target_temp": 21.9, "heat_target": 21.9, "cool_target": 24.0}] * 48,
+        [-2.5] * 48,
+        current_temp=22.2,
+        room_config=room,
+        settings={},
+        heating_system_type="underfloor",
+        previous_mode="heating",
+        mode_elapsed_minutes=180.0,
+    )
+
+    expected_residual = compute_residual_heat(0, "underfloor", 1.0, 180.0)
+    assert temperatures[0] == pytest.approx(round(model.predict(22.2, -2.5, 0.0, 5.0, q_residual=expected_residual), 2))

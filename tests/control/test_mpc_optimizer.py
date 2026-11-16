@@ -378,6 +378,7 @@ def test_optimizer_inverted_targets_clamped():
     assert plan.actions[0] == "heating"
 
 
+# ---------------------------------------------------------------------------
 # Coverage: uncovered lines
 # ---------------------------------------------------------------------------
 

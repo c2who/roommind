@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from unittest.mock import MagicMock
 
 import pytest
 
 from custom_components.roommind.binary_sensor import (
     RoomMindCoverPausedSensor,
-    RoomMindCoverShadingSensor,
-    RoomMindHeatingDemandSensor,
     _create_room_binary_sensors,
     async_setup_entry,
 )
@@ -21,7 +18,6 @@ from custom_components.roommind.const import DOMAIN
 def mock_coordinator():
     coordinator = MagicMock()
     coordinator.data = {"rooms": {"living_room": {"cover_auto_paused": False}}}
-    coordinator.hass = MagicMock()
     return coordinator
 
 
@@ -61,22 +57,10 @@ def test_binary_sensor_unique_id_and_entity_id(mock_coordinator):
 
 
 def test_create_room_binary_sensors(mock_coordinator):
-    """Factory creates 1 paused sensor + N shading sensors (one per cover)."""
-    room = {"covers": ["cover.living_blinds", "cover.living_curtain"]}
-    sensors = _create_room_binary_sensors(mock_coordinator, "living_room", room)
-    assert len(sensors) == 3
+    """Factory creates exactly one binary sensor per room."""
+    sensors = _create_room_binary_sensors(mock_coordinator, "living_room")
+    assert len(sensors) == 1
     assert isinstance(sensors[0], RoomMindCoverPausedSensor)
-    assert isinstance(sensors[1], RoomMindCoverShadingSensor)
-    assert isinstance(sensors[2], RoomMindCoverShadingSensor)
-
-
-def test_create_room_binary_sensors_single_cover(mock_coordinator):
-    """Factory creates 1 paused + 1 shading for a single cover."""
-    room = {"covers": ["cover.blinds"]}
-    sensors = _create_room_binary_sensors(mock_coordinator, "living_room", room)
-    assert len(sensors) == 2
-    assert isinstance(sensors[0], RoomMindCoverPausedSensor)
-    assert isinstance(sensors[1], RoomMindCoverShadingSensor)
 
 
 def test_cover_paused_coordinator_data_none(mock_coordinator):
@@ -94,7 +78,7 @@ async def test_async_setup_entry_creates_entities_for_rooms_with_covers():
 
     store = MagicMock()
     store.get_rooms.return_value = {
-        "living_room": {"covers": ["cover.blinds_left", "cover.blinds_right"]},
+        "living_room": {"covers": ["cover.blinds"]},
         "bedroom": {},  # no covers — should be skipped
     }
 
@@ -110,22 +94,19 @@ async def test_async_setup_entry_creates_entities_for_rooms_with_covers():
 
     # Callback stored on coordinator
     assert coordinator.async_add_binary_sensor_entities is async_add_entities
-    # 1 hub-level heating demand + living_room: 1 paused + 2 shading = 4 entities
+    # Only living_room has covers; the aggregate sensor is always present.
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 4
-    assert isinstance(entities[0], RoomMindHeatingDemandSensor)
+    assert len(entities) == 2
     assert isinstance(entities[1], RoomMindCoverPausedSensor)
-    assert isinstance(entities[2], RoomMindCoverShadingSensor)
-    assert isinstance(entities[3], RoomMindCoverShadingSensor)
     # Area tracked
     assert "living_room" in coordinator._binary_sensor_entity_areas
     assert "bedroom" not in coordinator._binary_sensor_entity_areas
 
 
 @pytest.mark.asyncio
-async def test_async_setup_entry_no_covers_only_hub_sensor():
-    """async_setup_entry creates only the hub heating demand sensor when no rooms have covers."""
+async def test_async_setup_entry_no_covers_keeps_global_demand_entity():
+    """The heating-demand entity is available without any configured covers."""
     coordinator = MagicMock()
     coordinator._binary_sensor_entity_areas = set()
 
@@ -143,154 +124,68 @@ async def test_async_setup_entry_no_covers_only_hub_sensor():
     await async_setup_entry(hass, entry, async_add_entities)
 
     async_add_entities.assert_called_once()
-    entities = async_add_entities.call_args[0][0]
-    assert len(entities) == 1
-    assert isinstance(entities[0], RoomMindHeatingDemandSensor)
+    assert len(async_add_entities.call_args.args[0]) == 1
 
 
-# ---- RoomMindHeatingDemandSensor tests ----
+def _aq_coordinator(live, room=None):
+    coordinator = MagicMock()
+    coordinator.data = {"rooms": {"bed": live}}
+    coordinator.hass.data = {DOMAIN: {"store": MagicMock(get_room=MagicMock(return_value=room or {}))}}
+    return coordinator
 
 
-def test_heating_demand_on(mock_coordinator):
-    """Heating demand sensor ON when coordinator reports demand."""
-    mock_coordinator.data = {
-        "heating_demand": True,
-        "rooms_heating_now": ["living_room"],
-        "rooms_heating_forecast": [],
-        "rooms": {},
+def test_air_quality_sensor_reads_the_live_state():
+    from custom_components.roommind.binary_sensor import RoomMindAirQualitySensor
+
+    live = {
+        "co2": 1250.0,
+        "voc": None,
+        "air_quality_bad": True,
+        "air_quality_reason": "co2",
+        "ventilation_active": True,
     }
-    sensor = RoomMindHeatingDemandSensor(mock_coordinator)
+    sensor = RoomMindAirQualitySensor(_aq_coordinator(live, {"display_name": "Schlafzimmer"}), "bed")
+    assert sensor.unique_id == "roommind_bed_air_quality"
+    assert sensor.entity_id == "binary_sensor.roommind_bed_air_quality"
+    assert sensor.translation_placeholders == {"room": "Schlafzimmer"}
     assert sensor.is_on is True
-    assert sensor.icon == "mdi:radiator"
-    assert sensor.extra_state_attributes == {
-        "rooms_heating_now": ["living_room"],
-        "rooms_heating_forecast": [],
-    }
+    assert sensor.available is True
+    assert sensor.extra_state_attributes == {"co2": 1250.0, "voc": None, "reason": "co2", "ventilation_active": True}
 
 
-def test_heating_demand_off(mock_coordinator):
-    """Heating demand sensor OFF when no demand."""
-    mock_coordinator.data = {
-        "heating_demand": False,
-        "rooms_heating_now": [],
-        "rooms_heating_forecast": [],
-        "rooms": {},
-    }
-    sensor = RoomMindHeatingDemandSensor(mock_coordinator)
+def test_air_quality_sensor_unavailable_without_a_reading():
+    from custom_components.roommind.binary_sensor import RoomMindAirQualitySensor
+
+    coordinator = _aq_coordinator({"co2": None, "voc": None, "air_quality_bad": False})
+    sensor = RoomMindAirQualitySensor(coordinator, "bed")
+    assert sensor.available is False
     assert sensor.is_on is False
-    assert sensor.icon == "mdi:radiator-off"
-
-
-def test_heating_demand_none_data(mock_coordinator):
-    """Heating demand sensor OFF when coordinator data is None."""
-    mock_coordinator.data = None
-    sensor = RoomMindHeatingDemandSensor(mock_coordinator)
+    coordinator.data = None
     assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {
-        "rooms_heating_now": [],
-        "rooms_heating_forecast": [],
+
+
+@pytest.mark.asyncio
+async def test_async_setup_entry_creates_the_air_quality_sensor_next_to_the_cover_one():
+    coordinator = MagicMock()
+    coordinator._binary_sensor_entity_areas = set()
+    coordinator._air_quality_entity_areas = set()
+    store = MagicMock()
+    store.get_rooms.return_value = {
+        "living_room": {"covers": ["cover.blinds"], "co2_sensor": "sensor.co2"},
+        "garden": {"co2_sensor": "sensor.garden_co2", "is_outdoor": True},
     }
-
-
-# ---- RoomMindCoverShadingSensor tests ----
-
-
-def test_shading_sensor_on(mock_coordinator):
-    """Shading sensor ON when cover_shading_active is True."""
-    mock_coordinator.data = {"rooms": {"living_room": {"cover_shading_active": True, "cover_shading_position": 30}}}
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-    assert sensor.is_on is True
-    assert sensor.extra_state_attributes == {"recommended_position": 30}
-
-
-def test_shading_sensor_off(mock_coordinator):
-    """Shading sensor OFF when cover_shading_active is False."""
-    mock_coordinator.data = {"rooms": {"living_room": {"cover_shading_active": False, "cover_shading_position": 100}}}
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-    assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {"recommended_position": 100}
-
-
-def test_shading_sensor_uses_per_cover_debug(mock_coordinator):
-    """Per-cover debug data overrides room-level shading state."""
-    mock_coordinator.data = {
-        "rooms": {
-            "living_room": {
-                "cover_shading_active": False,
-                "cover_shading_position": 100,
-                "cover_debug": {
-                    "cover.living_blinds": {
-                        "shading_active": True,
-                        "recommended_position": 45,
-                    }
-                },
-            }
-        }
-    }
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-    assert sensor.is_on is True
-    assert sensor.extra_state_attributes == {"recommended_position": 45}
-
-
-def test_shading_sensor_does_not_log_on_state_reads(mock_coordinator, caplog):
-    """Shading sensor reads stay quiet to avoid HA state-access log spam."""
-    mock_coordinator.data = {
-        "rooms": {
-            "living_room": {
-                "cover_shading_active": False,
-                "cover_shading_position": 100,
-                "cover_debug": {
-                    "cover.living_blinds": {
-                        "shading_active": True,
-                        "recommended_position": 45,
-                    }
-                },
-            }
-        }
-    }
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-
-    with caplog.at_level(logging.DEBUG):
-        assert sensor.is_on is True
-        assert sensor.extra_state_attributes == {"recommended_position": 45}
-
-    assert caplog.text == ""
-
-
-def test_shading_sensor_missing_room(mock_coordinator):
-    """Shading sensor returns False when room doesn't exist."""
-    mock_coordinator.data = {"rooms": {}}
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "nonexistent", "cover.blinds")
-    assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {"recommended_position": None}
-
-
-def test_shading_sensor_coordinator_none(mock_coordinator):
-    """Shading sensor returns False when coordinator data is None."""
-    mock_coordinator.data = None
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.blinds")
-    assert sensor.is_on is False
-    assert sensor.extra_state_attributes == {"recommended_position": None}
-
-
-def test_shading_sensor_unique_id_and_entity_id(mock_coordinator):
-    """Per-cover shading sensor has correct unique_id and entity_id."""
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-    assert sensor.unique_id == "roommind_living_room_shading_living_blinds"
-    assert sensor.entity_id == "binary_sensor.roommind_living_room_shading_living_blinds"
-
-
-def test_shading_sensor_name_from_friendly_name(mock_coordinator):
-    """Shading sensor name uses cover entity's friendly_name."""
-    state = MagicMock()
-    state.attributes = {"friendly_name": "Living Room Blinds"}
-    mock_coordinator.hass.states.get.return_value = state
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-    assert sensor.name == "Living Room Blinds Shading"
-
-
-def test_shading_sensor_name_fallback(mock_coordinator):
-    """Shading sensor name falls back to entity_id when no friendly_name."""
-    mock_coordinator.hass.states.get.return_value = None
-    sensor = RoomMindCoverShadingSensor(mock_coordinator, "living_room", "cover.living_blinds")
-    assert sensor.name == "cover.living_blinds Shading"
+    store.get_room.return_value = {"display_name": "Wohnzimmer"}
+    entry = MagicMock()
+    entry.entry_id = "test_entry"
+    hass = MagicMock()
+    hass.data = {DOMAIN: {entry.entry_id: coordinator, "store": store}}
+    coordinator.hass = hass
+    add = MagicMock()
+    await async_setup_entry(hass, entry, add)
+    entities = add.call_args[0][0]
+    assert [type(e).__name__ for e in entities] == [
+        "RoomMindHeatingDemandSensor",
+        "RoomMindCoverPausedSensor",
+        "RoomMindAirQualitySensor",
+    ]
+    assert coordinator._air_quality_entity_areas == {"living_room"}

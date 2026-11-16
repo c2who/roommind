@@ -2,7 +2,7 @@
 
 A real Home Assistant instance with a simulated house and a controllable clock, for
 reproducing issues and verifying fixes by behaviour instead of mocks alone. Not part of
-the integration: HACS ships only `custom_components/roommind`.
+the integration: the Marketplace (formerly HACS) ships only `custom_components/roommind`.
 
 - **One engine.** Every simulation is a real HA process (default 2026.10) with the
   RoomMind code of the checkout you call `sim` from. A virtual clock is installed before
@@ -40,7 +40,7 @@ never in the repository.
 | Command | Purpose |
 |---|---|
 | `sim run <scenario> [--set k=v] [--until 3d] [--roommind-src v1.7.7]` | Fresh instance, turbo to the end, evaluate. Exit 0 pass / 1 fail / 2 invalid scenario / 3 HA crashed |
-| `sim suite [-j N] [--tag t] [--roommind-src ref]` | All scenarios in `scenarios/` |
+| `sim suite [-j N] [--tag t] [--roommind-src ref] [--ha version]` | All scenarios in `scenarios/` |
 | `sim compare <run-a> <run-b> [--timeline]` | Metric diff, e.g. a git ref against your working tree; `--timeline` also checks record by record (determinism) |
 | `sim report [run]` | Re-evaluate a run (`last` by default) |
 | `sim up [name] --scenario X [--catch-up] [--speed 60] [--paused] [--from-run R] [--ttl 2h]` | Live instance with UI, reachable on the LAN without password (trusted networks) |
@@ -50,7 +50,7 @@ never in the repository.
 | `sim status`, `sim world`, `sim logs [-f]`, `sim ps`, `sim down [--rm]` | Inspect and manage |
 | `sim shot <name> [--path] [--viewport desktop\|mobile\|tablet] [--dark] [--lang de] [--do click:Text]` | Screenshot with Playwright; prints browser console and HA errors |
 | `sim import <diagnostics.json> [--history roommind_room_*.csv] [--mode closed\|replay]` | Turn a reporter's export into a scenario (see below) |
-| `sim venv add\|list\|prune <ha-version>` | Additional HA versions, e.g. betas: `sim up --ha 2026.11.0b0` |
+| `sim venv add\|list\|prune <ha-version>` | Additional HA versions, e.g. betas: `sim up --ha 2026.11.0b0`. HA before 2026.10 reads the port only from YAML, so the sim writes `http:` into `configuration.yaml` for those (from 2026.10 the port lives in `.storage/http`, YAML `http:` would trigger HA's migration restart); such releases also build their event loop through the asyncio policy, so the virtual clock hooks the policy's loop factory there (`clock.install(policy_loops=True)`) |
 | `sim prune [--keep 20]` | Delete old runs and screenshots (never running or < 6 h old ones) |
 
 `--roommind-src` takes a path to another checkout or any git ref; refs are exported
@@ -114,6 +114,7 @@ clean signal (with a comment why).
 | Zigbee sensor reporting in 0.2 K steps | profile `sonoff_snzb02d` (opt-in) | |
 | TRV valve flow linear in the valve position | `generic_trv` | `valve_flow_exponent` (< 1 = concave, low valve authority), `valve_dead_zone` (no flow below it) |
 | Direct valve control: `number.<trv object_id>_valve_opening_degree` / `_valve_closing_degree` (0-100 %, default 100 = the TRV's own control; open position = opening, closed position = 100 - closing, also in `off`) | capability `valve_numbers` (`sonoff_trvzb`) | metrics `device.valve_travel_per_day` (full strokes), `device.valve_commands_per_hour` |
+| Thermostat that falls back to its previous setpoint `delay_s` after being switched on from off (tado X over Matter) | quirk `mode_switch_restores_setpoint`, profile `tado_x_matter` | metric `device.setpoint_lost_h` (heating, RoomMind's setpoint above the room, the device's not) |
 
 The heating curve was checked against a real radiator room in October (rate 20-30 min into a
 run 0.75-0.8 K/h, real 0.78-0.92; before: 1.8-2.0). Forecast error sizes, defrost timing and

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.components.climate import ClimateEntityFeature, HVACMode
+from homeassistant.const import UnitOfTemperature
 
 from custom_components.roommind.climate import (
     OVERRIDE_TURN_ON_REFRESH_DELAY_S,
@@ -74,6 +75,12 @@ def test_unique_id_and_entity_id(mock_coordinator):
     assert entity.entity_id == "climate.roommind_living_room_override"
 
 
+def test_deprecated_override_entity_is_disabled_for_new_rooms(mock_coordinator):
+    """New registry entries of the deprecated override entity start disabled (#238)."""
+    coordinator, _ = mock_coordinator
+    assert RoomMindOverrideClimate(coordinator, "living_room").entity_registry_enabled_default is False
+
+
 def test_hvac_mode_off_when_no_override(mock_coordinator):
     """hvac_mode returns OFF when no override is set."""
     coordinator, store = mock_coordinator
@@ -125,6 +132,31 @@ def test_hvac_mode_cool_when_cool_only(mock_coordinator):
     store.get_room.return_value = _active_auto_room(climate_mode="cool_only", override_heat=None)
     entity = RoomMindOverrideClimate(coordinator, "living_room")
     assert entity.hvac_mode == HVACMode.COOL
+
+
+@pytest.mark.parametrize("entity_class", [RoomMindOverrideClimate, RoomMindRoomClimate])
+@pytest.mark.parametrize(
+    "name",
+    ["current_temperature", "target_temperature", "target_temperature_low", "target_temperature_high"],
+)
+def test_temperatures_are_served_under_both_names(entity_class, name):
+    """HA 2026.11 reads native_*, older releases the old names; both must be the same property."""
+    assert getattr(entity_class, name) is getattr(entity_class, f"native_{name}")
+
+
+@pytest.mark.parametrize("entity_class", [RoomMindOverrideClimate, RoomMindRoomClimate])
+def test_temperature_unit_is_celsius_under_both_names(entity_class, mock_coordinator):
+    entity = entity_class(mock_coordinator[0], "living_room")
+    assert entity._attr_native_temperature_unit == UnitOfTemperature.CELSIUS
+    assert entity.temperature_unit == UnitOfTemperature.CELSIUS
+
+
+def test_override_entity_native_range(mock_coordinator):
+    coordinator, store = mock_coordinator
+    store.get_room.return_value = _active_auto_room()
+    entity = RoomMindOverrideClimate(coordinator, "living_room")
+    assert entity.native_target_temperature_low == 21.0
+    assert entity.native_target_temperature_high == 24.0
 
 
 def test_override_entity_auto_reports_range(mock_coordinator):

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -11,25 +9,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import RoomMindCoordinator
-from .device import get_area_name, roommind_device_info, roommind_hub_device_info
+from .coordinator import RoomMindCoordinator, _get_area_name, has_air_quality_sensor
+from .device import roommind_device_info, roommind_hub_device_info
+from .utils.area_utils import rooms_with_area
 
 
 def _create_room_binary_sensors(
     coordinator: RoomMindCoordinator,
     area_id: str,
-    room: dict[str, Any],
 ) -> list[BinarySensorEntity]:
-    """Create binary sensor entities for a room.
-
-    Creates one paused sensor per room plus one shading sensor per cover entity.
-    """
-    entities: list[BinarySensorEntity] = [
-        RoomMindCoverPausedSensor(coordinator, area_id),
-    ]
-    for cover_eid in room.get("covers", []):
-        entities.append(RoomMindCoverShadingSensor(coordinator, area_id, cover_eid))
-    return entities
+    """Create binary sensor entities for a room."""
+    return [RoomMindCoverPausedSensor(coordinator, area_id)]
 
 
 async def async_setup_entry(
@@ -41,50 +31,21 @@ async def async_setup_entry(
     coordinator: RoomMindCoordinator = hass.data[DOMAIN][entry.entry_id]
     store = hass.data[DOMAIN]["store"]
     coordinator.async_add_binary_sensor_entities = async_add_entities
-    rooms = store.get_rooms()
-    entities: list[BinarySensorEntity] = [
-        RoomMindHeatingDemandSensor(coordinator),
-    ]
+    rooms = rooms_with_area(hass, store.get_rooms())
+    entities: list[BinarySensorEntity] = [RoomMindHeatingDemandSensor(coordinator)]
     for area_id, room in rooms.items():
-        if bool(room.get("covers")):
-            entities.extend(_create_room_binary_sensors(coordinator, area_id, room))
+        if room.get("covers"):
+            entities.extend(_create_room_binary_sensors(coordinator, area_id))
             coordinator._binary_sensor_entity_areas.add(area_id)
-    async_add_entities(entities)
-
-
-class RoomMindHeatingDemandSensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor: ON when any room currently heats or forecasts heating soon."""
-
-    _attr_has_entity_name = True
-
-    def __init__(self, coordinator: RoomMindCoordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_heating_demand"
-        self._attr_name = "Heating Demand"
-        self.entity_id = f"binary_sensor.{DOMAIN}_heating_demand"
-        self._attr_device_info = roommind_hub_device_info()
-
-    @property
-    def icon(self) -> str:
-        """Return icon based on demand state."""
-        return "mdi:radiator" if self.is_on else "mdi:radiator-off"
-
-    @property
-    def is_on(self) -> bool:
-        """Return True if aggregate heating demand is active."""
-        if self.coordinator.data is None:
-            return False
-        return bool(self.coordinator.data.get("heating_demand", False))
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return rooms contributing to demand."""
-        if self.coordinator.data is None:
-            return {"rooms_heating_now": [], "rooms_heating_forecast": []}
-        return {
-            "rooms_heating_now": self.coordinator.data.get("rooms_heating_now", []),
-            "rooms_heating_forecast": self.coordinator.data.get("rooms_heating_forecast", []),
-        }
+            if room.get("covers_sensor_only", False):
+                for cover_eid in room["covers"]:
+                    entities.append(RoomMindCoverShadingSensor(coordinator, area_id, cover_eid))
+                    coordinator._cover_shading_entity_ids.add((area_id, cover_eid))
+        if has_air_quality_sensor(room):
+            entities.append(RoomMindAirQualitySensor(coordinator, area_id))
+            coordinator._air_quality_entity_areas.add(area_id)
+    if entities:
+        async_add_entities(entities)
 
 
 class RoomMindCoverPausedSensor(CoordinatorEntity, BinarySensorEntity):
@@ -96,11 +57,10 @@ class RoomMindCoverPausedSensor(CoordinatorEntity, BinarySensorEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_cover_paused"
-        self._attr_name = "Cover Paused"
+        self._attr_name = f"{area_id} Cover Paused"
         self._attr_icon = "mdi:hand-back-right"
         self.entity_id = f"binary_sensor.{DOMAIN}_{area_id}_cover_paused"
-        area_name = get_area_name(coordinator.hass, area_id)
-        self._attr_device_info = roommind_device_info(area_id, area_name)
+        self._attr_device_info = roommind_device_info(area_id, _get_area_name(coordinator.hass, area_id))
 
     @property
     def is_on(self) -> bool:
@@ -111,54 +71,109 @@ class RoomMindCoverPausedSensor(CoordinatorEntity, BinarySensorEntity):
         return bool(room.get("cover_auto_paused", False)) if room else False
 
 
-class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
-    """Binary sensor indicating if RoomMind recommends shading for a specific cover.
-
-    ON = shading active (cover should be partially/fully closed).
-    OFF = no shading needed (cover fully open).
-    Attribute ``recommended_position`` shows the recommended cover position (0-100).
-    """
+class RoomMindHeatingDemandSensor(CoordinatorEntity, BinarySensorEntity):
+    """Aggregate demand for an external heating source or automation."""
 
     _attr_has_entity_name = True
+    _attr_name = "Heating Demand"
+    _attr_icon = "mdi:radiator"
+
+    def __init__(self, coordinator: RoomMindCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_heating_demand"
+        self.entity_id = f"binary_sensor.{DOMAIN}_heating_demand"
+        self._attr_device_info = roommind_hub_device_info()
+
+    @property
+    def is_on(self) -> bool:
+        return bool((self.coordinator.data or {}).get("heating_demand", False))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        return {
+            "rooms_heating_now": data.get("rooms_heating_now", []),
+            "rooms_heating_forecast": data.get("rooms_heating_forecast", []),
+        }
+
+
+class RoomMindCoverShadingSensor(CoordinatorEntity, BinarySensorEntity):
+    """Recommendation for a cover when RoomMind is in sensor-only mode."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:blinds"
 
     def __init__(self, coordinator: RoomMindCoordinator, area_id: str, cover_entity_id: str) -> None:
         super().__init__(coordinator)
         self._area_id = area_id
         self._cover_entity_id = cover_entity_id
-        # strip "cover." prefix for the sanitized id
-        sanitized_eid = cover_entity_id.removeprefix("cover.")
-        self._attr_unique_id = f"{DOMAIN}_{area_id}_shading_{sanitized_eid}"
-        self._attr_icon = "mdi:blinds"
-        self.entity_id = f"binary_sensor.{DOMAIN}_{area_id}_shading_{sanitized_eid}"
-        area_name = get_area_name(coordinator.hass, area_id)
-        self._attr_device_info = roommind_device_info(area_id, area_name)
+        cover_id = cover_entity_id.removeprefix("cover.")
+        self._attr_unique_id = f"{DOMAIN}_{area_id}_shading_{cover_id}"
+        self.entity_id = f"binary_sensor.{DOMAIN}_{area_id}_shading_{cover_id}"
+        self._attr_name = f"{cover_id} Shading"
+        self._attr_device_info = roommind_device_info(area_id, _get_area_name(coordinator.hass, area_id))
+
+    def _target(self) -> int | None:
+        room = ((self.coordinator.data or {}).get("rooms") or {}).get(self._area_id, {})
+        target = room.get("cover_shading_position")
+        if target is None:
+            return None
+        config = self.coordinator.hass.data[DOMAIN]["store"].get_room(self._area_id) or {}
+        minimum = config.get("cover_min_positions", {}).get(self._cover_entity_id, 0)
+        return max(int(minimum), int(target))
 
     @property
-    def name(self) -> str:
-        """Return friendly name based on the cover entity."""
-        if self.coordinator.hass:
-            state = self.coordinator.hass.states.get(self._cover_entity_id)
-            if state and state.attributes.get("friendly_name"):
-                return f"{state.attributes['friendly_name']} Shading"
-        return f"{self._cover_entity_id} Shading"
+    def available(self) -> bool:
+        return super().available and self._target() is not None
 
     @property
     def is_on(self) -> bool:
-        """Return True if shading is recommended (recommended position < 100)."""
-        if self.coordinator.data is None:
-            return False
-        room = self.coordinator.data.get("rooms", {}).get(self._area_id)
-        per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {}) if room else {}
-        return bool(per_cover.get("shading_active", room.get("cover_shading_active", False))) if room else False
+        target = self._target()
+        return target is not None and target < 100
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return recommended_position as attribute."""
-        if self.coordinator.data is None:
-            return {"recommended_position": None}
-        room = self.coordinator.data.get("rooms", {}).get(self._area_id)
-        if not room:
-            return {"recommended_position": None}
-        per_cover = room.get("cover_debug", {}).get(self._cover_entity_id, {})
-        target = per_cover.get("recommended_position", room.get("cover_shading_position"))
-        return {"recommended_position": target}
+    def extra_state_attributes(self) -> dict:
+        return {"target_position": self._target(), "cover_entity_id": self._cover_entity_id}
+
+
+class RoomMindAirQualitySensor(CoordinatorEntity, BinarySensorEntity):
+    """On while the room's air is bad (CO2 or VOC past its threshold, #267), for own automations."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "air_quality"
+    _attr_icon = "mdi:molecule-co2"
+
+    def __init__(self, coordinator: RoomMindCoordinator, area_id: str) -> None:
+        super().__init__(coordinator)
+        self._area_id = area_id
+        self._attr_unique_id = f"{DOMAIN}_{area_id}_air_quality"
+        self.entity_id = f"binary_sensor.{DOMAIN}_{area_id}_air_quality"
+        self._attr_device_info = roommind_device_info(area_id, _get_area_name(coordinator.hass, area_id))
+        room = coordinator.hass.data[DOMAIN]["store"].get_room(area_id) or {}
+        self._attr_translation_placeholders = {
+            "room": room.get("display_name") or _get_area_name(coordinator.hass, area_id)
+        }
+
+    def _live(self) -> dict:
+        live: dict = ((self.coordinator.data or {}).get("rooms") or {}).get(self._area_id) or {}
+        return live
+
+    @property
+    def available(self) -> bool:
+        """Unavailable while no air quality sensor delivers a reading."""
+        live = self._live()
+        return super().available and (live.get("co2") is not None or live.get("voc") is not None)
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self._live().get("air_quality_bad", False))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        live = self._live()
+        return {
+            "co2": live.get("co2"),
+            "voc": live.get("voc"),
+            "reason": live.get("air_quality_reason"),
+            "ventilation_active": live.get("ventilation_active", False),
+        }

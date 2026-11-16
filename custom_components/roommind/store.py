@@ -9,8 +9,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    DEFAULT_CO2_THRESHOLD,
     DEFAULT_COMFORT_COOL,
     DEFAULT_COMFORT_HEAT,
+    DEFAULT_COVERS_OUTDOOR_MIN_TEMP,
     DEFAULT_ECO_COOL,
     DEFAULT_ECO_HEAT,
     DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR,
@@ -25,7 +27,6 @@ from .utils.device_utils import (
     get_room_heating_system_type,
     legacy_to_devices,
     migrate_heat_pump_devices,
-    sanitize_devices,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,7 +86,6 @@ def _migrate_override_fields(room: dict) -> dict:
 def _migrate_room(room: dict) -> dict:
     """Apply all read-time migrations (safety net)."""
     _migrate_room_temps(room)
-    sanitize_devices(room.get("devices", []))
     _migrate_override_fields(room)
     migrate_heat_pump_devices(room.get("devices", []))
     ensure_room_has_devices(room)
@@ -123,8 +123,6 @@ class RoomMindStore:
         for room in self._data.values():
             if "devices" not in room:
                 ensure_room_has_devices(room)
-                device_migrated += 1
-            elif sanitize_devices(room.get("devices", [])):
                 device_migrated += 1
             if migrate_heat_pump_devices(room.get("devices", [])):
                 t, a = devices_to_legacy(room["devices"])
@@ -227,7 +225,6 @@ class RoomMindStore:
         for key, value in config.items():
             if key != "area_id":
                 existing[key] = value
-        sanitize_devices(existing.get("devices", []))
         # Sync legacy fields from split fields for backward compat
         if "comfort_heat" in config:
             existing["comfort_temp"] = config["comfort_heat"]
@@ -251,13 +248,14 @@ class RoomMindStore:
         room = {
             "area_id": area_id,
             "devices": config.get("devices", []),
-            "entity_modes": config.get("entity_modes", {}),
             "temperature_sensor": config.get("temperature_sensor", ""),
             "humidity_sensor": config.get("humidity_sensor", ""),
             "occupancy_sensors": config.get("occupancy_sensors", []),
             "occupancy_eco_enabled": config.get("occupancy_eco_enabled", False),
             "occupancy_eco_delay": config.get("occupancy_eco_delay", DEFAULT_OCCUPANCY_ECO_DELAY_MINUTES),
             "preheat_enabled": config.get("preheat_enabled", True),
+            "price_shift": config.get("price_shift", 0.0),
+            "follow_device_setpoint": config.get("follow_device_setpoint", False),
             "climate_mode": config.get("climate_mode", "auto"),
             "schedules": config.get("schedules", []),
             "schedule_selector_entity": config.get("schedule_selector_entity", ""),
@@ -278,7 +276,7 @@ class RoomMindStore:
             "covers_sensor_only": config.get("covers_sensor_only", False),
             "covers_deploy_threshold": config.get("covers_deploy_threshold", 1.5),
             "covers_min_position": config.get("covers_min_position", 0),
-            "covers_outdoor_min_temp": config.get("covers_outdoor_min_temp", None),
+            "covers_outdoor_min_temp": config.get("covers_outdoor_min_temp", DEFAULT_COVERS_OUTDOOR_MIN_TEMP),
             "covers_override_minutes": config.get("covers_override_minutes", 60),
             "cover_schedules": config.get("cover_schedules", []),
             "cover_schedule_selector_entity": config.get("cover_schedule_selector_entity", ""),
@@ -288,6 +286,7 @@ class RoomMindStore:
             "covers_night_close_offset_minutes": config.get("covers_night_close_offset_minutes", 0),
             "covers_night_position": config.get("covers_night_position", 0),
             "covers_snap_deploy": config.get("covers_snap_deploy", False),
+            "covers_window_hold": config.get("covers_window_hold", False),
             "cover_min_positions": config.get("cover_min_positions", {}),
             "ignore_presence": config.get("ignore_presence", False),
             "is_outdoor": config.get("is_outdoor", False),
@@ -298,9 +297,14 @@ class RoomMindStore:
                 "heat_source_outdoor_threshold", DEFAULT_HEAT_SOURCE_OUTDOOR_THRESHOLD
             ),
             "heat_source_ac_min_outdoor": config.get("heat_source_ac_min_outdoor", DEFAULT_HEAT_SOURCE_AC_MIN_OUTDOOR),
+            "heat_source_price_aware": config.get("heat_source_price_aware", False),
             "climate_control_enabled": config.get("climate_control_enabled", True),
+            "co2_sensor": config.get("co2_sensor", ""),
+            "co2_threshold": config.get("co2_threshold", DEFAULT_CO2_THRESHOLD),
+            "voc_sensor": config.get("voc_sensor", ""),
+            "voc_threshold": config.get("voc_threshold"),
+            "ventilation_entity": config.get("ventilation_entity", ""),
         }
-        sanitize_devices(room["devices"])
         _single_temps_to_cool_side(room, config, room["climate_mode"])
         # Directional device sync for new rooms (truthiness check, not just presence)
         if "devices" in config and config["devices"]:

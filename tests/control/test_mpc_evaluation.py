@@ -48,7 +48,6 @@ async def test_confidence_transition_threshold():
     mode, pf = await ctrl.async_evaluate(current_temp=17.0, target_temp=21.0)
     assert mode == "heating"  # bang-bang also heats when cold
     assert pf == 1.0  # bang-bang: full power
-    assert ctrl.last_guard_reason.startswith("bang-bang fallback")
 
     # Just below threshold — MPC path
     model_mgr.get_prediction_std = MagicMock(return_value=0.49)
@@ -63,7 +62,6 @@ async def test_confidence_transition_threshold():
     mode2, pf2 = await ctrl2.async_evaluate(current_temp=17.0, target_temp=21.0)
     assert mode2 == "heating"  # MPC also heats when cold
     assert 0.0 < pf2 <= 1.0
-    assert ctrl2.last_guard_reason.startswith("MPC decided")
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +438,7 @@ def test_evaluate_mpc_safety_guard_fires_after_min_run_heating(monkeypatch):
         has_external_sensor=True,
         previous_mode=MODE_HEATING,
         heating_system_type="underfloor",
-        mode_on_since=time.time() - 3660,  # started 61 min ago (past 60-min underfloor window)
+        mode_on_since=time.time() - 2000,  # started 33 min ago (past 30-min window)
     )
     fake_plan = MPCPlan(
         actions=[MODE_HEATING] * 6,
@@ -640,7 +638,6 @@ def test_safety_guard_suppresses_when_prediction_stays_warm(monkeypatch):
     mode, pf = ctrl._evaluate_mpc(22.0, TargetTemps(heat=21.0, cool=25.0))
     assert mode == MODE_IDLE
     assert pf == 0.0
-    assert ctrl.last_guard_reason.startswith("MPC adjusted heating to idle")
 
 
 def test_safety_guard_adaptive_horizon_underfloor(monkeypatch):
@@ -742,6 +739,7 @@ def test_safety_guard_suppresses_cooling_when_prediction_stays_cool(monkeypatch)
     assert pf == 0.0
 
 
+# ---------------------------------------------------------------------------
 # Hard overshoot ceiling (issue #152)
 # ---------------------------------------------------------------------------
 
@@ -958,86 +956,6 @@ def test_build_solar_series_short_cloud_extended():
 
 
 # ---------------------------------------------------------------------------
-# Bang-bang 50% elapsed floor
-# ---------------------------------------------------------------------------
-
-
-def test_bangbang_holds_heating_below_50pct_even_above_hysteresis():
-    """Bang-bang must keep heating during first 50% of min-run even if temp exceeds hysteresis."""
-    from custom_components.roommind.const import BANGBANG_HEAT_HYSTERESIS
-
-    hass = build_hass()
-    room = make_room()
-    mgr = RoomModelManager()
-    # Underfloor: 60 min min-run, 5 min elapsed = 8.3% < 50%
-    ctrl = MPCController(
-        hass,
-        room,
-        model_manager=mgr,
-        outdoor_temp=5.0,
-        settings={},
-        has_external_sensor=True,
-        previous_mode=MODE_HEATING,
-        heating_system_type="underfloor",
-        mode_on_since=time.time() - 300,
-    )
-    # temp = target + hysteresis + 0.5 → would normally exit, but < 50% elapsed
-    heat_target = 21.0
-    temp = heat_target + BANGBANG_HEAT_HYSTERESIS + 0.5
-    mode = ctrl._evaluate_bangbang(temp, TargetTemps(heat=heat_target, cool=25.0))
-    assert mode == MODE_HEATING
-
-
-def test_bangbang_underfloor_holds_full_min_run():
-    """A slow underfloor system keeps its full minimum run while learning."""
-    from custom_components.roommind.const import BANGBANG_HEAT_HYSTERESIS
-
-    hass = build_hass()
-    room = make_room()
-    mgr = RoomModelManager()
-    # Underfloor: 60 min min-run, 35 min elapsed = 58% > 50%
-    ctrl = MPCController(
-        hass,
-        room,
-        model_manager=mgr,
-        outdoor_temp=5.0,
-        settings={},
-        has_external_sensor=True,
-        previous_mode=MODE_HEATING,
-        heating_system_type="underfloor",
-        mode_on_since=time.time() - 2100,
-    )
-    # Above hysteresis and past 50%, but the screed still needs its full run.
-    heat_target = 21.0
-    temp = heat_target + BANGBANG_HEAT_HYSTERESIS + 0.5
-    mode = ctrl._evaluate_bangbang(temp, TargetTemps(heat=heat_target, cool=25.0))
-    assert mode == MODE_HEATING
-
-
-def test_bangbang_holds_cooling_below_50pct():
-    """Bang-bang must keep cooling during first 50% of min-run."""
-    from custom_components.roommind.const import BANGBANG_COOL_HYSTERESIS
-
-    hass = build_hass()
-    room = make_room(acs=["climate.living_ac"], thermostats=[])
-    mgr = RoomModelManager()
-    ctrl = MPCController(
-        hass,
-        room,
-        model_manager=mgr,
-        outdoor_temp=35.0,
-        settings={},
-        has_external_sensor=True,
-        previous_mode=MODE_COOLING,
-        heating_system_type="underfloor",
-        mode_on_since=time.time() - 300,  # 5 min < 50% of 60 min
-    )
-    cool_target = 24.0
-    temp = cool_target - BANGBANG_COOL_HYSTERESIS - 0.5
-    mode = ctrl._evaluate_bangbang(temp, TargetTemps(heat=19.0, cool=cool_target))
-    assert mode == MODE_COOLING
-
-
 # Issue #131: UFH proactive pre-heating — end-to-end via _evaluate_mpc
 # ---------------------------------------------------------------------------
 
@@ -1287,3 +1205,67 @@ async def test_cold_forecast_still_gates_cooling_without_a_reading():
     ctrl = _cool_only_ctrl(_ac_hass(), outdoor_temp=None, outdoor_forecast=forecast)
     mode, _ = await ctrl.async_evaluate(current_temp=24.0, targets=TargetTemps(heat=None, cool=22.0))
     assert mode == MODE_IDLE
+
+
+@pytest.mark.parametrize(
+    ("last_power_fraction", "expected"),
+    [(1.0, (MODE_IDLE, 0.0)), (0.0, (MODE_HEATING, 1.0))],
+)
+def test_running_underfloor_stop_depends_on_stored_heat(monkeypatch, last_power_fraction, expected):
+    """A completed relay run coasts only when stored heat prevents a forecast dip."""
+    room = make_room(heating_system_type="underfloor")
+    mgr = RoomModelManager()
+    mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.0075, Q_heat=0.355, Q_cool=4.0))
+    ctrl = MPCController(
+        build_hass(),
+        room,
+        model_manager=mgr,
+        outdoor_temp=-2.5,
+        previous_mode=MODE_HEATING,
+        heating_system_type="underfloor",
+        mode_on_since=time.time() - 3 * 3600,
+        last_power_fraction=last_power_fraction,
+    )
+    plan = MPCPlan(
+        actions=[MODE_HEATING] * 48,
+        temperatures=[22.2] * 49,
+        power_fractions=[1.0] * 48,
+        lookahead_blocks=36,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize", lambda *a, **kw: plan
+    )
+
+    mode, power = ctrl._evaluate_mpc(22.2, TargetTemps(heat=21.9, cool=24.0))
+
+    assert (mode, power) == expected
+
+
+def test_running_underfloor_keeps_v2_minimum_with_charged_floor(monkeypatch):
+    """Stored heat must not release a relay before its configured minimum run."""
+    room = make_room(heating_system_type="underfloor")
+    mgr = RoomModelManager()
+    mgr.get_model = MagicMock(return_value=RCModel(C=1.0, U=0.0075, Q_heat=0.355, Q_cool=4.0))
+    ctrl = MPCController(
+        build_hass(),
+        room,
+        model_manager=mgr,
+        outdoor_temp=-2.5,
+        previous_mode=MODE_HEATING,
+        heating_system_type="underfloor",
+        mode_on_since=time.time() - 20 * 60,
+    )
+    plan = MPCPlan(
+        actions=[MODE_HEATING] * 48,
+        temperatures=[22.2] * 49,
+        power_fractions=[1.0] * 48,
+        lookahead_blocks=36,
+    )
+    monkeypatch.setattr(
+        "custom_components.roommind.control.mpc_controller.MPCOptimizer.optimize", lambda *a, **kw: plan
+    )
+
+    mode, power = ctrl._evaluate_mpc(22.2, TargetTemps(heat=21.9, cool=24.0))
+
+    assert mode == MODE_HEATING
+    assert power == 1.0

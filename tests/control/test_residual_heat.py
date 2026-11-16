@@ -125,8 +125,8 @@ def test_series_starts_from_elapsed():
 
 
 def test_min_run_blocks_underfloor():
-    """Underfloor min_run_minutes=60, dt=5 -> 12 blocks."""
-    assert get_min_run_blocks("underfloor", 5.0) == 12
+    """Underfloor min_run_minutes=30, dt=5 -> 6 blocks."""
+    assert get_min_run_blocks("underfloor", 5.0) == 6
 
 
 def test_min_run_blocks_radiator():

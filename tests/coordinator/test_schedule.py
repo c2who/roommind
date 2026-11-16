@@ -34,7 +34,6 @@ class TestRoomMindCoordinator:
         # With auto mode and no ACs, can't cool -> idle
         assert room_state["target_temp"] == 17.0
         assert room_state["mode"] == "idle"
-        assert coordinator._last_resolve_reason["living_room_abc12345"] == "schedule_off"
 
     @pytest.mark.asyncio
     async def test_update_schedule_on_with_block_temp(self, hass, mock_config_entry):
@@ -51,7 +50,6 @@ class TestRoomMindCoordinator:
         room_state = data["rooms"]["living_room_abc12345"]
         assert room_state["target_temp"] == 23.0
         assert room_state["mode"] == "heating"
-        assert coordinator._last_resolve_reason["living_room_abc12345"] == "schedule"
 
     @pytest.mark.asyncio
     async def test_update_no_schedule_entity_uses_comfort(self, hass, mock_config_entry):

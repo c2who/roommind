@@ -288,7 +288,7 @@ def test_optimizer_gets_the_ac_min_run_for_cooling(monkeypatch):
     room = {"climate_mode": "auto", "acs": ["climate.ac1"], "heating_system_type": "underfloor"}
     ctrl = _controller(room, outdoor_temp=30.0, heating_system_type="underfloor")
     ctrl._evaluate_mpc(25.0, TargetTemps(heat=21.0, cool=24.0))
-    assert seen["min_run_blocks"] == 12
+    assert seen["min_run_blocks"] == 6
     assert seen["cool_min_run_blocks"] == 2
 
 
@@ -344,6 +344,19 @@ def test_ac_heating_alone_does_not_preheat_on_drift(monkeypatch):
     assert ufh._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=None)) == (MODE_HEATING, 0.8)
 
 
+def test_a_run_from_idle_at_the_target_follows_the_source_that_would_heat(monkeypatch):
+    """From idle at the target the source the orchestrator prefers sets the rules: on a mild
+    day the AC would carry the run, so no drift pre-heat (it started the screed for one
+    cycle, then the first 0.1 K dip handed the run to the AC); on a cold day the screed."""
+    _fake_plan(monkeypatch, MODE_HEATING, pf=0.8, lookahead_blocks=24)
+    mild = _orchestrated(10.0, previous_heat_sources="none")
+    monkeypatch.setattr(mild, "_predict_idle_drift", lambda *_: 20.0)
+    assert mild._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=None)) == (MODE_IDLE, 0.0)
+    cold = _orchestrated(0.0, previous_heat_sources="none")
+    monkeypatch.setattr(cold, "_predict_idle_drift", lambda *_: 20.0)
+    assert cold._evaluate_mpc(21.0, TargetTemps(heat=21.0, cool=None)) == (MODE_HEATING, 0.8)
+
+
 def test_ac_heating_alone_in_the_bang_bang_fallback():
     after_ac_min_run = {"previous_mode": MODE_HEATING, "mode_on_since": time.time() - 15 * 60}
     ctrl = _orchestrated(10.0, previous_heat_sources="secondary", **after_ac_min_run)
@@ -378,8 +391,9 @@ def _eco_then_comfort():
 @pytest.mark.parametrize(
     ("outdoor", "expected_mode", "expected_systems"),
     [
-        # mild: the AC alone would run the pre-heat, so the AC's rules decide (not yet)
-        (10.0, MODE_IDLE, ["underfloor", ""]),
+        # mild: the AC alone would run the pre-heat, so the AC's rules decide (not yet),
+        # from the first pass on (above the target in force the preferred source counts)
+        (10.0, MODE_IDLE, [""]),
         # cold: the floor runs it, its rules stand
         (0.0, MODE_HEATING, ["underfloor"]),
     ],
@@ -499,3 +513,19 @@ def test_optimizer_knows_when_a_heating_ac_shares_the_model(monkeypatch, ac_mode
     ctrl.hass.states.get = MagicMock(return_value=_ac_state(ac_modes))
     ctrl._evaluate_mpc(20.0, TargetTemps(heat=21.0, cool=None))
     assert seen["fast_heater_shares_model"] is expected
+
+
+def test_run_rules_follow_the_price_choice_of_a_price_aware_room():
+    """Expensive electricity hands a mild-day run to the floor heating: its rules must apply,
+    else the AC's 10-min rules would stop the floor every few cycles."""
+    assert _orchestrated(12.0)._resolve_run_system(20.5, 21.0) == ""
+    assert _orchestrated(12.0, price_level="expensive")._resolve_run_system(20.5, 21.0) == "underfloor"
+
+
+def test_cheap_electricity_in_the_cold_leaves_a_preheat_to_the_primary_rules():
+    """Frost, cheap hour: the AC takes a small gap, a pre-heat towards comfort stays with the
+    floor, and so do its run rules (same answer as the coordinator's orchestration)."""
+    assert _orchestrated(0.0, price_level="cheap")._resolve_run_system(20.5, 21.0) == ""
+    assert _orchestrated(0.0, price_level="cheap")._resolve_run_system(19.0, 21.0) == "underfloor"
+    running_floor = _orchestrated(0.0, price_level="cheap", previous_heat_sources="primary")
+    assert running_floor._resolve_run_system(20.5, 21.0) == "underfloor"

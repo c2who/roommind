@@ -50,9 +50,16 @@ from .const import (
 from .control.mpc_controller import check_acs_can_heat
 from .coordinator import RoomMindCoordinator, _get_area_name
 from .deprecation import warn_deprecated_use
-from .device import get_area_name, roommind_device_info
+from .device import roommind_device_info
+from .utils.area_utils import rooms_with_area
 from .utils.device_utils import get_ac_eids, get_trv_eids
-from .utils.schedule_utils import mask_override_band, next_schedule_change, override_preset_band
+from .utils.schedule_utils import (
+    band_in_force,
+    mask_override_band,
+    override_hold_until,
+    override_preset_band,
+    without_temporary_shifts,
+)
 
 _CLIMATE_MODE_TO_HVAC = {
     CLIMATE_MODE_AUTO: HVACMode.HEAT_COOL,
@@ -87,7 +94,7 @@ async def async_setup_entry(
     coordinator: RoomMindCoordinator = hass.data[DOMAIN][entry.entry_id]
     store = hass.data[DOMAIN]["store"]
     coordinator.async_add_climate_entities = async_add_entities
-    rooms = store.get_rooms()
+    rooms = rooms_with_area(hass, store.get_rooms())
     entities: list[ClimateEntity] = []
     for area_id in rooms:
         entities.extend(_create_room_climates(coordinator, area_id))
@@ -97,23 +104,9 @@ async def async_setup_entry(
 
 
 def _current_band(coordinator: RoomMindCoordinator, area_id: str, room: dict) -> tuple[float | None, float | None]:
-    """Return the (heat, cool) band currently in force for this room.
-
-    An active override wins. Otherwise it is the band the coordinator resolved
-    last cycle (minus mold prevention, which is not part of the user's band).
-    Falls back to the comfort band when no live targets exist yet or the room
-    is forced off.
-    """
-    if is_override_active(room):
-        return room.get("override_heat"), room.get("override_cool")
+    """Return the (heat, cool) band currently in force for this room."""
     live = ((coordinator.data or {}).get("rooms") or {}).get(area_id) or {}
-    heat = live.get("heat_target")
-    cool = live.get("cool_target")
-    if heat is None and cool is None:
-        return override_preset_band(room, OVERRIDE_BOOST)
-    if heat is not None and live.get("mold_prevention_active"):
-        heat -= live.get("mold_prevention_delta") or 0
-    return heat, cool
+    return band_in_force(room, live)
 
 
 def _band_from_temperature_call(
@@ -164,7 +157,10 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
     """Climate entity for room override control."""
 
     _attr_has_entity_name = True
+    # Deprecated (#238): only rooms set up before 2.0 keep it enabled; HA applies this to new registry entries only
+    _attr_entity_registry_enabled_default = False
     _attr_icon = "mdi:thermometer-alert"
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_min_temp = MIN_TARGET_TEMP
@@ -174,9 +170,9 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_override"
+        self._attr_device_info = roommind_device_info(area_id, _get_area_name(coordinator.hass, area_id))
         self._attr_name = f"{area_id} Override"
         self.entity_id = f"climate.{DOMAIN}_{area_id}_override"
-        self._attr_device_info = roommind_device_info(area_id, get_area_name(coordinator.hass, area_id))
         self._cancel_deferred_refresh: Callable[[], None] | None = None
 
     async def async_will_remove_from_hass(self) -> None:
@@ -246,7 +242,7 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
         return HVACMode.HEAT
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         mode = self._climate_mode()
         if mode == "auto" or not self._is_override_active():
             # None keeps the dual slider in the HA thermostat card
@@ -259,21 +255,21 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
         return float(val) if isinstance(val, (int, float)) else None
 
     @property
-    def target_temperature_low(self) -> float | None:
+    def native_target_temperature_low(self) -> float | None:
         if not self._is_override_active():
             return None
         val = (self._room() or {}).get("override_heat")
         return float(val) if isinstance(val, (int, float)) else None
 
     @property
-    def target_temperature_high(self) -> float | None:
+    def native_target_temperature_high(self) -> float | None:
         if not self._is_override_active():
             return None
         val = (self._room() or {}).get("override_cool")
         return float(val) if isinstance(val, (int, float)) else None
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return the room's current temperature from coordinator data."""
         data = self.coordinator.data
         if not data:
@@ -283,6 +279,12 @@ class RoomMindOverrideClimate(CoordinatorEntity, ClimateEntity):
             return None
         val = room_data.get("current_temp")
         return float(val) if isinstance(val, (int, float)) else None
+
+    # HA before 2026.11 reads the old names; a class providing both makes newer HA use native_*
+    current_temperature = native_current_temperature
+    target_temperature = native_target_temperature
+    target_temperature_low = native_target_temperature_low
+    target_temperature_high = native_target_temperature_high
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set override targets from range or single temperature."""
@@ -357,6 +359,7 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:home-thermometer"
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_target_temperature_step = 0.5
     _attr_min_temp = MIN_TARGET_TEMP
@@ -368,8 +371,8 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         super().__init__(coordinator)
         self._area_id = area_id
         self._attr_unique_id = f"{DOMAIN}_{area_id}_climate"
+        self._attr_device_info = roommind_device_info(area_id, _get_area_name(coordinator.hass, area_id))
         self.entity_id = f"climate.{DOMAIN}_{area_id}"
-        self._attr_device_info = roommind_device_info(area_id, get_area_name(coordinator.hass, area_id))
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -474,7 +477,7 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         return HVACAction.IDLE
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         val = self._live().get("current_temp")
         return float(val) if isinstance(val, (int, float)) else None
 
@@ -484,22 +487,20 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         return float(val) if isinstance(val, (int, float)) else None
 
     def _band(self) -> tuple[float | None, float | None]:
-        """The band the room is held at, without mold prevention (not part of the user's band)."""
+        """The band the room is held at, without mold prevention and price shift (not the user's band)."""
         room = self._room()
         if self._override_in_force():
             heat, cool = room.get("override_heat"), room.get("override_cool")
         else:
             live = self._live()
-            heat, cool = live.get("heat_target"), live.get("cool_target")
-            if heat is not None and live.get("mold_prevention_active"):
-                heat -= live.get("mold_prevention_delta") or 0
+            heat, cool = without_temporary_shifts(live.get("heat_target"), live.get("cool_target"), live)
         if self._climate_mode() == CLIMATE_MODE_AUTO:
             # The dual slider sends both sides, HA rejects a call with only one of them
             return _fill_auto_band(heat, cool, room)
         return heat, cool
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         mode = self._climate_mode()
         if mode == CLIMATE_MODE_AUTO:
             # None keeps the dual slider in the HA thermostat card
@@ -509,14 +510,20 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         return float(val) if isinstance(val, (int, float)) else None
 
     @property
-    def target_temperature_low(self) -> float | None:
+    def native_target_temperature_low(self) -> float | None:
         heat, _ = self._band()
         return float(heat) if isinstance(heat, (int, float)) else None
 
     @property
-    def target_temperature_high(self) -> float | None:
+    def native_target_temperature_high(self) -> float | None:
         _, cool = self._band()
         return float(cool) if isinstance(cool, (int, float)) else None
+
+    # HA before 2026.11 reads the old names; a class providing both makes newer HA use native_*
+    current_temperature = native_current_temperature
+    target_temperature = native_target_temperature
+    target_temperature_low = native_target_temperature_low
+    target_temperature_high = native_target_temperature_high
 
     @property
     def preset_mode(self) -> str | None:
@@ -536,6 +543,8 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
             "presence_away": bool(live.get("presence_away", False)),
             "occupancy_vacant": bool(live.get("occupancy_vacant", False)),
             "vacation": vacation_until is not None and time.time() < vacation_until,
+            # cheap / normal / expensive, None without a price source
+            "price_level": live.get("price_level"),
         }
 
     async def _async_set_override(self, heat: float | None, cool: float | None, override_type: str) -> None:
@@ -545,7 +554,7 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
             {
                 "override_heat": heat,
                 "override_cool": cool,
-                "override_until": next_schedule_change(self.coordinator.hass, self._room()),
+                "override_until": override_hold_until(self.coordinator.hass, self._room()),
                 "override_type": override_type,
             },
         )
@@ -571,7 +580,7 @@ class RoomMindRoomClimate(CoordinatorEntity, ClimateEntity):
         known = [(want, have) for want, have in given if have is not None]
         if not given or len(known) < len(given):
             return False
-        unit, precision = self.temperature_unit, self.precision
+        unit, precision = UnitOfTemperature.CELSIUS, self.precision
         if unit == self.hass.config.units.temperature_unit:
             return all(abs(want - have) < self._attr_target_temperature_step / 2 for want, have in known)
         # Compared as shown: a °F display rounds to whole degrees, its echo is up to 0.28 K off

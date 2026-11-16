@@ -38,24 +38,6 @@ VALVE_CLOSING_MODES = (VALVE_CLOSING_DEGREE, VALVE_IDLE_OPENING)
 SETPOINT_MODE_PROPORTIONAL = "proportional"
 SETPOINT_MODE_DIRECT = "direct"
 
-ALLOWED_DEVICE_KEYS = {
-    "entity_id",
-    "type",
-    "role",
-    "heating_system_type",
-    "idle_action",
-    "idle_fan_mode",
-    "setpoint_mode",
-    "setpoint_offset",
-    "coil_dry",
-    "coil_dry_minutes",
-    "coil_dry_mode",
-    "coil_dry_fan_mode",
-    "valve_opening_entity",
-    "valve_closing_entity",
-    "valve_closing_mode",
-}
-
 # Per-device offset (°C) added to the room target in direct mode, for devices
 # whose internal sensor reads differently from the room sensor (#369).
 SETPOINT_OFFSET_MIN = -5.0
@@ -161,22 +143,6 @@ def legacy_to_devices(
             }
         )
     return devices
-
-
-def sanitize_devices(devices: list[dict]) -> bool:
-    """Strip deprecated/unknown keys from device entries in-place.
-
-    Returns True if any device entry was modified.
-    """
-    changed = False
-    for device in devices:
-        extra_keys = set(device) - ALLOWED_DEVICE_KEYS
-        if not extra_keys:
-            continue
-        for key in extra_keys:
-            device.pop(key, None)
-        changed = True
-    return changed
 
 
 def devices_to_legacy(devices: list[dict]) -> tuple[list[str], list[str]]:

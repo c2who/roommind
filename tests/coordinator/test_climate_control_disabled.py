@@ -802,7 +802,7 @@ class TestPerRoomClimateControlDisabled:
         coordinator = _create_coordinator(hass, mock_config_entry)
         data = await coordinator._async_update_data()
 
-        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "idle"
 
     @pytest.mark.asyncio
     async def test_per_room_disabled_other_room_still_active(self, hass, mock_config_entry):
@@ -844,7 +844,7 @@ class TestPerRoomClimateControlDisabled:
         coordinator = _create_coordinator(hass, mock_config_entry)
         data = await coordinator._async_update_data()
 
-        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "idle"
         assert data["rooms"]["bedroom_xyz"]["mode"] == "heating"
 
     @pytest.mark.asyncio
@@ -862,7 +862,7 @@ class TestPerRoomClimateControlDisabled:
         coordinator = _create_coordinator(hass, mock_config_entry)
         data = await coordinator._async_update_data()
 
-        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "idle"
         climate_calls = [c for c in hass.services.async_call.call_args_list if c[0][0] == "climate"]
         assert climate_calls == []
 
@@ -907,7 +907,7 @@ class TestRoomSwitchedOffByRoomClimate:
 
         data = await coordinator._async_update_data()
 
-        assert data["rooms"]["living_room_abc12345"]["mode"] == "disabled"
+        assert data["rooms"]["living_room_abc12345"]["mode"] == "idle"
         assert ("set_hvac_mode", {"entity_id": "climate.living_room", "hvac_mode": "off"}) in self._climate_calls(hass)
         coordinator._compressor_manager.update_member.assert_any_call("climate.living_room", False)
         assert coordinator._rooms_to_switch_off == set()

@@ -14,34 +14,6 @@ from .conftest import (
 class TestCoverageGaps:
     """Tests covering uncovered coordinator lines."""
 
-    def test_cleanup_keeps_configured_cover_shading_sensor(self, hass, mock_config_entry):
-        """Startup cleanup must preserve the per-cover sensor added on dev."""
-        from custom_components.roommind.const import DOMAIN
-
-        coordinator = _create_coordinator(hass, mock_config_entry)
-        store = MagicMock()
-        store.get_rooms.return_value = {"living_room": {"covers": ["cover.blind"]}}
-        hass.data = {DOMAIN: {"store": store}}
-
-        valid = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_position_blind")
-        valid.entity_id = "sensor.roommind_living_room_shading_position_blind"
-        valid_binary = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_blind")
-        valid_binary.entity_id = "binary_sensor.roommind_living_room_shading_blind"
-        stale = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_position_old")
-        stale.entity_id = "sensor.roommind_living_room_shading_position_old"
-        stale_binary = MagicMock(platform=DOMAIN, unique_id=f"{DOMAIN}_living_room_shading_old")
-        stale_binary.entity_id = "binary_sensor.roommind_living_room_shading_old"
-        registry = MagicMock()
-        registry.entities.values.return_value = [valid, valid_binary, stale, stale_binary]
-
-        with patch("homeassistant.helpers.entity_registry.async_get", return_value=registry):
-            coordinator.cleanup_orphaned_entities()
-
-        assert {call.args[0] for call in registry.async_remove.call_args_list} == {
-            stale.entity_id,
-            stale_binary.entity_id,
-        }
-
     def test_cleanup_orphaned_entities_removes_orphaned(self, hass, mock_config_entry):
         """cleanup_orphaned_entities removes entities for deleted rooms."""
         from custom_components.roommind.const import DOMAIN
@@ -86,15 +58,16 @@ class TestCoverageGaps:
         entry_other.entity_id = "sensor.other_thing"
 
         mock_registry = MagicMock()
-        # Global entities (not per-room) -- should be kept
+        # Global entity (not per-room) -- should be kept
         entry_vacation = MagicMock()
         entry_vacation.platform = DOMAIN
         entry_vacation.unique_id = f"{DOMAIN}_vacation"
         entry_vacation.entity_id = "switch.roommind_vacation"
 
-        entry_heating_demand = MagicMock()
-        entry_heating_demand.unique_id = f"{DOMAIN}_heating_demand"
-        entry_heating_demand.entity_id = "binary_sensor.roommind_heating_demand"
+        entry_climate_control = MagicMock()
+        entry_climate_control.platform = DOMAIN
+        entry_climate_control.unique_id = f"{DOMAIN}_climate_control"
+        entry_climate_control.entity_id = "switch.roommind_climate_control"
 
         mock_registry.entities.values.return_value = [
             entry_valid_temp,
@@ -104,7 +77,7 @@ class TestCoverageGaps:
             entry_orphaned_room,
             entry_other,
             entry_vacation,
-            entry_heating_demand,
+            entry_climate_control,
         ]
 
         with patch(
@@ -270,6 +243,28 @@ class TestCoverageGaps:
             await coordinator.async_room_removed("test_room")
 
         mock_history_store.remove_room.assert_called_once_with("test_room")
+
+    @pytest.mark.asyncio
+    async def test_a_resting_room_keeps_its_model_and_history(self, hass, mock_config_entry):
+        """Its area was deleted (#494): entities go, what it learned stays for the area's return."""
+        coordinator = _create_coordinator(hass, mock_config_entry)
+        coordinator.async_request_refresh = AsyncMock()
+        coordinator._history_store = MagicMock()
+        coordinator._model_manager = MagicMock()
+        coordinator._entity_areas.add("old_room")
+
+        mock_registry = MagicMock()
+        mock_registry.entities.values.return_value = [
+            MagicMock(entity_id="climate.roommind_old_room", platform="roommind", unique_id="roommind_old_room_climate")
+        ]
+        with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+            await coordinator.async_room_paused("old_room")
+
+        mock_registry.async_remove.assert_called_once_with("climate.roommind_old_room")
+        assert "old_room" not in coordinator._entity_areas
+        coordinator._model_manager.remove_room.assert_not_called()
+        coordinator._history_store.remove_room.assert_not_called()
+        coordinator.async_request_refresh.assert_not_awaited()
 
     def test_cleanup_keeps_entities_when_area_id_is_prefix_of_another(self, hass, mock_config_entry):
         """A shorter area_id must not claim a longer room's entities (#340).
@@ -442,3 +437,32 @@ class TestRoomClimateEntity:
         store.async_update_room.assert_awaited_once_with("living_room", {"climate_control_enabled": False})
         assert coordinator._rooms_to_switch_off == {"living_room"}
         coordinator.async_request_refresh.assert_awaited_once()
+
+
+def test_cleanup_removes_leftover_residual_heat_switches(hass, mock_config_entry):
+    """The per-room residual heat switch is gone: entities a pre-release build created are orphaned."""
+    from custom_components.roommind.const import DOMAIN
+
+    coordinator = _create_coordinator(hass, mock_config_entry)
+    store = MagicMock()
+    store.get_rooms.return_value = {
+        "living_room": {"heating_system_type": "radiator"},
+        "bathroom": {"heating_system_type": "underfloor"},
+    }
+    hass.data = {DOMAIN: {"store": store}}
+
+    entries = []
+    for area in ("living_room", "bathroom"):
+        e = MagicMock()
+        e.platform = DOMAIN
+        e.unique_id = f"{DOMAIN}_{area}_residual_heat"
+        e.entity_id = f"switch.roommind_{area}_residual_heat"
+        entries.append(e)
+    mock_registry = MagicMock()
+    mock_registry.entities.values.return_value = entries
+
+    with patch("homeassistant.helpers.entity_registry.async_get", return_value=mock_registry):
+        coordinator.cleanup_orphaned_entities()
+
+    removed_ids = [c.args[0] for c in mock_registry.async_remove.call_args_list]
+    assert removed_ids == ["switch.roommind_living_room_residual_heat", "switch.roommind_bathroom_residual_heat"]

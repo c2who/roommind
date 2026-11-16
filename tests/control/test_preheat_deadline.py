@@ -219,3 +219,153 @@ def test_analytics_reads_the_room_switch():
             SLOW, forecast, [0.0] * 6, current_temp=18.0, room_config=room, settings={"comfort_weight": 70}
         )
     assert seen and all(v == 0 for v in seen)
+
+
+def _price_plan(model, T_room, heat, schedule, *, n=72):
+    opt = MPCOptimizer(model, can_heat=True, can_cool=False)
+    return opt.optimize(
+        T_room=T_room,
+        T_outdoor_series=[0.0] * n,
+        heat_target_series=heat,
+        schedule_heat_series=schedule,
+        dt_minutes=5,
+    )
+
+
+def test_end_of_an_expensive_stretch_is_no_preheat_target():
+    # Constant schedule 20, expensive for 3 h (coasting 2 K to 18): the 20 after it is not
+    # worth heating for in the expensive hours, the user allowed the room to be 2 K lower
+    heat = [18.0] * 36 + [20.0] * 36
+    schedule = [20.0] * 72
+    plan = _price_plan(SLOW, 18.2, heat, schedule)
+    assert plan.preheat_blocks == 0
+    assert plan.actions[0] == MODE_IDLE
+    # The same series without the price information still pre-heats (as before)
+    plan = _price_plan(SLOW, 18.2, heat, None)
+    assert plan.preheat_blocks == 36
+
+
+def test_schedule_rise_after_an_expensive_stretch_still_preheats():
+    # Eco 17 (coasting to 16) until the comfort block 21: the schedule rises, so the room is
+    # pre-heated in time even though the hours before are expensive
+    heat = [16.0] * 36 + [21.0] * 36
+    schedule = [17.0] * 36 + [21.0] * 36
+    plan = _price_plan(SLOW, 18.0, heat, schedule)
+    assert plan.preheat_blocks == 36
+    assert plan.actions[0] == MODE_HEATING
+
+
+def test_preheat_aims_at_the_schedule_not_the_charge_on_top():
+    # Comfort 21 from block 36 on, charged to 22 there (cheap, expensive hours follow): the
+    # pre-heat in the hours before aims at 21 and starts no earlier than for 21 alone
+    room = 20.2
+    charged = _price_plan(SLOW, room, [17.0] * 36 + [22.0] * 36, [17.0] * 36 + [21.0] * 36)
+    plain = _price_plan(SLOW, room, [17.0] * 36 + [21.0] * 36, [17.0] * 36 + [21.0] * 36)
+    assert charged.actions[0] == plain.actions[0] == MODE_IDLE
+    # Without the price information the 22 pulls the start earlier (the old behaviour)
+    assert _price_plan(SLOW, room, [17.0] * 36 + [22.0] * 36, None).actions[0] == MODE_HEATING
+
+
+def test_start_of_a_charging_stretch_is_no_preheat_target():
+    # A normal hour before cheap hours that charge +1 K: charging belongs to the cheap hours
+    heat = [19.0] * 12 + [20.0] * 60
+    schedule = [19.0] * 72
+    plan = _price_plan(SLOW, 18.95, heat, schedule)
+    assert plan.preheat_blocks == 0
+
+
+def _spy_optimize(monkeypatch, module: str) -> list:
+    seen: list = []
+    real = MPCOptimizer.optimize
+
+    def spy(self, *args, **kwargs):
+        seen.append(kwargs.get("schedule_heat_series"))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(f"custom_components.roommind.control.{module}.MPCOptimizer.optimize", spy)
+    return seen
+
+
+def test_controller_hands_the_schedule_without_the_price_shift_to_the_plan(monkeypatch):
+    seen = _spy_optimize(monkeypatch, "mpc_controller")
+    ctrl = MPCController(
+        build_hass(),
+        make_room(climate_mode="heat_only"),
+        model_manager=RoomModelManager(),
+        outdoor_temp=0.0,
+        settings={},
+        has_external_sensor=True,
+        target_resolver=lambda ts: TargetTemps(18.0, None),
+        schedule_target_resolver=lambda ts: TargetTemps(None, None),
+    )
+    ctrl._evaluate_mpc(18.5, TargetTemps(18.0, None))
+    # No schedule target: filled like the shifted series (room temperature)
+    assert seen and seen[0] and set(seen[0]) == {18.5}
+
+
+def test_controller_without_a_price_room_passes_no_schedule_series(monkeypatch):
+    seen = _spy_optimize(monkeypatch, "mpc_controller")
+    ctrl = MPCController(
+        build_hass(),
+        make_room(climate_mode="heat_only"),
+        model_manager=RoomModelManager(),
+        outdoor_temp=0.0,
+        settings={},
+        has_external_sensor=True,
+        target_resolver=lambda ts: TargetTemps(18.0, None),
+    )
+    ctrl._evaluate_mpc(18.5, TargetTemps(18.0, None))
+    assert seen == [None]
+
+
+def test_prediction_unshifts_the_forecast_for_the_deadline(monkeypatch):
+    from custom_components.roommind.control.analytics_simulator import _simulate_mpc
+
+    seen = _spy_optimize(monkeypatch, "analytics_simulator")
+    shifted = {"target_temp": 18.0, "heat_target": 18.0, "cool_target": None, "price_shift_heat": -1.0}
+    plain = {"target_temp": 19.0, "heat_target": 19.0, "cool_target": None, "price_shift_heat": 0.0}
+    _simulate_mpc(SLOW, [shifted] * 3 + [plain] * 3, [0.0] * 6, 18.5, make_room(climate_mode="heat_only"), {})
+    assert seen[0] == [19.0] * 6
+    seen.clear()
+    _simulate_mpc(SLOW, [plain] * 6, [0.0] * 6, 18.5, make_room(climate_mode="heat_only"), {})
+    assert seen[0] is None
+
+
+def test_unshifted_forecast_has_no_float_noise():
+    from custom_components.roommind.control.analytics_simulator import _schedule_series
+
+    # A 60 °F block (15.6 °C) charged by 0.5: 16.1 - 0.5 must not read as a rise over 15.6
+    charged = {"target_temp": 16.1, "heat_target": 16.1, "cool_target": None, "price_shift_heat": 0.5}
+    plain = {"target_temp": 15.6, "heat_target": 15.6, "cool_target": None, "price_shift_heat": 0.0}
+    series = _schedule_series([plain, charged], 15.0)
+    assert series is not None and series[0] == [15.6, 15.6]
+
+
+def test_controller_and_prediction_hand_the_unshifted_cool_schedule_to_the_plan(monkeypatch):
+    from custom_components.roommind.control.analytics_simulator import _simulate_mpc
+
+    seen: list = []
+    real = MPCOptimizer.optimize
+
+    def spy(self, *args, **kwargs):
+        seen.append(kwargs.get("schedule_cool_series"))
+        return real(self, *args, **kwargs)
+
+    for module in ("mpc_controller", "analytics_simulator"):
+        monkeypatch.setattr(f"custom_components.roommind.control.{module}.MPCOptimizer.optimize", spy)
+    ctrl = MPCController(
+        build_hass(),
+        make_room(climate_mode="cool_only", thermostats=[], acs=["climate.ac"]),
+        model_manager=RoomModelManager(),
+        outdoor_temp=30.0,
+        settings={},
+        has_external_sensor=True,
+        target_resolver=lambda ts: TargetTemps(None, 25.0),
+        schedule_target_resolver=lambda ts: TargetTemps(None, 24.0),
+    )
+    ctrl._evaluate_mpc(25.5, TargetTemps(None, 25.0))
+    assert seen and set(seen[0]) == {24.0}
+    seen.clear()
+    shifted = {"target_temp": 25.0, "heat_target": None, "cool_target": 25.0, "price_shift_cool": 1.0}
+    _simulate_mpc(SLOW, [shifted] * 6, [30.0] * 6, 25.5, make_room(climate_mode="cool_only"), {})
+    assert seen[0] == [24.0] * 6
